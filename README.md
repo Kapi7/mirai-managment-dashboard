@@ -83,42 +83,56 @@ Backend runs directly with Node.js (no build step required)
 1. Push your code to GitHub:
 ```bash
 git add .
-git commit -m "Initial commit"
-git push -u origin main
+git commit -m "Deploy to production"
+git push origin main
 ```
 
-2. Create a new Web Service on Render:
-   - Connect your GitHub repository
-   - Build Command: `npm install && npm run build`
-   - Start Command: `npm run preview` (or use a static site service)
-   - For static site: Set Publish Directory to `dist`
+2. Create a Web Service on Render:
+   - Connect your GitHub repository: `Kapi7/mirai-managment-dashboard`
+   - **Build Command:** `./build.sh`
+   - **Start Command:** `./start.sh`
+   - Root Directory: (leave empty)
 
 3. Set Environment Variables in Render:
-   - `VITE_BASE44_APP_ID`: Your Base44 App ID
+   ```
+   SHOPIFY_STORE=your-store.myshopify.com
+   SHOPIFY_ACCESS_TOKEN=your_shopify_token
+   GMAIL_CLIENT_ID=your_gmail_client_id
+   GMAIL_CLIENT_SECRET=your_gmail_client_secret
+   GMAIL_REFRESH_TOKEN=your_gmail_refresh_token
+   GMAIL_REDIRECT_URI=https://your-app.onrender.com/auth/google/callback
+   GMAIL_USER_EMAIL=your_support_email@gmail.com
+   ```
 
-4. Configure Base44 Integrations:
-   - **Gmail Integration**: Connect order@korealy email account
-   - **Shopify Integration**: Connect your Shopify store
+4. Deploy and visit your URL!
 
 ## Environment Variables
 
-See `.env.example` for all required environment variables.
+### Local Development (.env file)
+```env
+VITE_API_URL=http://localhost:3001
 
-### Required Base44 Functions
+SHOPIFY_STORE=your-store.myshopify.com
+SHOPIFY_ACCESS_TOKEN=shpat_xxxxx
 
-The following Base44 functions must be configured in your Base44 dashboard:
+GMAIL_CLIENT_ID=xxxxx
+GMAIL_CLIENT_SECRET=xxxxx
+GMAIL_REFRESH_TOKEN=xxxxx
+GMAIL_REDIRECT_URI=http://localhost:3001/auth/google/callback
+GMAIL_USER_EMAIL=your_email@gmail.com
+```
 
-1. `fetchKorealyEmails` - Fetches shipping emails from Gmail
-2. `processKorealyShippingREST` - Updates Shopify orders with tracking numbers
+### Gmail API Setup
 
-### Base44 Integrations Setup
+Follow [GMAIL_SETUP.md](./GMAIL_SETUP.md) for detailed instructions on:
+- Creating Google Cloud project
+- Enabling Gmail API
+- Getting OAuth credentials
+- Generating refresh token
 
-**Gmail Integration:**
-- Email: order@korealy
-- Scopes: `gmail.readonly`
-- Used to fetch Korealy shipping notification emails
+### Shopify API Setup
 
-**Shopify Integration:**
-- Store URL: your-store.myshopify.com
-- Permissions: `write_orders`, `read_orders`
-- Used to update order fulfillments with tracking numbers
+1. Go to Shopify Admin → Settings → Apps and sales channels
+2. Click "Develop apps" → "Create an app"
+3. Configure Admin API scopes: `write_orders`, `read_orders`
+4. Install app and copy the Admin API access token
