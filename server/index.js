@@ -80,10 +80,11 @@ function parseKorealyEmail(subject, body) {
 app.get('/api/fetch-korealy-emails', async (req, res) => {
   try {
     // Search for emails from order@korealy
+    // Search for any emails from order@korealy (remove subject filter to get all)
     const response = await gmail.users.messages.list({
       userId: 'me',
-      q: 'from:order@korealy subject:shipped',
-      maxResults: 50
+      q: 'from:order@korealy',
+      maxResults: 100
     });
 
     const messages = response.data.messages || [];
