@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Package, RefreshCw, Loader2, Mail, History, AlertCircle, CheckCircle2, Undo2 } from "lucide-react";
 
 export default function KorealyProcessor() {
@@ -15,6 +16,7 @@ export default function KorealyProcessor() {
     const [processing, setProcessing] = useState({});
     const [updatingAll, setUpdatingAll] = useState(false);
     const [message, setMessage] = useState(null);
+    const [editingValues, setEditingValues] = useState({}); // Store manual edits: { [emailId]: { carrier, tracking } }
 
     const fetchEmails = async () => {
         setLoading(true);
@@ -37,11 +39,26 @@ export default function KorealyProcessor() {
         setProcessing(prev => ({ ...prev, [email.id]: true }));
         setMessage(null);
 
+        // Use edited values if available, otherwise use parsed values
+        const editedData = editingValues[email.id] || {};
+        const carrier = editedData.carrier || email.carrier;
+        const tracking = editedData.tracking || email.korealyTracking;
+
+        // Validate that we have all required fields
+        if (!carrier || carrier === 'N/A' || !tracking || tracking === 'N/A') {
+            setMessage({
+                type: 'error',
+                text: 'Please provide both carrier and tracking number'
+            });
+            setProcessing(prev => ({ ...prev, [email.id]: false }));
+            return;
+        }
+
         try {
             await api.updateShopifyTracking(
                 email.orderNumber,
-                email.korealyTracking,
-                email.carrier
+                tracking,
+                carrier
             );
 
             setMessage({
@@ -79,14 +96,27 @@ export default function KorealyProcessor() {
 
         let successCount = 0;
         let failedCount = 0;
+        let skippedCount = 0;
         const successfulIds = [];
 
         for (const email of pendingEmails) {
+            // Use edited values if available, otherwise use parsed values
+            const editedData = editingValues[email.id] || {};
+            const carrier = editedData.carrier || email.carrier;
+            const tracking = editedData.tracking || email.korealyTracking;
+
+            // Skip if carrier or tracking is N/A
+            if (carrier === 'N/A' || tracking === 'N/A') {
+                skippedCount++;
+                console.log(`Skipped order #${email.orderNumber} - missing carrier or tracking`);
+                continue;
+            }
+
             try {
                 await api.updateShopifyTracking(
                     email.orderNumber,
-                    email.korealyTracking,
-                    email.carrier
+                    tracking,
+                    carrier
                 );
                 successCount++;
                 successfulIds.push(email.id);
@@ -98,7 +128,7 @@ export default function KorealyProcessor() {
 
         setMessage({
             type: failedCount === 0 ? 'success' : 'error',
-            text: `✅ Updated ${successCount} orders${failedCount > 0 ? `, ${failedCount} failed` : ''}`
+            text: `✅ Updated ${successCount} orders${failedCount > 0 ? `, ${failedCount} failed` : ''}${skippedCount > 0 ? `, ${skippedCount} skipped (N/A values)` : ''}`
         });
 
         // Update state locally
@@ -142,6 +172,16 @@ export default function KorealyProcessor() {
         } finally {
             setProcessing(prev => ({ ...prev, [email.id]: false }));
         }
+    };
+
+    const updateEditingValue = (emailId, field, value) => {
+        setEditingValues(prev => ({
+            ...prev,
+            [emailId]: {
+                ...prev[emailId],
+                [field]: value
+            }
+        }));
     };
 
     useEffect(() => {
@@ -241,17 +281,37 @@ export default function KorealyProcessor() {
                                                 </Badge>
                                             </td>
                                             <td className="p-3 text-slate-600">
-                                                {new Date(email.date).toLocaleDateString('en-US', { 
-                                                    month: 'short', 
+                                                {new Date(email.date).toLocaleDateString('en-US', {
+                                                    month: 'short',
                                                     day: 'numeric',
                                                     year: 'numeric'
                                                 })}
                                             </td>
                                             <td className="p-3 text-slate-600 text-xs">
-                                                {email.carrier || 'Australia Post'}
+                                                {email.carrier === 'N/A' ? (
+                                                    <Input
+                                                        type="text"
+                                                        placeholder="Enter carrier (e.g., GOFO)"
+                                                        value={editingValues[email.id]?.carrier || ''}
+                                                        onChange={(e) => updateEditingValue(email.id, 'carrier', e.target.value)}
+                                                        className="h-8 text-xs w-40"
+                                                    />
+                                                ) : (
+                                                    email.carrier
+                                                )}
                                             </td>
                                             <td className="p-3 font-mono text-xs text-slate-700">
-                                                {email.korealyTracking}
+                                                {email.korealyTracking === 'N/A' ? (
+                                                    <Input
+                                                        type="text"
+                                                        placeholder="Enter tracking number"
+                                                        value={editingValues[email.id]?.tracking || ''}
+                                                        onChange={(e) => updateEditingValue(email.id, 'tracking', e.target.value)}
+                                                        className="h-8 text-xs w-48 font-mono"
+                                                    />
+                                                ) : (
+                                                    email.korealyTracking
+                                                )}
                                             </td>
                                             <td className="p-3 font-mono text-xs text-slate-400">
                                                 —

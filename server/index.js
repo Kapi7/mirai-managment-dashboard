@@ -51,7 +51,7 @@ function parseKorealyEmail(subject, body) {
   // "GOFO tracking number: GFUS01028388781186"
   // "Australia Post tracking number: 1234567890123456789012"
   let trackingNumber = null;
-  let carrier = 'Australia Post'; // default fallback
+  let carrier = null;
 
   // Try to extract carrier name + tracking number
   const trackingMatch = body.match(/([A-Za-z\s]+)\s+tracking number:\s*([A-Z0-9]{10,})/i);
@@ -136,7 +136,7 @@ app.get('/api/fetch-korealy-emails', async (req, res) => {
         body: body.substring(0, 500), // First 500 chars for preview
         orderNumber: parsed.orderNumber || 'N/A',
         korealyTracking: parsed.trackingNumber || 'N/A',
-        carrier: parsed.carrier || 'Unknown',
+        carrier: parsed.carrier || 'N/A',
         shopifyTracking,
         _debug: !parsed.orderNumber || !parsed.trackingNumber // Flag for debugging
       });
