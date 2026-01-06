@@ -47,23 +47,31 @@ function parseKorealyEmail(subject, body) {
   const orderMatch = subject.match(/order #(\d+)/i);
   const orderNumber = orderMatch ? orderMatch[1] : null;
 
-  // Extract tracking number from "GOFO tracking number: GFUS01028388781186"
+  // Extract carrier and tracking number from patterns like:
+  // "GOFO tracking number: GFUS01028388781186"
+  // "Australia Post tracking number: 1234567890123456789012"
   let trackingNumber = null;
+  let carrier = 'Australia Post'; // default fallback
 
-  // Try GOFO/GFUS pattern first (most common)
-  const gofoMatch = body.match(/(?:GOFO|tracking number):\s*([A-Z0-9]{10,})/i);
-  if (gofoMatch) {
-    trackingNumber = gofoMatch[1];
+  // Try to extract carrier name + tracking number
+  const trackingMatch = body.match(/([A-Za-z\s]+)\s+tracking number:\s*([A-Z0-9]{10,})/i);
+
+  if (trackingMatch) {
+    carrier = trackingMatch[1].trim();
+    trackingNumber = trackingMatch[2];
   } else {
-    // Try Australia Post pattern (numbers only)
-    const ausPostMatch = body.match(/(\d{20,})/);
-    if (ausPostMatch) {
-      trackingNumber = ausPostMatch[1];
+    // Try generic tracking number pattern without carrier
+    const genericMatch = body.match(/tracking number:\s*([A-Z0-9]{10,})/i);
+    if (genericMatch) {
+      trackingNumber = genericMatch[1];
+    } else {
+      // Try Australia Post pattern (numbers only, 20+ digits)
+      const ausPostMatch = body.match(/(\d{20,})/);
+      if (ausPostMatch) {
+        trackingNumber = ausPostMatch[1];
+      }
     }
   }
-
-  // Carrier is always Australia Post for Korealy
-  const carrier = 'Australia Post';
 
   return { orderNumber, trackingNumber, carrier };
 }
