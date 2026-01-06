@@ -18,9 +18,6 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-// Serve static files from the React app (after build)
-app.use(express.static(path.join(__dirname, '../dist')));
-
 // Gmail OAuth2 setup
 const oauth2Client = new google.auth.OAuth2(
   process.env.GMAIL_CLIENT_ID,
@@ -239,6 +236,9 @@ async function fetchShopifyOrder(orderNumber) {
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+// Serve static files from the React app (after API routes)
+app.use(express.static(path.join(__dirname, '../dist')));
 
 // Serve React app for all other routes (must be last)
 app.get('*', (req, res) => {
