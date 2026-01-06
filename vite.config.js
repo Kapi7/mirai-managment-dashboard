@@ -11,8 +11,9 @@ export default defineConfig({
     port: 3000
   },
   preview: {
-    host: true,
-    port: 3000
+    host: '0.0.0.0',
+    port: process.env.PORT ? parseInt(process.env.PORT) : 3000,
+    strictPort: false
   },
   resolve: {
     alias: {
