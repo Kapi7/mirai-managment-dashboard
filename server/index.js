@@ -115,36 +115,55 @@ app.get('/api/fetch-korealy-emails', async (req, res) => {
 
       const parsed = parseKorealyEmail(subject, body);
 
-      if (parsed.orderNumber && parsed.trackingNumber) {
-        // Check if already in Shopify
-        let shopifyTracking = null;
+      // Show ALL emails from Korealy, even if parsing fails
+      // This helps with debugging and shows history
+      let shopifyTracking = null;
+
+      // Only check Shopify if we have a valid order number
+      if (parsed.orderNumber) {
         try {
           const shopifyOrder = await fetchShopifyOrder(parsed.orderNumber);
           shopifyTracking = shopifyOrder?.fulfillments?.[0]?.tracking_number || null;
         } catch (err) {
           console.log(`Order #${parsed.orderNumber} not found in Shopify`);
         }
-
-        emails.push({
-          id: message.id,
-          subject,
-          date: new Date(date).toISOString(),
-          body,
-          orderNumber: parsed.orderNumber,
-          korealyTracking: parsed.trackingNumber,
-          carrier: parsed.carrier,
-          shopifyTracking
-        });
       }
+
+      // Add email to list (even if parsing was incomplete)
+      emails.push({
+        id: message.id,
+        subject,
+        date: new Date(date).toISOString(),
+        body: body.substring(0, 500), // First 500 chars for preview
+        orderNumber: parsed.orderNumber || 'N/A',
+        korealyTracking: parsed.trackingNumber || 'N/A',
+        carrier: parsed.carrier || 'Unknown',
+        shopifyTracking,
+        _debug: !parsed.orderNumber || !parsed.trackingNumber // Flag for debugging
+      });
     }
 
-    // Separate pending (no Shopify tracking) from all
-    const pending = emails.filter(e => !e.shopifyTracking);
+    // Separate pending (no Shopify tracking AND has valid tracking number) from all
+    const pending = emails.filter(e =>
+      !e.shopifyTracking &&
+      e.korealyTracking !== 'N/A' &&
+      e.orderNumber !== 'N/A'
+    );
+
+    console.log(`📧 Fetched ${emails.length} emails from Gmail`);
+    console.log(`📦 ${pending.length} pending shipments need updating`);
+    console.log(`✅ ${emails.filter(e => e.shopifyTracking).length} already synced to Shopify`);
 
     res.json({
       pending,
       all: emails,
-      gmailAccount: process.env.GMAIL_USER_EMAIL || 'Connected'
+      gmailAccount: process.env.GMAIL_USER_EMAIL || 'Connected',
+      stats: {
+        total: emails.length,
+        pending: pending.length,
+        synced: emails.filter(e => e.shopifyTracking).length,
+        needsParsing: emails.filter(e => e._debug).length
+      }
     });
 
   } catch (error) {
