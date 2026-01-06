@@ -134,19 +134,19 @@ app.get('/api/fetch-korealy-emails', async (req, res) => {
       });
     }
 
-    // Separate pending (no Shopify tracking AND has valid tracking number) from all
-    const pending = emails.filter(e =>
-      !e.shopifyTracking &&
-      e.korealyTracking !== 'N/A' &&
-      e.orderNumber !== 'N/A'
+    // Filter out N/A orders completely (invalid parsing)
+    const validEmails = emails.filter(e =>
+      e.orderNumber !== 'N/A' &&
+      e.korealyTracking !== 'N/A'
     );
 
-    console.log(`📧 Fetched ${emails.length} emails from Gmail`);
-    console.log(`📦 ${pending.length} pending shipments need updating`);
-    console.log(`✅ ${emails.filter(e => e.shopifyTracking).length} already synced to Shopify`);
+    // Pending = has Korealy tracking but NO Shopify tracking
+    const pending = validEmails.filter(e => !e.shopifyTracking);
 
-    // Filter out N/A orders from the "all" list
-    const validEmails = emails.filter(e => e.orderNumber !== 'N/A');
+    console.log(`📧 Fetched ${emails.length} total emails from Gmail`);
+    console.log(`✅ ${validEmails.length} valid orders (filtered out N/A)`);
+    console.log(`📦 ${pending.length} pending shipments need syncing to Shopify`);
+    console.log(`✔️  ${validEmails.filter(e => e.shopifyTracking).length} already synced to Shopify`);
 
     res.json({
       pending,
@@ -156,7 +156,7 @@ app.get('/api/fetch-korealy-emails', async (req, res) => {
         total: validEmails.length,
         pending: pending.length,
         synced: validEmails.filter(e => e.shopifyTracking).length,
-        needsParsing: emails.filter(e => e._debug).length
+        invalid: emails.length - validEmails.length
       }
     });
 
