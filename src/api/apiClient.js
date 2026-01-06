@@ -1,5 +1,8 @@
 // API client for Mirai backend
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+// In production, API is on same domain. In dev, it's on localhost:3001
+const API_BASE_URL = import.meta.env.VITE_API_URL || (
+  import.meta.env.DEV ? 'http://localhost:3001' : ''
+);
 
 export const api = {
   async fetchKorealyEmails() {

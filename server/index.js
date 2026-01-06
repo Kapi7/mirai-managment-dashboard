@@ -3,6 +3,11 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { google } from 'googleapis';
 import Shopify from '@shopify/shopify-api';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 dotenv.config({ path: '../.env' });
 
@@ -12,6 +17,9 @@ const PORT = process.env.PORT || 3001;
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// Serve static files from the React app (after build)
+app.use(express.static(path.join(__dirname, '../dist')));
 
 // Gmail OAuth2 setup
 const oauth2Client = new google.auth.OAuth2(
@@ -232,6 +240,13 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Serve React app for all other routes (must be last)
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '../dist/index.html'));
+});
+
 app.listen(PORT, () => {
   console.log(`🚀 Mirai Backend running on port ${PORT}`);
+  console.log(`📱 Frontend served at: http://localhost:${PORT}`);
+  console.log(`🔌 API available at: http://localhost:${PORT}/api`);
 });
