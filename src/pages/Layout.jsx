@@ -1,8 +1,7 @@
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { createPageUrl } from "@/utils";
-import { base44 } from "@/api/base44Client";
 import {
   Settings,
   TrendingUp,
@@ -42,11 +41,7 @@ const navigationSections = [
 
 export default function Layout({ children }) {
   const location = useLocation();
-  const [user, setUser] = useState(null);
-
-  useEffect(() => {
-    base44.auth.me().then(setUser).catch(() => setUser(null));
-  }, []);
+  const [user] = useState({ full_name: 'Admin', email: 'admin@miraiskin.com' });
 
   return (
     <SidebarProvider>

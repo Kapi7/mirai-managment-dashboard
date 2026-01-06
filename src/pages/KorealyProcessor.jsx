@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { base44 } from "@/api/base44Client";
+import { api } from "@/api/apiClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -20,20 +20,14 @@ export default function KorealyProcessor() {
         setLoading(true);
         setMessage(null);
         try {
-            const response = await base44.functions.invoke('fetchKorealyEmails');
+            const data = await api.fetchKorealyEmails();
 
-            // Check if there's an error in the response data
-            if (response.data.error) {
-                throw new Error(response.data.error);
-            }
-
-            setPendingEmails(response.data.pending || []);
-            setAllEmails(response.data.all || []);
-            setGmailAccount(response.data.gmailAccount);
+            setPendingEmails(data.pending || []);
+            setAllEmails(data.all || []);
+            setGmailAccount(data.gmailAccount);
         } catch (error) {
             console.error('Fetch emails error:', error);
-            const errorMessage = error.response?.data?.error || error.message || 'Failed to fetch emails';
-            setMessage({ type: 'error', text: errorMessage });
+            setMessage({ type: 'error', text: error.message || 'Failed to fetch emails' });
         } finally {
             setLoading(false);
         }
@@ -42,34 +36,33 @@ export default function KorealyProcessor() {
     const addTracking = async (email) => {
         setProcessing(prev => ({ ...prev, [email.id]: true }));
         setMessage(null);
-        
+
         try {
-            const response = await base44.functions.invoke('processKorealyShippingREST', {
-                subject: email.subject,
-                body: email.body || `${email.carrier} tracking number: ${email.korealyTracking}`
+            await api.updateShopifyTracking(
+                email.orderNumber,
+                email.korealyTracking,
+                email.carrier
+            );
+
+            setMessage({
+                type: 'success',
+                text: `✅ Tracking added for order #${email.orderNumber}`
             });
-            
-            console.log('Function response:', response.data);
-            
-            setMessage({ 
-                type: 'success', 
-                text: `✅ Tracking added for order #${email.orderNumber}` 
-            });
-            
+
             // Remove from pending list locally instead of refetching
             setPendingEmails(prev => prev.filter(e => e.id !== email.id));
-            
+
             // Move to all emails with shopify tracking
-            setAllEmails(prev => prev.map(e => 
-                e.id === email.id 
+            setAllEmails(prev => prev.map(e =>
+                e.id === email.id
                     ? { ...e, shopifyTracking: email.korealyTracking }
                     : e
             ));
         } catch (error) {
             console.error('Update tracking error:', error);
-            setMessage({ 
-                type: 'error', 
-                text: error.response?.data?.error || error.message || 'Failed to add tracking' 
+            setMessage({
+                type: 'error',
+                text: error.message || 'Failed to add tracking'
             });
         } finally {
             setProcessing(prev => ({ ...prev, [email.id]: false }));
@@ -80,20 +73,21 @@ export default function KorealyProcessor() {
 
     const updateAll = async () => {
         if (pendingEmails.length === 0) return;
-        
+
         setUpdatingAll(true);
         setMessage(null);
-        
+
         let successCount = 0;
         let failedCount = 0;
         const successfulIds = [];
-        
+
         for (const email of pendingEmails) {
             try {
-                await base44.functions.invoke('processKorealyShippingREST', {
-                    subject: email.subject,
-                    body: email.body || `${email.carrier} tracking number: ${email.korealyTracking}`
-                });
+                await api.updateShopifyTracking(
+                    email.orderNumber,
+                    email.korealyTracking,
+                    email.carrier
+                );
                 successCount++;
                 successfulIds.push(email.id);
             } catch (error) {
@@ -101,20 +95,20 @@ export default function KorealyProcessor() {
                 console.error(`Failed to update order #${email.orderNumber}:`, error);
             }
         }
-        
+
         setMessage({
             type: failedCount === 0 ? 'success' : 'error',
             text: `✅ Updated ${successCount} orders${failedCount > 0 ? `, ${failedCount} failed` : ''}`
         });
-        
+
         // Update state locally
         setPendingEmails(prev => prev.filter(e => !successfulIds.includes(e.id)));
-        setAllEmails(prev => prev.map(e => 
+        setAllEmails(prev => prev.map(e =>
             successfulIds.includes(e.id)
                 ? { ...e, shopifyTracking: e.korealyTracking }
                 : e
         ));
-        
+
         setUpdatingAll(false);
     };
 
