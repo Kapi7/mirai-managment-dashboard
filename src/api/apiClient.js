@@ -28,5 +28,21 @@ export const api = {
       throw new Error(error.error || 'Failed to update tracking');
     }
     return response.json();
+  },
+
+  async removeShopifyTracking(orderNumber) {
+    const response = await fetch(`${API_BASE_URL}/api/remove-shopify-tracking`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ orderNumber })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Failed to remove tracking');
+    }
+    return response.json();
   }
 };

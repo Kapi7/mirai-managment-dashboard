@@ -43,35 +43,27 @@ const shopify = {
 
 // Helper: Parse Korealy email for tracking info
 function parseKorealyEmail(subject, body) {
-  // Extract order number from subject: "Order #1234 has been shipped"
-  const orderMatch = subject.match(/Order #(\d+)/i);
+  // Extract order number from subject: "A shipment from order #1907 is on the way"
+  const orderMatch = subject.match(/order #(\d+)/i);
   const orderNumber = orderMatch ? orderMatch[1] : null;
 
-  // Extract tracking number - common patterns
-  const trackingPatterns = [
-    /tracking\s*(?:number|#)?\s*:?\s*([A-Z0-9]{10,})/i,
-    /tracking\s*code\s*:?\s*([A-Z0-9]{10,})/i,
-    /([A-Z0-9]{13,})/  // Generic alphanumeric tracking
-  ];
-
+  // Extract tracking number from "GOFO tracking number: GFUS01028388781186"
   let trackingNumber = null;
-  for (const pattern of trackingPatterns) {
-    const match = body.match(pattern);
-    if (match) {
-      trackingNumber = match[1];
-      break;
+
+  // Try GOFO/GFUS pattern first (most common)
+  const gofoMatch = body.match(/(?:GOFO|tracking number):\s*([A-Z0-9]{10,})/i);
+  if (gofoMatch) {
+    trackingNumber = gofoMatch[1];
+  } else {
+    // Try Australia Post pattern (numbers only)
+    const ausPostMatch = body.match(/(\d{20,})/);
+    if (ausPostMatch) {
+      trackingNumber = ausPostMatch[1];
     }
   }
 
-  // Extract carrier
-  const carriers = ['Australia Post', 'AusPost', 'DHL', 'FedEx', 'UPS'];
-  let carrier = 'Australia Post'; // default
-  for (const c of carriers) {
-    if (body.toLowerCase().includes(c.toLowerCase())) {
-      carrier = c;
-      break;
-    }
-  }
+  // Carrier is always Australia Post for Korealy
+  const carrier = 'Australia Post';
 
   return { orderNumber, trackingNumber, carrier };
 }
@@ -153,14 +145,17 @@ app.get('/api/fetch-korealy-emails', async (req, res) => {
     console.log(`📦 ${pending.length} pending shipments need updating`);
     console.log(`✅ ${emails.filter(e => e.shopifyTracking).length} already synced to Shopify`);
 
+    // Filter out N/A orders from the "all" list
+    const validEmails = emails.filter(e => e.orderNumber !== 'N/A');
+
     res.json({
       pending,
-      all: emails,
+      all: validEmails,
       gmailAccount: process.env.GMAIL_USER_EMAIL || 'Connected',
       stats: {
-        total: emails.length,
+        total: validEmails.length,
         pending: pending.length,
-        synced: emails.filter(e => e.shopifyTracking).length,
+        synced: validEmails.filter(e => e.shopifyTracking).length,
         needsParsing: emails.filter(e => e._debug).length
       }
     });
@@ -250,6 +245,58 @@ async function fetchShopifyOrder(orderNumber) {
   const data = await response.json();
   return data.orders?.[0] || null;
 }
+
+// API: Remove tracking from Shopify (Undo)
+app.post('/api/remove-shopify-tracking', async (req, res) => {
+  try {
+    const { orderNumber } = req.body;
+
+    if (!orderNumber) {
+      return res.status(400).json({ error: 'Missing orderNumber' });
+    }
+
+    // Find order in Shopify
+    const order = await fetchShopifyOrder(orderNumber);
+
+    if (!order) {
+      return res.status(404).json({ error: `Order #${orderNumber} not found in Shopify` });
+    }
+
+    // Find the fulfillment to cancel
+    const fulfillment = order.fulfillments?.[0];
+
+    if (!fulfillment) {
+      return res.status(404).json({ error: `No fulfillment found for order #${orderNumber}` });
+    }
+
+    // Cancel the fulfillment
+    const cancelResponse = await fetch(
+      `https://${shopify.store}/admin/api/${shopify.apiVersion}/orders/${order.id}/fulfillments/${fulfillment.id}/cancel.json`,
+      {
+        method: 'POST',
+        headers: {
+          'X-Shopify-Access-Token': shopify.accessToken,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({})
+      }
+    );
+
+    if (!cancelResponse.ok) {
+      const errorData = await cancelResponse.json();
+      throw new Error(errorData.errors || 'Failed to cancel fulfillment');
+    }
+
+    res.json({
+      success: true,
+      message: `Tracking removed for order #${orderNumber}`
+    });
+
+  } catch (error) {
+    console.error('Remove tracking error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // Health check
 app.get('/health', (req, res) => {

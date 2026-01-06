@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
-import { Package, RefreshCw, Loader2, Mail, History, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Package, RefreshCw, Loader2, Mail, History, AlertCircle, CheckCircle2, Undo2 } from "lucide-react";
 
 export default function KorealyProcessor() {
     const [pendingEmails, setPendingEmails] = useState([]);
@@ -110,6 +110,38 @@ export default function KorealyProcessor() {
         ));
 
         setUpdatingAll(false);
+    };
+
+    const removeTracking = async (email) => {
+        setProcessing(prev => ({ ...prev, [email.id]: true }));
+        setMessage(null);
+
+        try {
+            await api.removeShopifyTracking(email.orderNumber);
+
+            setMessage({
+                type: 'success',
+                text: `🔄 Tracking removed for order #${email.orderNumber}`
+            });
+
+            // Move back to pending
+            setPendingEmails(prev => [...prev, { ...email, shopifyTracking: null }]);
+
+            // Update in all emails
+            setAllEmails(prev => prev.map(e =>
+                e.id === email.id
+                    ? { ...e, shopifyTracking: null }
+                    : e
+            ));
+        } catch (error) {
+            console.error('Remove tracking error:', error);
+            setMessage({
+                type: 'error',
+                text: error.message || 'Failed to remove tracking'
+            });
+        } finally {
+            setProcessing(prev => ({ ...prev, [email.id]: false }));
+        }
     };
 
     useEffect(() => {
@@ -284,6 +316,7 @@ export default function KorealyProcessor() {
                                         <th className="text-left p-3 font-semibold text-slate-700">Carrier</th>
                                         <th className="text-left p-3 font-semibold text-slate-700">Korealy Tracking</th>
                                         <th className="text-left p-3 font-semibold text-slate-700">Shopify Tracking</th>
+                                        <th className="text-center p-3 font-semibold text-slate-700">Action</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -295,8 +328,8 @@ export default function KorealyProcessor() {
                                                 </Badge>
                                             </td>
                                             <td className="p-3 text-slate-600">
-                                                {new Date(email.date).toLocaleDateString('en-US', { 
-                                                    month: 'short', 
+                                                {new Date(email.date).toLocaleDateString('en-US', {
+                                                    month: 'short',
                                                     day: 'numeric',
                                                     year: 'numeric'
                                                 })}
@@ -312,6 +345,29 @@ export default function KorealyProcessor() {
                                                     <span className="text-green-700">{email.shopifyTracking}</span>
                                                 ) : (
                                                     <span className="text-slate-400">—</span>
+                                                )}
+                                            </td>
+                                            <td className="p-3 text-center">
+                                                {email.shopifyTracking && (
+                                                    <Button
+                                                        onClick={() => removeTracking(email)}
+                                                        disabled={processing[email.id]}
+                                                        size="sm"
+                                                        variant="outline"
+                                                        className="gap-2 border-orange-300 text-orange-600 hover:bg-orange-50"
+                                                    >
+                                                        {processing[email.id] ? (
+                                                            <>
+                                                                <Loader2 className="w-3 h-3 animate-spin" />
+                                                                Removing...
+                                                            </>
+                                                        ) : (
+                                                            <>
+                                                                <Undo2 className="w-3 h-3" />
+                                                                Undo
+                                                            </>
+                                                        )}
+                                                    </Button>
                                                 )}
                                             </td>
                                         </tr>
