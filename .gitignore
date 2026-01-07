@@ -24,3 +24,25 @@ dist-ssr
 *.sw?
 
 .env
+python_backend/.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+python_backend/venv/
+python_backend/.venv/
+python_backend/ENV/
+python_backend/env/
+
+# Python Backend Credentials
+python_backend/client_secret_*.json
+python_backend/secret_*.json
+python_backend/.google_oauth/
+python_backend/.orders_state.json
+python_backend/.seen_orders.json
+python_backend/.telegram_*
+python_backend/google-ads.yaml
+python_backend/google-ads-2.yaml

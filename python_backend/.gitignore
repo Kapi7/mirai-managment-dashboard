@@ -1,0 +1,32 @@
+# Environment and credentials
+.env
+*.json
+!config.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+ENV/
+env/
+
+# Google OAuth
+.google_oauth/
+client_secret_*.json
+secret_*.json
+google-ads-2.yaml
+
+# State files
+.orders_state.json
+.seen_orders.json
+.telegram_*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
