@@ -21,6 +21,36 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+async def startup_event():
+    """Log configuration on startup for debugging"""
+    print("=" * 60)
+    print("🚀 Mirai Reports API Starting Up")
+    print("=" * 60)
+
+    # Check for google-ads.yaml
+    config_path = os.getenv("GOOGLE_ADS_CONFIG", "google-ads.yaml")
+    config_locations = [
+        config_path,
+        "/app/google-ads.yaml",
+        os.path.join(os.path.dirname(__file__), "google-ads.yaml")
+    ]
+
+    print("\n📋 Configuration Check:")
+    print(f"  GOOGLE_ADS_CONFIG env: {os.getenv('GOOGLE_ADS_CONFIG', 'not set')}")
+    print(f"  GOOGLE_ADS_CUSTOMER_IDS: {os.getenv('GOOGLE_ADS_CUSTOMER_IDS', 'not set')}")
+
+    print("\n🔍 Looking for google-ads.yaml:")
+    for loc in config_locations:
+        exists = os.path.exists(loc)
+        print(f"  {'✅' if exists else '❌'} {loc}")
+        if exists:
+            break
+
+    print("\n" + "=" * 60)
+    print()
+
+
 class DateRangeRequest(BaseModel):
     start_date: str  # YYYY-MM-DD
     end_date: str    # YYYY-MM-DD
