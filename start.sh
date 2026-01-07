@@ -32,7 +32,13 @@ fi
 
 echo "✅ Python backend running (PID: $PYTHON_PID)"
 
+# Build frontend
+echo "📦 Building frontend..."
+cd ..
+npm install --quiet
+npm run build
+
 # Start Node.js server on main port (10000 for Render, or PORT env var)
 echo "🚀 Starting Node.js server on port ${PORT:-10000}..."
-cd ../server
+cd server
 exec node index.js
