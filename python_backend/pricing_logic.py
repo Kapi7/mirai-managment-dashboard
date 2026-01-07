@@ -1,12 +1,13 @@
 """
 Pricing logic - fetches directly from Shopify GraphQL API
-No Google Sheets dependency
+Also fetches historical update log from Google Sheets
 """
 import os
 import time
 import requests
 from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
+from datetime import datetime
 
 load_dotenv()
 
@@ -236,11 +237,120 @@ def fetch_price_updates() -> List[Dict[str, Any]]:
 # ================== UPDATE LOG TAB ==================
 def fetch_update_log(limit: Optional[int] = None) -> List[Dict[str, Any]]:
     """
-    Get price update history
-    For now, returns empty list - will be stored in database later
+    Get price update history from Google Sheets
     """
-    # This will be implemented with a database/log file
-    return []
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+
+        # Google Sheets config
+        SHEET_NAME = os.getenv("GOOGLE_SHEET_NAME", "mirai price bot")
+        SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
+        GOOGLE_AUTH_MODE = os.getenv("GOOGLE_AUTH_MODE", "oauth").lower()
+
+        if not SHEET_ID:
+            print("⚠️ GOOGLE_SHEET_ID not configured")
+            return []
+
+        # Authenticate
+        if GOOGLE_AUTH_MODE == "service_account":
+            SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+            if not SERVICE_ACCOUNT_JSON or not os.path.exists(SERVICE_ACCOUNT_JSON):
+                print("⚠️ Service account JSON not found")
+                return []
+
+            SCOPES = [
+                "https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/drive"
+            ]
+            creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_JSON, scopes=SCOPES)
+            gc = gspread.authorize(creds)
+        else:  # oauth mode
+            OAUTH_DIR = os.getenv("GOOGLE_OAUTH_DIR", ".google_oauth")
+            token_path = os.path.join(OAUTH_DIR, "token.json")
+
+            if not os.path.exists(token_path):
+                print("⚠️ OAuth token not found. Run auth_google.py first.")
+                return []
+
+            gc = gspread.oauth(
+                credentials_filename=os.path.join(OAUTH_DIR, "credentials.json"),
+                authorized_user_filename=token_path
+            )
+
+        # Open sheet
+        sh = gc.open_by_key(SHEET_ID)
+
+        # Get UpdatesLog worksheet
+        try:
+            ws = sh.worksheet("UpdatesLog")
+        except:
+            print("⚠️ UpdatesLog worksheet not found")
+            return []
+
+        # Get all values
+        values = ws.get_all_values()
+
+        if not values or len(values) < 2:
+            return []
+
+        # Parse header and data
+        headers = [h.strip().lower() for h in values[0]]
+        data_rows = values[1:]
+
+        # Map to expected format
+        result = []
+        for row in data_rows:
+            if not row or not row[0]:  # Skip empty rows
+                continue
+
+            record = {}
+            for i, header in enumerate(headers):
+                if i < len(row):
+                    record[header] = row[i]
+
+            # Normalize column names to match frontend expectations
+            normalized = {
+                "timestamp": record.get("timestamp", ""),
+                "item": record.get("item", ""),
+                "variant_id": record.get("variant_gid", "").split("/")[-1] if "/" in record.get("variant_gid", "") else record.get("variant_gid", ""),
+                "market": record.get("scope", "").upper() if record.get("scope") else "US",
+                "currency": record.get("currency", "USD"),
+                "old_price": float(record.get("old_price", 0) or 0),
+                "new_price": float(record.get("new_price", 0) or 0),
+                "old_compare_at": float(record.get("old_compare_at", 0) or 0),
+                "new_compare_at": float(record.get("new_compare_at", 0) or 0),
+                "status": "success",  # Historical records are successful
+                "notes": record.get("note", "")
+            }
+
+            # Calculate change percentage
+            if normalized["old_price"] > 0:
+                change = ((normalized["new_price"] - normalized["old_price"]) / normalized["old_price"]) * 100
+                normalized["change_pct"] = round(change, 2)
+            else:
+                normalized["change_pct"] = 0.0
+
+            result.append(normalized)
+
+        # Sort by timestamp descending (most recent first)
+        result.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+
+        # Apply limit if specified
+        if limit and limit > 0:
+            result = result[:limit]
+
+        print(f"✅ Loaded {len(result)} update log entries from Google Sheets")
+        return result
+
+    except ImportError:
+        print("⚠️ gspread not installed. Install with: pip install gspread google-auth")
+        return []
+    except Exception as e:
+        print(f"❌ Error fetching update log from Google Sheets: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
 
 
 # ================== TARGET PRICES TAB ==================

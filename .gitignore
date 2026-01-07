@@ -45,4 +45,4 @@ python_backend/.orders_state.json
 python_backend/.seen_orders.json
 python_backend/.telegram_*
 python_backend/google-ads.yaml
-python_backend/google-ads-2.yaml
+python_backend/google-ads-2.yaml.google_oauth/
