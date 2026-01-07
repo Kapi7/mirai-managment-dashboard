@@ -244,6 +244,28 @@ app.post('/api/update-shopify-tracking', async (req, res) => {
 
     // No existing fulfillment - create one with tracking
     console.log(`📦 Creating new fulfillment with tracking for order #${orderNumber}`);
+    console.log(`Order status: ${order.financial_status}, fulfillment_status: ${order.fulfillment_status}`);
+    console.log(`Line items:`, order.line_items.map(i => ({
+      id: i.id,
+      name: i.name,
+      quantity: i.quantity,
+      fulfillable_quantity: i.fulfillable_quantity,
+      fulfillment_status: i.fulfillment_status
+    })));
+
+    // Check if there are any items that can be fulfilled
+    const fulfillableItems = order.line_items.filter(item =>
+      item.fulfillable_quantity > 0
+    );
+
+    if (fulfillableItems.length === 0) {
+      console.log(`❌ No fulfillable items in order #${orderNumber}`);
+      return res.status(400).json({
+        error: `Order #${orderNumber} has no items that can be fulfilled. All items may already be fulfilled.`
+      });
+    }
+
+    console.log(`Found ${fulfillableItems.length} fulfillable items`);
 
     const fulfillmentData = {
       fulfillment: {
@@ -251,12 +273,14 @@ app.post('/api/update-shopify-tracking', async (req, res) => {
         tracking_number: trackingNumber,
         tracking_company: carrier || 'Australia Post',
         notify_customer: true,
-        line_items: order.line_items.map(item => ({
+        line_items: fulfillableItems.map(item => ({
           id: item.id,
-          quantity: item.quantity
+          quantity: item.fulfillable_quantity
         }))
       }
     };
+
+    console.log('Fulfillment request:', JSON.stringify(fulfillmentData, null, 2));
 
     const fulfillmentResponse = await fetch(
       `https://${shopify.store}/admin/api/${shopify.apiVersion}/orders/${order.id}/fulfillments.json`,
@@ -272,15 +296,25 @@ app.post('/api/update-shopify-tracking', async (req, res) => {
 
     if (!fulfillmentResponse.ok) {
       let errorMessage = 'Failed to create fulfillment';
+      let fullError = null;
       try {
         const errorData = await fulfillmentResponse.json();
+        fullError = errorData;
         errorMessage = JSON.stringify(errorData.errors || errorData);
-        console.error('Shopify API error:', errorData);
+        console.error('❌ Shopify API full error response:', JSON.stringify(errorData, null, 2));
       } catch (e) {
         errorMessage = `Shopify API error: ${fulfillmentResponse.status} ${fulfillmentResponse.statusText}`;
         console.error(errorMessage);
       }
-      return res.status(500).json({ error: errorMessage });
+      return res.status(500).json({
+        error: errorMessage,
+        shopifyError: fullError,
+        orderStatus: {
+          financial_status: order.financial_status,
+          fulfillment_status: order.fulfillment_status,
+          location_id: order.location_id
+        }
+      });
     }
 
     const result = await fulfillmentResponse.json();
