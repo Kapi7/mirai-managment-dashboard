@@ -14,7 +14,8 @@ cd ..
 
 echo "🐍 Installing Python dependencies..."
 cd python_backend
-pip3 install -r requirements.txt
+# Use minimal requirements for dashboard (no Telegram, no gspread, etc.)
+pip3 install -r requirements_minimal.txt
 cd ..
 
 echo "✅ Build complete!"

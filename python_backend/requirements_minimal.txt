@@ -1,0 +1,18 @@
+# Minimal dependencies for dashboard reports only
+fastapi
+uvicorn[standard]
+pydantic
+pytz
+requests
+pandas
+
+# API clients
+python-dotenv
+ShopifyAPI
+
+# Google Ads (optional - will work without it)
+google-ads
+google-api-python-client
+google-auth
+google-auth-oauthlib
+google-auth-httplib2

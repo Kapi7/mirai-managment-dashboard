@@ -15,7 +15,7 @@ cd python_backend
 
 # Test imports first
 echo "🔍 Testing Python imports..."
-if python3 -c "import server" 2>&1; then
+if python3 -c "import simple_server" 2>&1; then
   echo "✅ Python imports successful"
 else
   echo "❌ Python import test failed!"
@@ -24,7 +24,7 @@ fi
 
 # Start Python server in background, output to both console and file
 echo "🚀 Launching Python server..."
-python3 server.py > ../python.log 2>&1 &
+python3 simple_server.py > ../python.log 2>&1 &
 PYTHON_PID=$!
 cd ..
 
