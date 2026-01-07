@@ -18,6 +18,30 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
+// Proxy for Python Reports API (avoids CORS issues)
+const PYTHON_API = process.env.PYTHON_API_URL || 'https://mirai-reports.onrender.com';
+app.use('/reports-api', async (req, res) => {
+  try {
+    const url = `${PYTHON_API}${req.path}`;
+    console.log(`📊 Proxying to Python API: ${req.method} ${url}`);
+
+    const response = await fetch(url, {
+      method: req.method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...req.headers
+      },
+      body: req.method !== 'GET' ? JSON.stringify(req.body) : undefined
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Python API proxy error:', error);
+    res.status(500).json({ error: 'Failed to reach reports API' });
+  }
+});
+
 // Gmail OAuth2 setup
 const oauth2Client = new google.auth.OAuth2(
   process.env.GMAIL_CLIENT_ID,

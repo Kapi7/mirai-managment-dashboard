@@ -10,9 +10,9 @@ import { CalendarIcon, TrendingUp, TrendingDown, DollarSign, ShoppingCart, Targe
 import { format, subDays } from 'date-fns';
 import { cn } from '@/lib/utils';
 
-// Use local Python API in development, production URL in build
+// Use same-origin API to avoid CORS issues
 const REPORT_API_URL = import.meta.env.VITE_REPORT_API_URL ||
-  (import.meta.env.DEV ? 'http://localhost:8080' : 'https://mirai-reports.onrender.com');
+  (import.meta.env.DEV ? 'http://localhost:8080' : '/reports-api');
 
 export default function Reports() {
   const [loading, setLoading] = useState(false);
