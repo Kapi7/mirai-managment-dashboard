@@ -242,84 +242,76 @@ app.post('/api/update-shopify-tracking', async (req, res) => {
       });
     }
 
-    // No existing fulfillment - create one with tracking
+    // No existing fulfillment - create one with tracking using FulfillmentOrder API
     console.log(`📦 Creating new fulfillment with tracking for order #${orderNumber}`);
     console.log(`Order status: ${order.financial_status}, fulfillment_status: ${order.fulfillment_status}`);
-    console.log(`Line items:`, order.line_items.map(i => ({
-      id: i.id,
-      name: i.name,
-      quantity: i.quantity,
-      fulfillable_quantity: i.fulfillable_quantity,
-      fulfillment_status: i.fulfillment_status
-    })));
 
-    // Check if there are any items that can be fulfilled
-    const fulfillableItems = order.line_items.filter(item =>
-      item.fulfillable_quantity > 0
+    // Step 1: Get fulfillment orders for this order
+    console.log(`🔍 Fetching fulfillment orders for order #${orderNumber}`);
+    const fulfillmentOrdersResponse = await fetch(
+      `https://${shopify.store}/admin/api/${shopify.apiVersion}/orders/${order.id}/fulfillment_orders.json`,
+      {
+        headers: {
+          'X-Shopify-Access-Token': shopify.accessToken,
+          'Content-Type': 'application/json'
+        }
+      }
     );
 
-    if (fulfillableItems.length === 0) {
-      console.log(`❌ No fulfillable items in order #${orderNumber}`);
+    if (!fulfillmentOrdersResponse.ok) {
+      console.error(`❌ Failed to fetch fulfillment orders`);
+      return res.status(500).json({ error: 'Failed to fetch fulfillment orders from Shopify' });
+    }
+
+    const fulfillmentOrdersData = await fulfillmentOrdersResponse.json();
+    const fulfillmentOrder = fulfillmentOrdersData.fulfillment_orders?.[0];
+
+    if (!fulfillmentOrder) {
+      console.error(`❌ No fulfillment orders found for order #${orderNumber}`);
+      return res.status(400).json({ error: 'No fulfillment orders available for this order' });
+    }
+
+    console.log(`✓ Found fulfillment order ID: ${fulfillmentOrder.id}, status: ${fulfillmentOrder.status}`);
+
+    // Step 2: Build line items for fulfillment
+    const lineItemsToFulfill = fulfillmentOrder.line_items
+      .filter(item => item.fulfillable_quantity > 0)
+      .map(item => ({
+        id: item.id,
+        quantity: item.fulfillable_quantity
+      }));
+
+    if (lineItemsToFulfill.length === 0) {
+      console.log(`❌ No fulfillable items in fulfillment order`);
       return res.status(400).json({
-        error: `Order #${orderNumber} has no items that can be fulfilled. All items may already be fulfilled.`
+        error: `Order #${orderNumber} has no items that can be fulfilled.`
       });
     }
 
-    console.log(`Found ${fulfillableItems.length} fulfillable items`);
+    console.log(`Found ${lineItemsToFulfill.length} fulfillable items in fulfillment order`);
 
-    // Get location_id - if order doesn't have one, fetch from Shopify locations
-    let locationId = order.location_id;
-
-    if (!locationId) {
-      console.log(`⚠️ Order has no location_id, fetching default location from Shopify`);
-      try {
-        const locationsResponse = await fetch(
-          `https://${shopify.store}/admin/api/${shopify.apiVersion}/locations.json`,
-          {
-            headers: {
-              'X-Shopify-Access-Token': shopify.accessToken,
-              'Content-Type': 'application/json'
-            }
-          }
-        );
-
-        if (locationsResponse.ok) {
-          const locationsData = await locationsResponse.json();
-          const activeLocation = locationsData.locations?.find(loc => loc.active);
-          if (activeLocation) {
-            locationId = activeLocation.id;
-            console.log(`✓ Using location: ${activeLocation.name} (ID: ${locationId})`);
-          }
-        }
-      } catch (e) {
-        console.error('Failed to fetch locations:', e);
-      }
-    }
-
-    if (!locationId) {
-      console.error(`❌ No valid location_id found for order #${orderNumber}`);
-      return res.status(400).json({
-        error: `Cannot create fulfillment: No valid location found in Shopify`
-      });
-    }
-
+    // Step 3: Create fulfillment using the modern FulfillmentOrder API
     const fulfillmentData = {
       fulfillment: {
-        location_id: locationId,
-        tracking_number: trackingNumber,
-        tracking_company: carrier || 'Australia Post',
-        notify_customer: true,
-        line_items: fulfillableItems.map(item => ({
-          id: item.id,
-          quantity: item.fulfillable_quantity
-        }))
+        line_items_by_fulfillment_order: [
+          {
+            fulfillment_order_id: fulfillmentOrder.id,
+            fulfillment_order_line_items: lineItemsToFulfill
+          }
+        ],
+        tracking_info: {
+          number: trackingNumber,
+          company: carrier || 'Australia Post',
+          url: null
+        },
+        notify_customer: true
       }
     };
 
     console.log('Fulfillment request:', JSON.stringify(fulfillmentData, null, 2));
 
     const fulfillmentResponse = await fetch(
-      `https://${shopify.store}/admin/api/${shopify.apiVersion}/orders/${order.id}/fulfillments.json`,
+      `https://${shopify.store}/admin/api/${shopify.apiVersion}/fulfillments.json`,
       {
         method: 'POST',
         headers: {
@@ -344,12 +336,7 @@ app.post('/api/update-shopify-tracking', async (req, res) => {
       }
       return res.status(500).json({
         error: errorMessage,
-        shopifyError: fullError,
-        orderStatus: {
-          financial_status: order.financial_status,
-          fulfillment_status: order.fulfillment_status,
-          location_id: order.location_id
-        }
+        shopifyError: fullError
       });
     }
 
