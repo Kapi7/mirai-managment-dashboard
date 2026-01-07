@@ -56,6 +56,11 @@ fi
 # Start Node.js backend on main port (foreground)
 echo ""
 echo "📦 Starting Node.js server..."
+
+# Kill any existing processes on port 10000 (cleanup from previous crashed instances)
+echo "🧹 Cleaning up any existing processes on port 10000..."
+lsof -ti:10000 | xargs kill -9 2>/dev/null || echo "No existing processes found"
+
 cd server
 node index.js
 
