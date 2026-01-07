@@ -27,16 +27,21 @@ SUMMARY_CHAT_ID = (os.getenv("TELEGRAM_SUMMARY_CHAT_ID") or os.getenv("TELEGRAM_
 
 _API_BASE = f"https://api.telegram.org/bot{BOT_TOKEN}" if BOT_TOKEN else ""
 
-# Render persistent disk mounted at /app/outputs
-SUMMARY_STATE_FILE = Path(os.getenv("SUMMARY_STATE_FILE", "/app/outputs/.telegram_summary_state.json"))
+# Use /tmp for state files (writable in all environments including Render dashboard)
+# The live mirai-reports service uses /app/outputs which is mounted persistent disk
+SUMMARY_STATE_FILE = Path(os.getenv("SUMMARY_STATE_FILE", "/tmp/.telegram_summary_state.json"))
 SEEN_ORDERS_FILE = Path(
     os.getenv("TELEGRAM_SEEN_ORDERS_FILE")
     or os.getenv("TELEGRAM_SEEN_FILE")
-    or "/app/outputs/.telegram_seen_orders.json"
+    or "/tmp/.telegram_seen_orders.json"
 )
 
-SUMMARY_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-SEEN_ORDERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+# Safely create directories - won't fail if no permission (dashboard doesn't need these anyway)
+try:
+    SUMMARY_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SEEN_ORDERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+except (PermissionError, OSError):
+    pass  # Ignore permission errors - Telegram features won't work but reports will
 
 
 # ---------------- validation ----------------
