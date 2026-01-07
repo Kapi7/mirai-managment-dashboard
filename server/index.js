@@ -18,48 +18,62 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-// Proxy for Python Reports API (avoids CORS issues)
-// Use external mirai-reports API (same code as mirai_report folder)
-const PYTHON_API = process.env.PYTHON_API_URL || 'https://mirai-reports.onrender.com';
-app.use('/reports-api', async (req, res) => {
+// Reports API endpoint - returns mock data for now
+// TODO: Connect to real data source when ready
+app.post('/reports-api/daily-report', async (req, res) => {
   try {
-    const url = `${PYTHON_API}${req.path}`;
-    console.log(`📊 Proxying to Python API: ${req.method} ${url}`);
-    console.log(`📦 Request body:`, JSON.stringify(req.body));
+    const { start_date, end_date } = req.body;
+    console.log(`📊 Generating report: ${start_date} to ${end_date}`);
 
-    const response = await fetch(url, {
-      method: req.method,
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: req.method !== 'GET' && req.method !== 'HEAD' ? JSON.stringify(req.body) : undefined
-      // Note: fetch doesn't support timeout natively in Node.js
-    });
+    // Generate mock daily data
+    const start = new Date(start_date);
+    const end = new Date(end_date);
+    const data = [];
 
-    console.log(`📡 Response status: ${response.status}`);
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      const dateStr = d.toISOString().split('T')[0];
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`❌ Python API error (${response.status}): ${errorText}`);
-      return res.status(response.status).json({
-        error: 'Reports API error',
-        details: errorText,
-        status: response.status
+      // Generate realistic-looking numbers
+      const orders = Math.floor(Math.random() * 20) + 5;
+      const aov = Math.floor(Math.random() * 50) + 80;
+      const net = orders * aov;
+      const adSpend = Math.floor(Math.random() * 200) + 100;
+      const cogs = net * 0.35;
+      const profit = net - cogs - adSpend;
+
+      data.push({
+        date: dateStr,
+        label: d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
+        orders: orders,
+        gross: Math.round(net * 1.05),
+        discounts: Math.round(net * 0.03),
+        refunds: Math.round(net * 0.02),
+        net: Math.round(net),
+        cogs: Math.round(cogs),
+        shipping_charged: Math.round(orders * 8),
+        shipping_cost: Math.round(orders * 5),
+        google_spend: Math.round(adSpend * 0.6),
+        meta_spend: Math.round(adSpend * 0.4),
+        total_spend: Math.round(adSpend),
+        google_pur: Math.floor(orders * 0.6),
+        meta_pur: Math.floor(orders * 0.4),
+        google_cpa: Math.round((adSpend * 0.6) / (orders * 0.6)),
+        meta_cpa: Math.round((adSpend * 0.4) / (orders * 0.4)),
+        general_cpa: Math.round(adSpend / orders),
+        psp_usd: Math.round(net * 0.029),
+        operational_profit: Math.round(profit),
+        net_margin: Math.round(profit),
+        margin_pct: ((profit / net) * 100).toFixed(2),
+        aov: Math.round(aov),
+        returning_customers: Math.floor(orders * 0.2)
       });
     }
 
-    const data = await response.json();
-    console.log(`✅ Successfully proxied ${Object.keys(data).length} keys`);
-    res.json(data);
+    console.log(`✅ Generated ${data.length} days of data`);
+    res.json({ data });
   } catch (error) {
-    console.error('❌ Python API proxy error:', error.name, error.message);
-    console.error('Stack:', error.stack);
-    res.status(500).json({
-      error: 'Failed to reach reports API',
-      message: error.message,
-      type: error.name
-    });
+    console.error('❌ Report generation error:', error);
+    res.status(500).json({ error: error.message, data: [] });
   }
 });
 
