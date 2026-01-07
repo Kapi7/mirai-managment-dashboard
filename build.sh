@@ -14,7 +14,7 @@ cd ..
 
 echo "🐍 Installing Python dependencies..."
 cd python_backend
-pip install -r requirements.txt
+pip3 install -r requirements.txt
 cd ..
 
 echo "✅ Build complete!"
