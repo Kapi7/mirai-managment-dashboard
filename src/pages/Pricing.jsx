@@ -148,14 +148,22 @@ export default function Pricing() {
     setError(null);
     try {
       const response = await fetch(`${API_URL}/pricing/target-prices?country=${selectedCountry}`);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
       const result = await response.json();
+
+      console.log('Target Prices API response:', result);
+      console.log('Data length:', result.data?.length);
 
       if (result.error) {
         setError(result.error);
       } else {
         setTargetPrices(result.data || []);
+        console.log('Set target prices state:', result.data?.length || 0);
       }
     } catch (err) {
+      console.error('Target prices fetch error:', err);
       setError(`Failed to fetch target prices: ${err.message}`);
     } finally {
       setLoading(false);
@@ -462,7 +470,7 @@ export default function Pricing() {
                           <TableRow key={price.variant_id}>
                             <TableCell className="font-mono text-sm">{price.variant_id}</TableCell>
                             <TableCell className="font-medium max-w-[200px] truncate">{price.item}</TableCell>
-                            <TableCell className="text-right">{price.weight_g.toFixed(0)}</TableCell>
+                            <TableCell className="text-right">{(price.weight_g || 0).toFixed(0)}</TableCell>
                             <TableCell className="text-right">{formatCurrency(price.cogs)}</TableCell>
                             <TableCell className="text-right">{formatCurrency(price[`current_${countryKey}`])}</TableCell>
                             <TableCell className="text-right">{formatCurrency(price[`ship_${countryKey}`])}</TableCell>
@@ -475,7 +483,7 @@ export default function Pricing() {
                             <TableCell className="text-right">{formatCurrency(price[`competitive_price_${countryKey}`])}</TableCell>
                             <TableCell className="text-right font-semibold">{formatCurrency(price[`final_suggested_${countryKey}`])}</TableCell>
                             <TableCell className="text-right">
-                              <span className={price[`loss_amount_${countryKey}`] < 0 ? 'text-red-600' : 'text-green-600'}>
+                              <span className={(price[`loss_amount_${countryKey}`] || 0) < 0 ? 'text-red-600' : 'text-green-600'}>
                                 {formatCurrency(price[`loss_amount_${countryKey}`])}
                               </span>
                             </TableCell>
