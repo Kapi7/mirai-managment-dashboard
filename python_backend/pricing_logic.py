@@ -42,38 +42,26 @@ def _shopify_graphql(query: str, variables: Optional[Dict] = None):
 
 
 # ================== ITEMS TAB ==================
-def fetch_items(market_filter: Optional[str] = None) -> List[Dict[str, Any]]:
-    """
-    Fetch product variants from Shopify
-    Returns: variant_id, item, weight, cogs, retail_base, compare_at_base
-    """
-    items = []
+def _collect_sellable_variant_ids() -> set:
+    """Get IDs of variants that are available for sale from active products"""
+    sellable = set()
     cursor = None
 
-    # GraphQL query to fetch variants with cost, weight, and prices
     query = """
     query($cursor: String) {
-      productVariants(first: 250, after: $cursor) {
+      products(first: 150, after: $cursor, query: "status:active") {
         pageInfo { hasNextPage }
         edges {
           cursor
           node {
             id
-            legacyResourceId
-            title
-            price
-            compareAtPrice
-            weight
-            weightUnit
-            product {
-              title
-              status
-            }
-            inventoryItem {
-              id
-              unitCost {
-                amount
-                currencyCode
+            status
+            variants(first: 100) {
+              edges {
+                node {
+                  id
+                  availableForSale
+                }
               }
             }
           }
@@ -85,51 +73,137 @@ def fetch_items(market_filter: Optional[str] = None) -> List[Dict[str, Any]]:
     while True:
         try:
             result = _shopify_graphql(query, {"cursor": cursor})
+            products = result["data"]["products"]
+
+            for prod_edge in products["edges"]:
+                for var_edge in prod_edge["node"]["variants"]["edges"]:
+                    var_node = var_edge["node"]
+                    if var_node.get("availableForSale"):
+                        sellable.add(var_node["id"])
+
+            if not products["pageInfo"]["hasNextPage"]:
+                break
+
+            cursor = products["edges"][-1]["cursor"]
+            time.sleep(0.05)
+
+        except Exception as e:
+            print(f"❌ Error collecting sellable variants: {e}")
+            break
+
+    print(f"ℹ️ Found {len(sellable)} sellable variants")
+    return sellable
+
+
+def fetch_items(market_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Fetch product variants from Shopify (only sellable variants from active products)
+    Returns: variant_id, item, weight, cogs, retail_base, compare_at_base
+    """
+    # First, get the list of sellable variant IDs
+    sellable = _collect_sellable_variant_ids()
+
+    items = []
+    cursor = None
+
+    # GraphQL query matching price-bot structure
+    query = """
+    query($cursor: String) {
+      productVariants(first: 200, after: $cursor) {
+        pageInfo { hasNextPage }
+        edges {
+          cursor
+          node {
+            id
+            sku
+            title
+            price
+            compareAtPrice
+            product {
+              title
+              status
+            }
+            inventoryItem {
+              id
+              unitCost {
+                amount
+                currencyCode
+              }
+              measurement {
+                weight {
+                  value
+                  unit
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    """
+
+    total_admin = 0
+    kept = 0
+
+    while True:
+        try:
+            result = _shopify_graphql(query, {"cursor": cursor})
             variants = result["data"]["productVariants"]
 
             for edge in variants["edges"]:
                 node = edge["node"]
-                product = node["product"]
+                total_admin += 1
 
-                # Skip inactive products
-                if product["status"] != "ACTIVE":
+                gid = node["id"]
+
+                # Skip if not in sellable list
+                if gid not in sellable:
                     continue
 
-                # Extract numeric variant ID
-                variant_id = node["legacyResourceId"]
+                kept += 1
 
-                # Build item name
-                product_title = product["title"]
+                # Build item name (matching price-bot format)
+                product_title = node["product"]["title"]
                 variant_title = node["title"]
-                item_name = f"{product_title} - {variant_title}" if variant_title != "Default Title" else product_title
+                item_name = f"{product_title} — {variant_title}".strip(" — ")
 
-                # Get weight in grams
-                weight = float(node["weight"] or 0)
-                weight_unit = node["weightUnit"]
-                if weight_unit == "KILOGRAMS":
-                    weight = weight * 1000
-                elif weight_unit == "POUNDS":
-                    weight = weight * 453.592
-                elif weight_unit == "OUNCES":
-                    weight = weight * 28.3495
+                # Get weight in grams from measurement
+                grams = 0.0
+                inv_item = node.get("inventoryItem") or {}
+                meas = inv_item.get("measurement")
+                if meas and meas.get("weight"):
+                    w = float(meas["weight"]["value"] or 0)
+                    unit = (meas["weight"]["unit"] or "GRAMS").upper()
+                    weight_map = {
+                        "GRAMS": w,
+                        "KILOGRAMS": w * 1000.0,
+                        "POUNDS": w * 453.59237,
+                        "OUNCES": w * 28.349523125
+                    }
+                    grams = weight_map.get(unit, w)
 
                 # Get COGS
                 cogs = 0.0
-                if node["inventoryItem"] and node["inventoryItem"].get("unitCost"):
-                    unit_cost = node["inventoryItem"]["unitCost"]
-                    cogs = float(unit_cost["amount"] or 0)
+                uc = inv_item.get("unitCost")
+                if uc:
+                    cogs = float(uc["amount"] or 0)
 
                 # Get prices
                 retail_base = float(node["price"] or 0)
-                compare_at_base = float(node["compareAtPrice"] or 0) if node["compareAtPrice"] else 0.0
+                compare_at = float(node["compareAtPrice"] or 0) if node["compareAtPrice"] else 0.0
+
+                # Extract numeric variant ID from GID
+                import re
+                match = re.search(r'(\d+)$', gid)
+                variant_id = match.group(1) if match else gid
 
                 items.append({
                     "variant_id": str(variant_id),
                     "item": item_name,
-                    "weight": round(weight, 1),
+                    "weight": round(grams, 1),
                     "cogs": round(cogs, 2),
                     "retail_base": round(retail_base, 2),
-                    "compare_at_base": round(compare_at_base, 2),
+                    "compare_at_base": round(compare_at, 2),
                 })
 
             # Check if there are more pages
@@ -145,7 +219,7 @@ def fetch_items(market_filter: Optional[str] = None) -> List[Dict[str, Any]]:
             traceback.print_exc()
             break
 
-    print(f"✅ Fetched {len(items)} items from Shopify")
+    print(f"ℹ️ Filtered to {kept} sellable variants from ACTIVE products out of {total_admin} admin variants total.")
     return items
 
 
@@ -175,6 +249,9 @@ def fetch_target_prices(country_filter: Optional[str] = "US") -> List[Dict[str, 
     Calculate target prices based on Shopify data
     Returns calculated metrics for each variant
     """
+    # Define country at the start
+    country = (country_filter or "US").upper()
+
     # Get base items data
     items = fetch_items()
 
@@ -236,8 +313,7 @@ def fetch_target_prices(country_filter: Optional[str] = "US") -> List[Dict[str, 
         else:
             priority = "LOW"
 
-        # Build result with country suffix
-        country = country_filter.upper()
+        # Build result with country suffix (country already defined at function start)
         result = {
             "variant_id": variant_id,
             "item": item["item"],
