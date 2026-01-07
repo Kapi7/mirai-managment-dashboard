@@ -47,6 +47,29 @@ app.post('/reports-api/daily-report', async (req, res) => {
   }
 });
 
+// Pricing API endpoints - proxy all /reports-api/pricing/* to Python backend
+app.get('/reports-api/pricing/*', async (req, res) => {
+  try {
+    const path = req.path.replace('/reports-api', '');
+    const queryString = req.url.split('?')[1] || '';
+    const url = `${process.env.PYTHON_BACKEND_URL || 'http://localhost:8080'}${path}${queryString ? '?' + queryString : ''}`;
+
+    console.log(`📊 Proxying pricing request: ${path}`);
+
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error(`Python backend error: ${response.status}`);
+    }
+
+    const result = await response.json();
+    res.json(result);
+  } catch (error) {
+    console.error('❌ Pricing API error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Gmail OAuth2 setup
 const oauth2Client = new google.auth.OAuth2(
   process.env.GMAIL_CLIENT_ID,
