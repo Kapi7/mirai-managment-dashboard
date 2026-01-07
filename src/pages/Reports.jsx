@@ -303,22 +303,27 @@ export default function Reports() {
                   <TableRow>
                     <TableHead>Date</TableHead>
                     <TableHead className="text-right">Orders</TableHead>
-                    <TableHead className="text-right">Revenue</TableHead>
+                    <TableHead className="text-right">Net Sales</TableHead>
+                    <TableHead className="text-right">COGS</TableHead>
+                    <TableHead className="text-right">Est Shipping</TableHead>
                     <TableHead className="text-right">Ad Spend</TableHead>
-                    <TableHead className="text-right">Profit</TableHead>
+                    <TableHead className="text-right">Operational Profit</TableHead>
                     <TableHead className="text-right">Margin %</TableHead>
                     <TableHead className="text-right">AOV</TableHead>
                     <TableHead className="text-right">CPA</TableHead>
+                    <TableHead className="text-right">Return Customers</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {reportData.map((day) => (
                     <TableRow key={day.date}>
                       <TableCell className="font-medium">
-                        {day.label || format(new Date(day.date), 'MMM dd, yyyy')}
+                        {day.label}
                       </TableCell>
                       <TableCell className="text-right">{day.orders}</TableCell>
                       <TableCell className="text-right">{formatCurrency(day.net)}</TableCell>
+                      <TableCell className="text-right">{formatCurrency(day.cogs)}</TableCell>
+                      <TableCell className="text-right">{formatCurrency(day.shipping_cost)}</TableCell>
                       <TableCell className="text-right">{formatCurrency(day.total_spend)}</TableCell>
                       <TableCell className="text-right">
                         <span className={day.operational_profit >= 0 ? 'text-green-600' : 'text-red-600'}>
@@ -332,6 +337,7 @@ export default function Reports() {
                       </TableCell>
                       <TableCell className="text-right">{formatCurrency(day.aov)}</TableCell>
                       <TableCell className="text-right">{formatCurrency(day.general_cpa)}</TableCell>
+                      <TableCell className="text-right">{day.returning_customers}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
