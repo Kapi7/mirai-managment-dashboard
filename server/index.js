@@ -19,8 +19,8 @@ app.use(cors());
 app.use(express.json());
 
 // Proxy for Python Reports API (avoids CORS issues)
-// Use the working external API for now
-const PYTHON_API = process.env.PYTHON_API_URL || 'https://mirai-reports.onrender.com';
+// Use internal simple Python backend on port 8080
+const PYTHON_API = process.env.PYTHON_API_URL || 'http://localhost:8080';
 app.use('/reports-api', async (req, res) => {
   try {
     const url = `${PYTHON_API}${req.path}`;
