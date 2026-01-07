@@ -24,11 +24,7 @@ app.use('/reports-api', async (req, res) => {
   try {
     const url = `${PYTHON_API}${req.path}`;
     console.log(`📊 Proxying to Python API: ${req.method} ${url}`);
-    console.log(`📦 Request body:`, req.body);
-
-    // Increase timeout for cold starts (free tier can take 30-40s)
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+    console.log(`📦 Request body:`, JSON.stringify(req.body));
 
     const response = await fetch(url, {
       method: req.method,
@@ -37,27 +33,32 @@ app.use('/reports-api', async (req, res) => {
         'Accept': 'application/json'
       },
       body: req.method !== 'GET' && req.method !== 'HEAD' ? JSON.stringify(req.body) : undefined,
-      signal: controller.signal
+      timeout: 60000 // 60 second timeout
     });
-
-    clearTimeout(timeout);
 
     console.log(`📡 Response status: ${response.status}`);
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`❌ Python API error: ${errorText}`);
+      console.error(`❌ Python API error (${response.status}): ${errorText}`);
       return res.status(response.status).json({
         error: 'Reports API error',
-        details: errorText
+        details: errorText,
+        status: response.status
       });
     }
 
     const data = await response.json();
+    console.log(`✅ Successfully proxied ${Object.keys(data).length} keys`);
     res.json(data);
   } catch (error) {
-    console.error('Python API proxy error:', error);
-    res.status(500).json({ error: 'Failed to reach reports API', message: error.message });
+    console.error('❌ Python API proxy error:', error.name, error.message);
+    console.error('Stack:', error.stack);
+    res.status(500).json({
+      error: 'Failed to reach reports API',
+      message: error.message,
+      type: error.name
+    });
   }
 });
 
