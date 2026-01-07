@@ -267,9 +267,45 @@ app.post('/api/update-shopify-tracking', async (req, res) => {
 
     console.log(`Found ${fulfillableItems.length} fulfillable items`);
 
+    // Get location_id - if order doesn't have one, fetch from Shopify locations
+    let locationId = order.location_id;
+
+    if (!locationId) {
+      console.log(`⚠️ Order has no location_id, fetching default location from Shopify`);
+      try {
+        const locationsResponse = await fetch(
+          `https://${shopify.store}/admin/api/${shopify.apiVersion}/locations.json`,
+          {
+            headers: {
+              'X-Shopify-Access-Token': shopify.accessToken,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+
+        if (locationsResponse.ok) {
+          const locationsData = await locationsResponse.json();
+          const activeLocation = locationsData.locations?.find(loc => loc.active);
+          if (activeLocation) {
+            locationId = activeLocation.id;
+            console.log(`✓ Using location: ${activeLocation.name} (ID: ${locationId})`);
+          }
+        }
+      } catch (e) {
+        console.error('Failed to fetch locations:', e);
+      }
+    }
+
+    if (!locationId) {
+      console.error(`❌ No valid location_id found for order #${orderNumber}`);
+      return res.status(400).json({
+        error: `Cannot create fulfillment: No valid location found in Shopify`
+      });
+    }
+
     const fulfillmentData = {
       fulfillment: {
-        location_id: order.location_id,
+        location_id: locationId,
         tracking_number: trackingNumber,
         tracking_company: carrier || 'Australia Post',
         notify_customer: true,
