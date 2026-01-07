@@ -1,12 +1,22 @@
+import { lazy, Suspense } from 'react';
 import Layout from "./Layout.jsx";
-
-import KorealyProcessor from "./KorealyProcessor";
-
-import Settings from "./Settings";
-
-import Reports from "./Reports";
-
 import { BrowserRouter as Router, Route, Routes, useLocation } from 'react-router-dom';
+import { Skeleton } from "@/components/ui/skeleton";
+
+// Lazy load pages for faster initial load
+const Reports = lazy(() => import('./Reports'));
+const KorealyProcessor = lazy(() => import('./KorealyProcessor'));
+const Settings = lazy(() => import('./Settings'));
+
+// Loading component
+function PageLoading() {
+  return (
+    <div className="p-6 space-y-4">
+      <Skeleton className="h-8 w-[300px]" />
+      <Skeleton className="h-[400px] w-full" />
+    </div>
+  );
+}
 
 const PAGES = {
 
@@ -38,17 +48,19 @@ function PagesContent() {
     
     return (
         <Layout currentPageName={currentPage}>
-            <Routes>
+            <Suspense fallback={<PageLoading />}>
+                <Routes>
 
-                <Route path="/" element={<Reports />} />
+                    <Route path="/" element={<Reports />} />
 
-                <Route path="/Reports" element={<Reports />} />
+                    <Route path="/Reports" element={<Reports />} />
 
-                <Route path="/KorealyProcessor" element={<KorealyProcessor />} />
+                    <Route path="/KorealyProcessor" element={<KorealyProcessor />} />
 
-                <Route path="/Settings" element={<Settings />} />
+                    <Route path="/Settings" element={<Settings />} />
 
-            </Routes>
+                </Routes>
+            </Suspense>
         </Layout>
     );
 }

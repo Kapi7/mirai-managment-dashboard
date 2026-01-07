@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -23,7 +23,29 @@ export default function Reports() {
     to: new Date()
   });
 
+  // Cache key for localStorage
+  const getCacheKey = () => {
+    return `reports_${format(dateRange.from, 'yyyy-MM-dd')}_${format(dateRange.to, 'yyyy-MM-dd')}`;
+  };
+
+  // Load from cache on mount
   useEffect(() => {
+    const cacheKey = getCacheKey();
+    const cached = localStorage.getItem(cacheKey);
+
+    if (cached) {
+      try {
+        const { data, timestamp } = JSON.parse(cached);
+        // Cache valid for 5 minutes
+        if (Date.now() - timestamp < 5 * 60 * 1000) {
+          setReportData(data);
+          return; // Skip API call
+        }
+      } catch (e) {
+        // Invalid cache, continue to fetch
+      }
+    }
+
     fetchReportData();
   }, [dateRange]);
 
@@ -40,7 +62,8 @@ export default function Reports() {
         body: JSON.stringify({
           start_date: format(dateRange.from, 'yyyy-MM-dd'),
           end_date: format(dateRange.to, 'yyyy-MM-dd')
-        })
+        }),
+        mode: 'cors'
       });
 
       if (!response.ok) {
@@ -48,29 +71,43 @@ export default function Reports() {
       }
 
       const result = await response.json();
-      setReportData(result.data || []);
+      const data = result.data || [];
+      setReportData(data);
+
+      // Cache the result
+      const cacheKey = getCacheKey();
+      localStorage.setItem(cacheKey, JSON.stringify({
+        data,
+        timestamp: Date.now()
+      }));
     } catch (err) {
       console.error('Failed to fetch report data:', err);
-      setError(err.message);
+      setError(`Unable to connect to reporting API: ${err.message}. Please check that mirai-reports.onrender.com is deployed and has CORS enabled.`);
     } finally {
       setLoading(false);
     }
   };
 
-  // Calculate summary metrics
-  const summary = reportData.reduce((acc, day) => ({
-    totalOrders: acc.totalOrders + (day.orders || 0),
-    totalGross: acc.totalGross + (day.gross || 0),
-    totalNet: acc.totalNet + (day.net || 0),
-    totalSpend: acc.totalSpend + (day.total_spend || 0),
-    totalProfit: acc.totalProfit + (day.operational_profit || 0),
-  }), { totalOrders: 0, totalGross: 0, totalNet: 0, totalSpend: 0, totalProfit: 0 });
+  // Calculate summary metrics (memoized to avoid recalculation on every render)
+  const summary = useMemo(() => {
+    return reportData.reduce((acc, day) => ({
+      totalOrders: acc.totalOrders + (day.orders || 0),
+      totalGross: acc.totalGross + (day.gross || 0),
+      totalNet: acc.totalNet + (day.net || 0),
+      totalSpend: acc.totalSpend + (day.total_spend || 0),
+      totalProfit: acc.totalProfit + (day.operational_profit || 0),
+    }), { totalOrders: 0, totalGross: 0, totalNet: 0, totalSpend: 0, totalProfit: 0 });
+  }, [reportData]);
 
-  const avgMargin = reportData.length > 0
-    ? reportData.reduce((sum, day) => sum + (day.margin_pct || 0), 0) / reportData.length
-    : 0;
+  const avgMargin = useMemo(() => {
+    return reportData.length > 0
+      ? reportData.reduce((sum, day) => sum + (day.margin_pct || 0), 0) / reportData.length
+      : 0;
+  }, [reportData]);
 
-  const avgAOV = summary.totalOrders > 0 ? summary.totalNet / summary.totalOrders : 0;
+  const avgAOV = useMemo(() => {
+    return summary.totalOrders > 0 ? summary.totalNet / summary.totalOrders : 0;
+  }, [summary]);
 
   const formatCurrency = (value) => {
     return new Intl.NumberFormat('en-US', {

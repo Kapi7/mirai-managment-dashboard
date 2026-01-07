@@ -1,0 +1,32 @@
+services:
+  # Main service that runs both Node.js and Python
+  - type: web
+    name: mirai-dashboard
+    env: node
+    buildCommand: |
+      npm install
+      npm run build
+      cd python_backend && pip install -r requirements.txt
+    startCommand: |
+      # Start Python server in background
+      cd python_backend && python server.py &
+      # Start Node.js server in foreground
+      cd .. && node server/index.js
+    envVars:
+      - key: NODE_VERSION
+        value: 18
+      - key: PYTHON_VERSION
+        value: 3.11
+      # Add all your environment variables here
+      - key: SHOPIFY_STORE
+        sync: false
+      - key: SHOPIFY_ACCESS_TOKEN
+        sync: false
+      - key: GMAIL_CLIENT_ID
+        sync: false
+      - key: GMAIL_CLIENT_SECRET
+        sync: false
+      - key: GMAIL_REFRESH_TOKEN
+        sync: false
+      - key: GMAIL_USER_EMAIL
+        sync: false
