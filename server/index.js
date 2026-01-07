@@ -63,7 +63,7 @@ app.post('/reports-api/daily-report', async (req, res) => {
         psp_usd: Math.round(net * 0.029),
         operational_profit: Math.round(profit),
         net_margin: Math.round(profit),
-        margin_pct: ((profit / net) * 100).toFixed(2),
+        margin_pct: Number(((profit / net) * 100).toFixed(2)), // Return as number, not string
         aov: Math.round(aov),
         returning_customers: Math.floor(orders * 0.2)
       });
