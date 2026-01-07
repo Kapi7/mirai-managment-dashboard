@@ -35,7 +35,7 @@ echo "✅ Python backend running (PID: $PYTHON_PID)"
 # Build frontend
 echo "📦 Building frontend..."
 cd ..
-npm install --quiet
+npm install --production=false --quiet
 npm run build
 
 # Start Node.js server on main port (10000 for Render, or PORT env var)
