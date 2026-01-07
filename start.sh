@@ -16,9 +16,9 @@ else
   python3 -m pip install -r requirements.txt --quiet || pip install -r requirements.txt --quiet
 fi
 
-# Start Python backend on port 8080 in background
-echo "🐍 Starting Python reports backend on port 8080..."
-uvicorn simple_server:app --host 0.0.0.0 --port 8080 &
+# Start Python backend on port 8080 in background (localhost only)
+echo "🐍 Starting Python reports backend on port 8080 (internal only)..."
+uvicorn simple_server:app --host 127.0.0.1 --port 8080 &
 PYTHON_PID=$!
 
 # Give Python backend a moment to start
