@@ -4,9 +4,13 @@ import KorealyProcessor from "./KorealyProcessor";
 
 import Settings from "./Settings";
 
+import Reports from "./Reports";
+
 import { BrowserRouter as Router, Route, Routes, useLocation } from 'react-router-dom';
 
 const PAGES = {
+
+    Reports: Reports,
 
     KorealyProcessor: KorealyProcessor,
 
@@ -36,7 +40,9 @@ function PagesContent() {
         <Layout currentPageName={currentPage}>
             <Routes>
 
-                <Route path="/" element={<KorealyProcessor />} />
+                <Route path="/" element={<Reports />} />
+
+                <Route path="/Reports" element={<Reports />} />
 
                 <Route path="/KorealyProcessor" element={<KorealyProcessor />} />
 

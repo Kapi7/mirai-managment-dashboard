@@ -5,7 +5,8 @@ import { createPageUrl } from "@/utils";
 import {
   Settings,
   TrendingUp,
-  Package
+  Package,
+  BarChart3
 } from "lucide-react";
 import {
   Sidebar,
@@ -25,6 +26,12 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 
 const navigationSections = [
+  {
+    label: "Analytics",
+    items: [
+      { title: "Reports", url: createPageUrl("Reports"), icon: BarChart3 },
+    ]
+  },
   {
     label: "Operations",
     items: [
