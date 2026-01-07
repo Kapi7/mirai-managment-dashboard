@@ -118,7 +118,7 @@ export default function Reports() {
   };
 
   const formatPercent = (value) => {
-    return `${(value || 0).toFixed(2)}%`;
+    return `${((value || 0) * 100).toFixed(2)}%`;
   };
 
   return (
