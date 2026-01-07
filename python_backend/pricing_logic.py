@@ -1,289 +1,278 @@
 """
-Pricing logic for dashboard - reads from Google Sheets price-bot data
-Provides clean API endpoints for Items, PriceUpdates, UpdateLog, and TargetPrices tabs
-
-PHASE 1 (Current): Google Sheets integration for compatibility with existing price-bot
-PHASE 2 (Future): Direct integration with Korealy files + Shopify API
-                  - No Google Sheets dependency
-                  - Pricing data from Korealy exports
-                  - Direct Shopify price updates via Admin API
-
-The API interface (fetch_items, fetch_target_prices, etc.) will remain the same
-Only the underlying data source will change
+Pricing logic - fetches directly from Shopify GraphQL API
+No Google Sheets dependency
 """
 import os
+import time
+import requests
 from typing import List, Dict, Any, Optional
-import gspread
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Google Sheets config
-SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
-OAUTH_DIR = os.getenv("GOOGLE_OAUTH_DIR", ".google_oauth")
+# Shopify config
+SHOPIFY_STORE = os.getenv("SHOPIFY_STORE")
+SHOPIFY_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN") or os.getenv("SHOPIFY_TOKEN")
+SHOPIFY_API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2025-07")
 
-# Tab names
-ITEMS_TAB = "Items"
-PRICE_UPDATES_TAB = "PriceUpdates"
-UPDATE_LOG_TAB = "UpdatesLog"
-TARGET_PRICES_TAB = "TargetPrices"
-PRICE_COMPARE_TAB = "PriceCompare"
+def _shopify_graphql(query: str, variables: Optional[Dict] = None):
+    """Execute Shopify GraphQL query"""
+    if not SHOPIFY_STORE or not SHOPIFY_TOKEN:
+        raise RuntimeError("Missing SHOPIFY_STORE or SHOPIFY_TOKEN environment variables")
 
-def _gc():
-    """Connect to Google Sheets using OAuth"""
-    return gspread.oauth(
-        credentials_filename=os.path.join(OAUTH_DIR, "client_secret.json"),
-        authorized_user_filename=os.path.join(OAUTH_DIR, "token.json"),
+    url = f"https://{SHOPIFY_STORE}/admin/api/{SHOPIFY_API_VERSION}/graphql.json"
+    headers = {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": SHOPIFY_TOKEN
+    }
+
+    response = requests.post(
+        url,
+        json={"query": query, "variables": variables or {}},
+        headers=headers,
+        timeout=60
     )
+    response.raise_for_status()
+    data = response.json()
 
-def _sheet_to_dict_list(ws) -> List[Dict[str, Any]]:
-    """Convert Google Sheet to list of dicts"""
-    try:
-        records = ws.get_all_records()
-        return records
-    except Exception as e:
-        print(f"Error reading sheet {ws.title}: {e}")
-        return []
+    if "errors" in data:
+        raise RuntimeError(f"GraphQL errors: {data['errors']}")
+
+    return data
 
 
 # ================== ITEMS TAB ==================
 def fetch_items(market_filter: Optional[str] = None) -> List[Dict[str, Any]]:
     """
-    Fetch items from Items tab
+    Fetch product variants from Shopify
     Returns: variant_id, item, weight, cogs, retail_base, compare_at_base
-    Optional market_filter: filter by market/country
     """
-    try:
-        gc = _gc()
-        sh = gc.open_by_key(SHEET_ID)
-        ws = sh.worksheet(ITEMS_TAB)
+    items = []
+    cursor = None
 
-        records = _sheet_to_dict_list(ws)
-
-        # Clean up and format data
-        items = []
-        for rec in records:
-            # Skip empty rows
-            if not rec.get("variant_id"):
-                continue
-
-            item = {
-                "variant_id": str(rec.get("variant_id", "")).strip(),
-                "item": str(rec.get("item", "")).strip(),
-                "weight": float(rec.get("weight", 0) or 0),
-                "cogs": float(rec.get("cogs", 0) or 0),
-                "retail_base": float(rec.get("retail_base", 0) or 0),
-                "compare_at_base": float(rec.get("compare_at_base", 0) or 0),
+    # GraphQL query to fetch variants with cost, weight, and prices
+    query = """
+    query($cursor: String) {
+      productVariants(first: 250, after: $cursor) {
+        pageInfo { hasNextPage }
+        edges {
+          cursor
+          node {
+            id
+            legacyResourceId
+            title
+            price
+            compareAtPrice
+            weight
+            weightUnit
+            product {
+              title
+              status
             }
+            inventoryItem {
+              id
+              unitCost {
+                amount
+                currencyCode
+              }
+            }
+          }
+        }
+      }
+    }
+    """
 
-            # Add market if available
-            if "market" in rec:
-                item["market"] = str(rec.get("market", "")).strip()
+    while True:
+        try:
+            result = _shopify_graphql(query, {"cursor": cursor})
+            variants = result["data"]["productVariants"]
 
-            # Apply market filter if provided
-            if market_filter:
-                if item.get("market", "").upper() == market_filter.upper():
-                    items.append(item)
-            else:
-                items.append(item)
+            for edge in variants["edges"]:
+                node = edge["node"]
+                product = node["product"]
 
-        print(f"✅ Fetched {len(items)} items from {ITEMS_TAB}")
-        return items
+                # Skip inactive products
+                if product["status"] != "ACTIVE":
+                    continue
 
-    except Exception as e:
-        print(f"❌ Error fetching items: {e}")
-        import traceback
-        traceback.print_exc()
-        return []
+                # Extract numeric variant ID
+                variant_id = node["legacyResourceId"]
+
+                # Build item name
+                product_title = product["title"]
+                variant_title = node["title"]
+                item_name = f"{product_title} - {variant_title}" if variant_title != "Default Title" else product_title
+
+                # Get weight in grams
+                weight = float(node["weight"] or 0)
+                weight_unit = node["weightUnit"]
+                if weight_unit == "KILOGRAMS":
+                    weight = weight * 1000
+                elif weight_unit == "POUNDS":
+                    weight = weight * 453.592
+                elif weight_unit == "OUNCES":
+                    weight = weight * 28.3495
+
+                # Get COGS
+                cogs = 0.0
+                if node["inventoryItem"] and node["inventoryItem"].get("unitCost"):
+                    unit_cost = node["inventoryItem"]["unitCost"]
+                    cogs = float(unit_cost["amount"] or 0)
+
+                # Get prices
+                retail_base = float(node["price"] or 0)
+                compare_at_base = float(node["compareAtPrice"] or 0) if node["compareAtPrice"] else 0.0
+
+                items.append({
+                    "variant_id": str(variant_id),
+                    "item": item_name,
+                    "weight": round(weight, 1),
+                    "cogs": round(cogs, 2),
+                    "retail_base": round(retail_base, 2),
+                    "compare_at_base": round(compare_at_base, 2),
+                })
+
+            # Check if there are more pages
+            if not variants["pageInfo"]["hasNextPage"]:
+                break
+
+            cursor = variants["edges"][-1]["cursor"]
+            time.sleep(0.05)  # Rate limiting
+
+        except Exception as e:
+            print(f"❌ Error fetching variants: {e}")
+            import traceback
+            traceback.print_exc()
+            break
+
+    print(f"✅ Fetched {len(items)} items from Shopify")
+    return items
 
 
 # ================== PRICE UPDATES TAB ==================
 def fetch_price_updates() -> List[Dict[str, Any]]:
     """
-    Fetch price updates pending execution
-    Returns rows from PriceUpdates tab
+    Get pending price updates
+    For now, returns empty list - will be populated when user adds updates
     """
-    try:
-        gc = _gc()
-        sh = gc.open_by_key(SHEET_ID)
-        ws = sh.worksheet(PRICE_UPDATES_TAB)
-
-        records = _sheet_to_dict_list(ws)
-
-        # Clean and format
-        updates = []
-        for rec in records:
-            if not rec.get("variant_id"):
-                continue
-
-            update = {
-                "variant_id": str(rec.get("variant_id", "")).strip(),
-                "item": str(rec.get("item", "")).strip(),
-                "market": str(rec.get("market", "")).strip(),
-                "new_price": float(rec.get("new_price", 0) or 0),
-                "current_price": float(rec.get("current_price", 0) or 0),
-                "compare_at": float(rec.get("compare_at", 0) or 0),
-                "notes": str(rec.get("notes", "")).strip(),
-            }
-            updates.append(update)
-
-        print(f"✅ Fetched {len(updates)} price updates from {PRICE_UPDATES_TAB}")
-        return updates
-
-    except Exception as e:
-        print(f"❌ Error fetching price updates: {e}")
-        import traceback
-        traceback.print_exc()
-        return []
+    # This will be implemented when we add update functionality
+    return []
 
 
 # ================== UPDATE LOG TAB ==================
 def fetch_update_log(limit: Optional[int] = None) -> List[Dict[str, Any]]:
     """
-    Fetch update history from UpdatesLog tab
-    Returns normalized log entries
+    Get price update history
+    For now, returns empty list - will be stored in database later
     """
-    try:
-        gc = _gc()
-        sh = gc.open_by_key(SHEET_ID)
-        ws = sh.worksheet(UPDATE_LOG_TAB)
-
-        records = _sheet_to_dict_list(ws)
-
-        # Normalize log entries
-        logs = []
-        for rec in records:
-            if not rec.get("variant_id") and not rec.get("timestamp"):
-                continue
-
-            log = {
-                "timestamp": str(rec.get("timestamp", "")).strip(),
-                "variant_id": str(rec.get("variant_id", "")).strip(),
-                "item": str(rec.get("item", "")).strip(),
-                "market": str(rec.get("market", "")).strip(),
-                "old_price": float(rec.get("old_price", 0) or 0),
-                "new_price": float(rec.get("new_price", 0) or 0),
-                "change_pct": float(rec.get("change_pct", 0) or 0),
-                "status": str(rec.get("status", "")).strip(),
-                "notes": str(rec.get("notes", "")).strip(),
-            }
-            logs.append(log)
-
-        # Sort by timestamp descending (most recent first)
-        logs.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-
-        # Apply limit if specified
-        if limit:
-            logs = logs[:limit]
-
-        print(f"✅ Fetched {len(logs)} log entries from {UPDATE_LOG_TAB}")
-        return logs
-
-    except Exception as e:
-        print(f"❌ Error fetching update log: {e}")
-        import traceback
-        traceback.print_exc()
-        return []
+    # This will be implemented with a database/log file
+    return []
 
 
 # ================== TARGET PRICES TAB ==================
-def fetch_target_prices(country_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+def fetch_target_prices(country_filter: Optional[str] = "US") -> List[Dict[str, Any]]:
     """
-    Fetch target prices from TargetPrices tab
-    Returns: variant_id, item, weight_g, cogs, current_US, ship_US, breakeven_US,
-             target_US, suggested_US, comp_low_US, comp_avg_US, comp_high_US,
-             competitive_price_US, comp_note_US, final_suggested_US,
-             loss_amount_US, priority_US, inc_pct_US
-    Optional country_filter: "US", "UK", "AU", "CA" etc.
+    Calculate target prices based on Shopify data
+    Returns calculated metrics for each variant
     """
-    try:
-        gc = _gc()
-        sh = gc.open_by_key(SHEET_ID)
-        ws = sh.worksheet(TARGET_PRICES_TAB)
+    # Get base items data
+    items = fetch_items()
 
-        records = _sheet_to_dict_list(ws)
+    target_prices = []
 
-        # Define columns to fetch based on country filter
-        base_cols = ["variant_id", "item", "weight_g", "cogs"]
+    # Constants for calculations (same as price-bot)
+    CPA_USD = 15.0  # Target CPA
+    PSP_FEE_RATE = 0.05  # 5% PSP fees
+    TARGET_PROFIT_ON_COST = 0.4  # 40% profit margin target
 
-        # If no country filter, default to US
-        country = (country_filter or "US").upper()
+    for item in items:
+        variant_id = item["variant_id"]
+        cogs = item["cogs"]
+        weight_g = item["weight"]
+        current_price = item["retail_base"]
 
-        # Build column names with country suffix
-        metric_cols = [
-            f"current_{country}",
-            f"ship_{country}",
-            f"breakeven_{country}",
-            f"target_{country}",
-            f"suggested_{country}",
-            f"comp_low_{country}",
-            f"comp_avg_{country}",
-            f"comp_high_{country}",
-            f"competitive_price_{country}",
-            f"comp_note_{country}",
-            f"final_suggested_{country}",
-            f"loss_amount_{country}",
-            f"priority_{country}",
-            f"inc_pct_{country}",
-        ]
+        # Estimate shipping cost (simplified - can be enhanced with shipping matrix)
+        # Rough estimate: $5 base + $0.01 per gram
+        ship_cost = 5.0 + (weight_g * 0.01)
 
-        prices = []
-        for rec in records:
-            if not rec.get("variant_id"):
-                continue
+        # Calculate breakeven
+        # Breakeven = COGS + Shipping + PSP fees + CPA
+        psp_fees = current_price * PSP_FEE_RATE if current_price > 0 else 0
+        breakeven = cogs + ship_cost + psp_fees + CPA_USD
 
-            price = {
-                "variant_id": str(rec.get("variant_id", "")).strip(),
-                "item": str(rec.get("item", "")).strip(),
-                "weight_g": float(rec.get("weight_g", 0) or 0),
-                "cogs": float(rec.get("cogs", 0) or 0),
-            }
+        # Calculate target price
+        # Target = (COGS + Shipping + CPA) * (1 + TARGET_PROFIT_ON_COST) / (1 - PSP_FEE_RATE)
+        base_cost = cogs + ship_cost + CPA_USD
+        target_price = base_cost * (1 + TARGET_PROFIT_ON_COST) / (1 - PSP_FEE_RATE)
 
-            # Add country-specific metrics
-            for col in metric_cols:
-                val = rec.get(col, 0)
-                # Handle text fields
-                if "note" in col or "priority" in col:
-                    price[col] = str(val or "").strip()
-                else:
-                    price[col] = float(val or 0)
+        # Suggested price (same as target for now)
+        suggested_price = target_price
 
-            prices.append(price)
+        # Final suggested (use current if reasonable, otherwise use target)
+        if current_price >= breakeven and current_price >= cogs * 2:
+            final_suggested = current_price
+        else:
+            final_suggested = suggested_price
 
-        print(f"✅ Fetched {len(prices)} target prices for {country} from {TARGET_PRICES_TAB}")
-        return prices
+        # Calculate loss/profit
+        if current_price > 0:
+            revenue = current_price
+            total_cost = cogs + ship_cost + psp_fees + CPA_USD
+            loss_amount = revenue - total_cost
+        else:
+            loss_amount = 0
 
-    except Exception as e:
-        print(f"❌ Error fetching target prices: {e}")
-        import traceback
-        traceback.print_exc()
-        return []
+        # Calculate increase percentage
+        if current_price > 0:
+            inc_pct = ((final_suggested - current_price) / current_price) * 100
+        else:
+            inc_pct = 0
+
+        # Priority
+        if loss_amount < 0:
+            priority = "HIGH"
+        elif inc_pct > 20:
+            priority = "MEDIUM"
+        else:
+            priority = "LOW"
+
+        # Build result with country suffix
+        country = country_filter.upper()
+        result = {
+            "variant_id": variant_id,
+            "item": item["item"],
+            "weight_g": weight_g,
+            "cogs": cogs,
+            f"current_{country}": current_price,
+            f"ship_{country}": round(ship_cost, 2),
+            f"breakeven_{country}": round(breakeven, 2),
+            f"target_{country}": round(target_price, 2),
+            f"suggested_{country}": round(suggested_price, 2),
+            f"comp_low_{country}": 0.0,  # Will be populated with competitor data later
+            f"comp_avg_{country}": 0.0,
+            f"comp_high_{country}": 0.0,
+            f"competitive_price_{country}": 0.0,
+            f"comp_note_{country}": "N/A",
+            f"final_suggested_{country}": round(final_suggested, 2),
+            f"loss_amount_{country}": round(loss_amount, 2),
+            f"priority_{country}": priority,
+            f"inc_pct_{country}": round(inc_pct, 2),
+        }
+
+        target_prices.append(result)
+
+    print(f"✅ Calculated {len(target_prices)} target prices for {country}")
+    return target_prices
 
 
 # ================== AVAILABLE MARKETS/COUNTRIES ==================
 def get_available_markets() -> List[str]:
-    """Get list of available markets from Items tab"""
-    try:
-        gc = _gc()
-        sh = gc.open_by_key(SHEET_ID)
-        ws = sh.worksheet(ITEMS_TAB)
-
-        records = _sheet_to_dict_list(ws)
-        markets = set()
-
-        for rec in records:
-            market = str(rec.get("market", "")).strip().upper()
-            if market:
-                markets.add(market)
-
-        return sorted(list(markets))
-
-    except Exception as e:
-        print(f"❌ Error fetching markets: {e}")
-        return ["US", "UK", "AU", "CA"]  # Default fallback
+    """Get list of available markets"""
+    # For now, return default markets
+    # Can be enhanced to fetch from Shopify Markets settings
+    return ["US", "UK", "AU", "CA", "EU"]
 
 
 def get_available_countries() -> List[str]:
-    """Get list of available countries for target prices"""
-    # These are the countries with pricing data in TargetPrices sheet
+    """Get list of available countries for target pricing"""
     return ["US", "UK", "AU", "CA"]
