@@ -24,8 +24,15 @@ export const api = {
     });
 
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Failed to update tracking');
+      let errorMessage = 'Failed to update tracking';
+      try {
+        const error = await response.json();
+        errorMessage = error.error || errorMessage;
+      } catch (e) {
+        // If response body is empty or not JSON, use status text
+        errorMessage = `Server error: ${response.status} ${response.statusText}`;
+      }
+      throw new Error(errorMessage);
     }
     return response.json();
   },
@@ -40,8 +47,15 @@ export const api = {
     });
 
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Failed to remove tracking');
+      let errorMessage = 'Failed to remove tracking';
+      try {
+        const error = await response.json();
+        errorMessage = error.error || errorMessage;
+      } catch (e) {
+        // If response body is empty or not JSON, use status text
+        errorMessage = `Server error: ${response.status} ${response.statusText}`;
+      }
+      throw new Error(errorMessage);
     }
     return response.json();
   }

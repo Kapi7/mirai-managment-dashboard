@@ -179,6 +179,8 @@ app.post('/api/update-shopify-tracking', async (req, res) => {
   try {
     const { orderNumber, trackingNumber, carrier } = req.body;
 
+    console.log(`📦 Updating order #${orderNumber} with tracking: ${trackingNumber}`);
+
     if (!orderNumber || !trackingNumber) {
       return res.status(400).json({ error: 'Missing orderNumber or trackingNumber' });
     }
@@ -189,6 +191,8 @@ app.post('/api/update-shopify-tracking', async (req, res) => {
     if (!order) {
       return res.status(404).json({ error: `Order #${orderNumber} not found in Shopify` });
     }
+
+    console.log(`✓ Found Shopify order ID: ${order.id}`);
 
     // Create fulfillment with tracking
     const fulfillmentData = {
@@ -204,6 +208,8 @@ app.post('/api/update-shopify-tracking', async (req, res) => {
       }
     };
 
+    console.log(`📤 Creating fulfillment with carrier: ${carrier || 'Australia Post'}`);
+
     const fulfillmentResponse = await fetch(
       `https://${shopify.store}/admin/api/${shopify.apiVersion}/orders/${order.id}/fulfillments.json`,
       {
@@ -217,11 +223,21 @@ app.post('/api/update-shopify-tracking', async (req, res) => {
     );
 
     if (!fulfillmentResponse.ok) {
-      const errorData = await fulfillmentResponse.json();
-      throw new Error(errorData.errors || 'Failed to create fulfillment');
+      let errorMessage = 'Failed to create fulfillment';
+      try {
+        const errorData = await fulfillmentResponse.json();
+        errorMessage = JSON.stringify(errorData.errors || errorData);
+        console.error('Shopify API error:', errorData);
+      } catch (e) {
+        errorMessage = `Shopify API error: ${fulfillmentResponse.status} ${fulfillmentResponse.statusText}`;
+        console.error(errorMessage);
+      }
+      return res.status(500).json({ error: errorMessage });
     }
 
     const result = await fulfillmentResponse.json();
+
+    console.log(`✅ Successfully updated order #${orderNumber}`);
 
     res.json({
       success: true,
@@ -230,7 +246,7 @@ app.post('/api/update-shopify-tracking', async (req, res) => {
 
   } catch (error) {
     console.error('Shopify update error:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: error.message || 'Unknown error occurred' });
   }
 });
 
