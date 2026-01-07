@@ -49,7 +49,12 @@ app = FastAPI(title="Mirai Report API", version="1.2.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],      # can be tightened later
+    allow_origins=[
+        "*",  # Allow all origins
+        "https://mirai-managment-dashboard.onrender.com",
+        "http://localhost:3001",
+        "http://localhost:5173"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
