@@ -26,14 +26,21 @@ app.use('/reports-api', async (req, res) => {
     console.log(`📊 Proxying to Python API: ${req.method} ${url}`);
     console.log(`📦 Request body:`, req.body);
 
+    // Increase timeout for cold starts (free tier can take 30-40s)
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+
     const response = await fetch(url, {
       method: req.method,
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      body: req.method !== 'GET' && req.method !== 'HEAD' ? JSON.stringify(req.body) : undefined
+      body: req.method !== 'GET' && req.method !== 'HEAD' ? JSON.stringify(req.body) : undefined,
+      signal: controller.signal
     });
+
+    clearTimeout(timeout);
 
     console.log(`📡 Response status: ${response.status}`);
 
