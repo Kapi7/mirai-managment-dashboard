@@ -19,8 +19,8 @@ app.use(cors());
 app.use(express.json());
 
 // Proxy for Python Reports API (avoids CORS issues)
-// Use internal simple Python backend on port 8080
-const PYTHON_API = process.env.PYTHON_API_URL || 'http://localhost:8080';
+// Use external mirai-reports API (same code as mirai_report folder)
+const PYTHON_API = process.env.PYTHON_API_URL || 'https://mirai-reports.onrender.com';
 app.use('/reports-api', async (req, res) => {
   try {
     const url = `${PYTHON_API}${req.path}`;
@@ -33,8 +33,8 @@ app.use('/reports-api', async (req, res) => {
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       },
-      body: req.method !== 'GET' && req.method !== 'HEAD' ? JSON.stringify(req.body) : undefined,
-      timeout: 60000 // 60 second timeout
+      body: req.method !== 'GET' && req.method !== 'HEAD' ? JSON.stringify(req.body) : undefined
+      // Note: fetch doesn't support timeout natively in Node.js
     });
 
     console.log(`📡 Response status: ${response.status}`);
