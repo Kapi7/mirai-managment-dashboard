@@ -24,21 +24,33 @@ app.use('/reports-api', async (req, res) => {
   try {
     const url = `${PYTHON_API}${req.path}`;
     console.log(`📊 Proxying to Python API: ${req.method} ${url}`);
+    console.log(`📦 Request body:`, req.body);
 
     const response = await fetch(url, {
       method: req.method,
       headers: {
         'Content-Type': 'application/json',
-        ...req.headers
+        'Accept': 'application/json'
       },
-      body: req.method !== 'GET' ? JSON.stringify(req.body) : undefined
+      body: req.method !== 'GET' && req.method !== 'HEAD' ? JSON.stringify(req.body) : undefined
     });
 
+    console.log(`📡 Response status: ${response.status}`);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ Python API error: ${errorText}`);
+      return res.status(response.status).json({
+        error: 'Reports API error',
+        details: errorText
+      });
+    }
+
     const data = await response.json();
-    res.status(response.status).json(data);
+    res.json(data);
   } catch (error) {
     console.error('Python API proxy error:', error);
-    res.status(500).json({ error: 'Failed to reach reports API' });
+    res.status(500).json({ error: 'Failed to reach reports API', message: error.message });
   }
 });
 
