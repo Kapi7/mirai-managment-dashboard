@@ -119,6 +119,89 @@ async def daily_report(req: DateRangeRequest):
         return {"error": str(e), "data": []}
 
 
+# ==================== PRICING ENDPOINTS ====================
+
+@app.get("/pricing/items")
+async def get_items(market: str = None):
+    """
+    Get items list with optional market filter
+    Query param: ?market=US
+    """
+    try:
+        from pricing_logic import fetch_items
+        data = fetch_items(market_filter=market)
+        return {"data": data}
+    except Exception as e:
+        return {"error": str(e), "data": []}
+
+
+@app.get("/pricing/price-updates")
+async def get_price_updates():
+    """
+    Get pending price updates from PriceUpdates tab
+    """
+    try:
+        from pricing_logic import fetch_price_updates
+        data = fetch_price_updates()
+        return {"data": data}
+    except Exception as e:
+        return {"error": str(e), "data": []}
+
+
+@app.get("/pricing/update-log")
+async def get_update_log(limit: int = 100):
+    """
+    Get price update history from UpdatesLog tab
+    Query param: ?limit=50
+    """
+    try:
+        from pricing_logic import fetch_update_log
+        data = fetch_update_log(limit=limit)
+        return {"data": data}
+    except Exception as e:
+        return {"error": str(e), "data": []}
+
+
+@app.get("/pricing/target-prices")
+async def get_target_prices(country: str = "US"):
+    """
+    Get target prices with optional country filter
+    Query param: ?country=US
+    """
+    try:
+        from pricing_logic import fetch_target_prices
+        data = fetch_target_prices(country_filter=country)
+        return {"data": data}
+    except Exception as e:
+        return {"error": str(e), "data": []}
+
+
+@app.get("/pricing/markets")
+async def get_markets():
+    """
+    Get list of available markets
+    """
+    try:
+        from pricing_logic import get_available_markets
+        markets = get_available_markets()
+        return {"markets": markets}
+    except Exception as e:
+        return {"error": str(e), "markets": []}
+
+
+@app.get("/pricing/countries")
+async def get_countries():
+    """
+    Get list of available countries for target pricing
+    """
+    try:
+        from pricing_logic import get_available_countries
+        countries = get_available_countries()
+        return {"countries": countries}
+    except Exception as e:
+        return {"error": str(e), "countries": ["US", "UK", "AU", "CA"]}
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8080))

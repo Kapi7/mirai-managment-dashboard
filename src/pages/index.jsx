@@ -5,6 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 // Lazy load pages for faster initial load
 const Reports = lazy(() => import('./Reports'));
+const Pricing = lazy(() => import('./Pricing'));
 const KorealyProcessor = lazy(() => import('./KorealyProcessor'));
 const Settings = lazy(() => import('./Settings'));
 
@@ -21,6 +22,8 @@ function PageLoading() {
 const PAGES = {
 
     Reports: Reports,
+
+    Pricing: Pricing,
 
     KorealyProcessor: KorealyProcessor,
 
@@ -54,6 +57,8 @@ function PagesContent() {
                     <Route path="/" element={<Reports />} />
 
                     <Route path="/Reports" element={<Reports />} />
+
+                    <Route path="/Pricing" element={<Pricing />} />
 
                     <Route path="/KorealyProcessor" element={<KorealyProcessor />} />
 

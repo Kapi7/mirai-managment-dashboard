@@ -6,7 +6,8 @@ import {
   Settings,
   TrendingUp,
   Package,
-  BarChart3
+  BarChart3,
+  DollarSign
 } from "lucide-react";
 import {
   Sidebar,
@@ -35,6 +36,7 @@ const navigationSections = [
   {
     label: "Operations",
     items: [
+      { title: "Pricing", url: createPageUrl("Pricing"), icon: DollarSign },
       { title: "Korealy Tracking", url: createPageUrl("KorealyProcessor"), icon: Package },
     ]
   },
