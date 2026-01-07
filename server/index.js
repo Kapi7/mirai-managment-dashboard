@@ -192,23 +192,83 @@ app.post('/api/update-shopify-tracking', async (req, res) => {
       return res.status(404).json({ error: `Order #${orderNumber} not found in Shopify` });
     }
 
-    console.log(`✓ Found Shopify order ID: ${order.id}`);
+    console.log(`✓ Found Shopify order ID: ${order.id}, fulfillment_status: ${order.fulfillment_status}`);
 
-    // Create fulfillment with tracking
+    // Check if order already has a fulfillment
+    const existingFulfillment = order.fulfillments?.[0];
+
+    if (existingFulfillment) {
+      console.log(`📝 Updating existing fulfillment ID: ${existingFulfillment.id}`);
+
+      // Update existing fulfillment's tracking
+      const updateResponse = await fetch(
+        `https://${shopify.store}/admin/api/${shopify.apiVersion}/fulfillments/${existingFulfillment.id}/update_tracking.json`,
+        {
+          method: 'POST',
+          headers: {
+            'X-Shopify-Access-Token': shopify.accessToken,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            fulfillment: {
+              tracking_number: trackingNumber,
+              tracking_company: carrier || 'Australia Post',
+              notify_customer: true
+            }
+          })
+        }
+      );
+
+      if (!updateResponse.ok) {
+        let errorMessage = 'Failed to update fulfillment tracking';
+        try {
+          const errorData = await updateResponse.json();
+          errorMessage = JSON.stringify(errorData.errors || errorData);
+          console.error('Shopify API error:', errorData);
+        } catch (e) {
+          errorMessage = `Shopify API error: ${updateResponse.status} ${updateResponse.statusText}`;
+          console.error(errorMessage);
+        }
+        return res.status(500).json({ error: errorMessage });
+      }
+
+      const result = await updateResponse.json();
+      console.log(`✅ Successfully updated tracking for order #${orderNumber}`);
+
+      return res.json({
+        success: true,
+        fulfillment: result.fulfillment,
+        action: 'updated'
+      });
+    }
+
+    // No existing fulfillment, create a new one
+    console.log(`📤 Creating new fulfillment with carrier: ${carrier || 'Australia Post'}`);
+
+    // Only fulfill items that haven't been fulfilled yet
+    const fulfillableItems = order.line_items.filter(item => {
+      const fulfilled = item.fulfillable_quantity || 0;
+      return fulfilled > 0;
+    });
+
+    if (fulfillableItems.length === 0) {
+      return res.status(400).json({
+        error: 'No items available to fulfill. Order may already be fully fulfilled.'
+      });
+    }
+
     const fulfillmentData = {
       fulfillment: {
         location_id: order.location_id,
         tracking_number: trackingNumber,
         tracking_company: carrier || 'Australia Post',
         notify_customer: true,
-        line_items: order.line_items.map(item => ({
+        line_items: fulfillableItems.map(item => ({
           id: item.id,
-          quantity: item.quantity
+          quantity: item.fulfillable_quantity
         }))
       }
     };
-
-    console.log(`📤 Creating fulfillment with carrier: ${carrier || 'Australia Post'}`);
 
     const fulfillmentResponse = await fetch(
       `https://${shopify.store}/admin/api/${shopify.apiVersion}/orders/${order.id}/fulfillments.json`,
@@ -236,12 +296,12 @@ app.post('/api/update-shopify-tracking', async (req, res) => {
     }
 
     const result = await fulfillmentResponse.json();
-
-    console.log(`✅ Successfully updated order #${orderNumber}`);
+    console.log(`✅ Successfully created fulfillment for order #${orderNumber}`);
 
     res.json({
       success: true,
-      fulfillment: result.fulfillment
+      fulfillment: result.fulfillment,
+      action: 'created'
     });
 
   } catch (error) {
