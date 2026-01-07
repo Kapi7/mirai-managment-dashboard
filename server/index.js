@@ -18,61 +18,31 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-// Reports API endpoint - returns mock data for now
-// TODO: Connect to real data source when ready
+// Reports API endpoint - proxies to Python backend with real mirai_report logic
 app.post('/reports-api/daily-report', async (req, res) => {
   try {
     const { start_date, end_date } = req.body;
-    console.log(`📊 Generating report: ${start_date} to ${end_date}`);
+    console.log(`📊 Fetching report: ${start_date} to ${end_date}`);
 
-    // Generate mock daily data
-    const start = new Date(start_date);
-    const end = new Date(end_date);
-    const data = [];
+    // Proxy to Python backend
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/daily-report`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ start_date, end_date })
+    });
 
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      const dateStr = d.toISOString().split('T')[0];
-
-      // Generate realistic-looking numbers
-      const orders = Math.floor(Math.random() * 20) + 5;
-      const aov = Math.floor(Math.random() * 50) + 80;
-      const net = orders * aov;
-      const adSpend = Math.floor(Math.random() * 200) + 100;
-      const cogs = net * 0.35;
-      const profit = net - cogs - adSpend;
-
-      data.push({
-        date: dateStr,
-        label: d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
-        orders: orders,
-        gross: Math.round(net * 1.05),
-        discounts: Math.round(net * 0.03),
-        refunds: Math.round(net * 0.02),
-        net: Math.round(net),
-        cogs: Math.round(cogs),
-        shipping_charged: Math.round(orders * 8),
-        shipping_cost: Math.round(orders * 5),
-        google_spend: Math.round(adSpend * 0.6),
-        meta_spend: Math.round(adSpend * 0.4),
-        total_spend: Math.round(adSpend),
-        google_pur: Math.floor(orders * 0.6),
-        meta_pur: Math.floor(orders * 0.4),
-        google_cpa: Math.round((adSpend * 0.6) / (orders * 0.6)),
-        meta_cpa: Math.round((adSpend * 0.4) / (orders * 0.4)),
-        general_cpa: Math.round(adSpend / orders),
-        psp_usd: Math.round(net * 0.029),
-        operational_profit: Math.round(profit),
-        net_margin: Math.round(profit),
-        margin_pct: Number(((profit / net) * 100).toFixed(2)), // Return as number, not string
-        aov: Math.round(aov),
-        returning_customers: Math.floor(orders * 0.2)
-      });
+    if (!response.ok) {
+      throw new Error(`Python backend error: ${response.status}`);
     }
 
-    console.log(`✅ Generated ${data.length} days of data`);
-    res.json({ data });
+    const result = await response.json();
+    console.log(`✅ Fetched ${result.data?.length || 0} days of data`);
+    res.json(result);
   } catch (error) {
-    console.error('❌ Report generation error:', error);
+    console.error('❌ Report API error:', error);
     res.status(500).json({ error: error.message, data: [] });
   }
 });

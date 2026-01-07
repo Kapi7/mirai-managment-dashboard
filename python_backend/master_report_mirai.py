@@ -55,7 +55,6 @@ MONTH_HEADERS = [
 # SHIPPING MATRIX (GEO + WEIGHT tier -> price)
 # ------------------------------------------------------------------------------
 
-import os.path
 _MATRIX_PATH = os.path.join(os.path.dirname(__file__), "shipping_matrix_all.csv")
 
 _ISO2_TO_NAME = {
