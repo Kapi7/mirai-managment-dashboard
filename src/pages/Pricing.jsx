@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
@@ -6,7 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
-import { DollarSign, TrendingUp, Clock, Target } from 'lucide-react';
+import { DollarSign, TrendingUp, Clock, Target, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_REPORT_API_URL ||
   (import.meta.env.DEV ? 'http://localhost:8080' : '/reports-api');
@@ -20,6 +20,10 @@ export default function Pricing() {
   const [items, setItems] = useState([]);
   const [selectedMarket, setSelectedMarket] = useState('all');
   const [markets, setMarkets] = useState([]);
+  const [itemsPage, setItemsPage] = useState(0);
+  const [itemsPageSize] = useState(50);
+  const [itemsSortColumn, setItemsSortColumn] = useState(null);
+  const [itemsSortDirection, setItemsSortDirection] = useState('asc');
 
   // Price Updates tab state
   const [priceUpdates, setPriceUpdates] = useState([]);
@@ -182,6 +186,58 @@ export default function Pricing() {
     return `${(value || 0).toFixed(2)}%`;
   };
 
+  // Sorting and pagination for Items tab
+  const sortedAndPaginatedItems = useMemo(() => {
+    let sorted = [...items];
+
+    // Apply sorting
+    if (itemsSortColumn) {
+      sorted.sort((a, b) => {
+        let aVal = a[itemsSortColumn];
+        let bVal = b[itemsSortColumn];
+
+        // Handle numeric values
+        if (typeof aVal === 'number' && typeof bVal === 'number') {
+          return itemsSortDirection === 'asc' ? aVal - bVal : bVal - aVal;
+        }
+
+        // Handle strings
+        aVal = String(aVal || '').toLowerCase();
+        bVal = String(bVal || '').toLowerCase();
+
+        if (aVal < bVal) return itemsSortDirection === 'asc' ? -1 : 1;
+        if (aVal > bVal) return itemsSortDirection === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+
+    // Apply pagination
+    const start = itemsPage * itemsPageSize;
+    const end = start + itemsPageSize;
+    return sorted.slice(start, end);
+  }, [items, itemsSortColumn, itemsSortDirection, itemsPage, itemsPageSize]);
+
+  const itemsTotalPages = Math.ceil(items.length / itemsPageSize);
+
+  const handleItemsSort = (column) => {
+    if (itemsSortColumn === column) {
+      setItemsSortDirection(itemsSortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setItemsSortColumn(column);
+      setItemsSortDirection('asc');
+    }
+    setItemsPage(0); // Reset to first page when sorting
+  };
+
+  const getSortIcon = (column) => {
+    if (itemsSortColumn !== column) {
+      return <ArrowUpDown className="h-4 w-4 ml-2 inline" />;
+    }
+    return itemsSortDirection === 'asc' ?
+      <ArrowUp className="h-4 w-4 ml-2 inline" /> :
+      <ArrowDown className="h-4 w-4 ml-2 inline" />;
+  };
+
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
@@ -254,32 +310,108 @@ export default function Pricing() {
               ) : items.length === 0 ? (
                 <div className="text-center py-8 text-slate-500">No items found</div>
               ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Variant ID</TableHead>
-                        <TableHead>Item</TableHead>
-                        <TableHead className="text-right">Weight (g)</TableHead>
-                        <TableHead className="text-right">COGS</TableHead>
-                        <TableHead className="text-right">Retail Base</TableHead>
-                        <TableHead className="text-right">Compare At Base</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {items.map((item) => (
-                        <TableRow key={item.variant_id}>
-                          <TableCell className="font-mono text-sm">{item.variant_id}</TableCell>
-                          <TableCell className="font-medium">{item.item}</TableCell>
-                          <TableCell className="text-right">{item.weight.toFixed(0)}</TableCell>
-                          <TableCell className="text-right">{formatCurrency(item.cogs)}</TableCell>
-                          <TableCell className="text-right">{formatCurrency(item.retail_base)}</TableCell>
-                          <TableCell className="text-right">{formatCurrency(item.compare_at_base)}</TableCell>
+                <>
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead
+                            className="cursor-pointer hover:bg-slate-50"
+                            onClick={() => handleItemsSort('variant_id')}
+                          >
+                            Variant ID{getSortIcon('variant_id')}
+                          </TableHead>
+                          <TableHead
+                            className="cursor-pointer hover:bg-slate-50"
+                            onClick={() => handleItemsSort('item')}
+                          >
+                            Item{getSortIcon('item')}
+                          </TableHead>
+                          <TableHead
+                            className="text-right cursor-pointer hover:bg-slate-50"
+                            onClick={() => handleItemsSort('weight')}
+                          >
+                            Weight (g){getSortIcon('weight')}
+                          </TableHead>
+                          <TableHead
+                            className="text-right cursor-pointer hover:bg-slate-50"
+                            onClick={() => handleItemsSort('cogs')}
+                          >
+                            COGS{getSortIcon('cogs')}
+                          </TableHead>
+                          <TableHead
+                            className="text-right cursor-pointer hover:bg-slate-50"
+                            onClick={() => handleItemsSort('retail_base')}
+                          >
+                            Retail Base{getSortIcon('retail_base')}
+                          </TableHead>
+                          <TableHead
+                            className="text-right cursor-pointer hover:bg-slate-50"
+                            onClick={() => handleItemsSort('compare_at_base')}
+                          >
+                            Compare At Base{getSortIcon('compare_at_base')}
+                          </TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
+                      </TableHeader>
+                      <TableBody>
+                        {sortedAndPaginatedItems.map((item) => (
+                          <TableRow key={item.variant_id}>
+                            <TableCell className="font-mono text-sm">{item.variant_id}</TableCell>
+                            <TableCell className="font-medium">{item.item}</TableCell>
+                            <TableCell className="text-right">{(item.weight || 0).toFixed(0)}</TableCell>
+                            <TableCell className="text-right">{formatCurrency(item.cogs)}</TableCell>
+                            <TableCell className="text-right">{formatCurrency(item.retail_base)}</TableCell>
+                            <TableCell className="text-right">{formatCurrency(item.compare_at_base)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  {/* Pagination Controls */}
+                  <div className="flex items-center justify-between mt-4 pt-4 border-t">
+                    <div className="text-sm text-slate-600">
+                      Showing {itemsPage * itemsPageSize + 1} to {Math.min((itemsPage + 1) * itemsPageSize, items.length)} of {items.length} items
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setItemsPage(0)}
+                        disabled={itemsPage === 0}
+                      >
+                        <ChevronsLeft className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setItemsPage(itemsPage - 1)}
+                        disabled={itemsPage === 0}
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <span className="text-sm text-slate-600">
+                        Page {itemsPage + 1} of {itemsTotalPages}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setItemsPage(itemsPage + 1)}
+                        disabled={itemsPage >= itemsTotalPages - 1}
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setItemsPage(itemsTotalPages - 1)}
+                        disabled={itemsPage >= itemsTotalPages - 1}
+                      >
+                        <ChevronsRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </>
               )}
             </CardContent>
           </Card>
