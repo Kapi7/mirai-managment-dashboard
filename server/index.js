@@ -197,54 +197,99 @@ app.post('/api/update-shopify-tracking', async (req, res) => {
     // Check if order already has a fulfillment
     const existingFulfillment = order.fulfillments?.[0];
 
-    if (!existingFulfillment) {
-      console.log(`❌ Order #${orderNumber} has no fulfillment yet`);
-      return res.status(400).json({
-        error: `Order #${orderNumber} must be fulfilled in Shopify before adding tracking info`
+    if (existingFulfillment) {
+      console.log(`📝 Updating existing fulfillment ID: ${existingFulfillment.id}`);
+
+      // Update existing fulfillment's tracking
+      const updateResponse = await fetch(
+        `https://${shopify.store}/admin/api/${shopify.apiVersion}/fulfillments/${existingFulfillment.id}/update_tracking.json`,
+        {
+          method: 'POST',
+          headers: {
+            'X-Shopify-Access-Token': shopify.accessToken,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            fulfillment: {
+              tracking_number: trackingNumber,
+              tracking_company: carrier || 'Australia Post',
+              notify_customer: true
+            }
+          })
+        }
+      );
+
+      if (!updateResponse.ok) {
+        let errorMessage = 'Failed to update fulfillment tracking';
+        try {
+          const errorData = await updateResponse.json();
+          errorMessage = JSON.stringify(errorData.errors || errorData);
+          console.error('Shopify API error:', errorData);
+        } catch (e) {
+          errorMessage = `Shopify API error: ${updateResponse.status} ${updateResponse.statusText}`;
+          console.error(errorMessage);
+        }
+        return res.status(500).json({ error: errorMessage });
+      }
+
+      const result = await updateResponse.json();
+      console.log(`✅ Successfully updated tracking for order #${orderNumber}`);
+
+      return res.json({
+        success: true,
+        fulfillment: result.fulfillment,
+        action: 'updated'
       });
     }
 
-    console.log(`📝 Updating existing fulfillment ID: ${existingFulfillment.id}`);
+    // No existing fulfillment - create one with tracking
+    console.log(`📦 Creating new fulfillment with tracking for order #${orderNumber}`);
 
-    // Update existing fulfillment's tracking
-    const updateResponse = await fetch(
-      `https://${shopify.store}/admin/api/${shopify.apiVersion}/fulfillments/${existingFulfillment.id}/update_tracking.json`,
+    const fulfillmentData = {
+      fulfillment: {
+        location_id: order.location_id,
+        tracking_number: trackingNumber,
+        tracking_company: carrier || 'Australia Post',
+        notify_customer: true,
+        line_items: order.line_items.map(item => ({
+          id: item.id,
+          quantity: item.quantity
+        }))
+      }
+    };
+
+    const fulfillmentResponse = await fetch(
+      `https://${shopify.store}/admin/api/${shopify.apiVersion}/orders/${order.id}/fulfillments.json`,
       {
         method: 'POST',
         headers: {
           'X-Shopify-Access-Token': shopify.accessToken,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          fulfillment: {
-            tracking_number: trackingNumber,
-            tracking_company: carrier || 'Australia Post',
-            notify_customer: true
-          }
-        })
+        body: JSON.stringify(fulfillmentData)
       }
     );
 
-    if (!updateResponse.ok) {
-      let errorMessage = 'Failed to update fulfillment tracking';
+    if (!fulfillmentResponse.ok) {
+      let errorMessage = 'Failed to create fulfillment';
       try {
-        const errorData = await updateResponse.json();
+        const errorData = await fulfillmentResponse.json();
         errorMessage = JSON.stringify(errorData.errors || errorData);
         console.error('Shopify API error:', errorData);
       } catch (e) {
-        errorMessage = `Shopify API error: ${updateResponse.status} ${updateResponse.statusText}`;
+        errorMessage = `Shopify API error: ${fulfillmentResponse.status} ${fulfillmentResponse.statusText}`;
         console.error(errorMessage);
       }
       return res.status(500).json({ error: errorMessage });
     }
 
-    const result = await updateResponse.json();
-    console.log(`✅ Successfully updated tracking for order #${orderNumber}`);
+    const result = await fulfillmentResponse.json();
+    console.log(`✅ Successfully created fulfillment for order #${orderNumber}`);
 
     res.json({
       success: true,
       fulfillment: result.fulfillment,
-      action: 'updated'
+      action: 'created'
     });
 
   } catch (error) {
