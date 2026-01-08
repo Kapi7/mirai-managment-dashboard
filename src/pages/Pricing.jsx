@@ -389,8 +389,11 @@ export default function Pricing() {
                       variant="default"
                       size="sm"
                       onClick={() => {
+                        console.log('Add to Price Updates clicked (Items)');
+                        console.log('Selected items:', selectedItems);
                         // Add selected items to price updates
                         const selectedItemsData = items.filter(item => selectedItems.has(item.variant_id));
+                        console.log('Selected items data:', selectedItemsData);
                         const newUpdates = selectedItemsData.map(item => ({
                           variant_id: item.variant_id,
                           item: item.item,
@@ -401,6 +404,7 @@ export default function Pricing() {
                           compare_at: item.compare_at_base,
                           notes: ''
                         }));
+                        console.log('New updates:', newUpdates);
                         setPriceUpdates([...priceUpdates, ...newUpdates]);
                         setSelectedItems(new Set()); // Clear selection
                         setActiveTab('price-updates'); // Switch to Price Updates tab
@@ -951,9 +955,12 @@ export default function Pricing() {
                       variant="default"
                       size="sm"
                       onClick={() => {
+                        console.log('Add to Price Updates clicked (Target Prices)');
+                        console.log('Selected target prices:', selectedTargetPrices);
                         // Add selected target prices to price updates
                         const countryKey = selectedCountry;
                         const selectedPricesData = targetPrices.filter(price => selectedTargetPrices.has(price.variant_id));
+                        console.log('Selected prices data:', selectedPricesData);
                         const newUpdates = selectedPricesData.map(price => ({
                           variant_id: price.variant_id,
                           item: price.item,
@@ -964,6 +971,7 @@ export default function Pricing() {
                           compare_at: 0,
                           notes: `Priority: ${price[`priority_${countryKey}`]}, Loss: ${formatCurrency(price[`loss_amount_${countryKey}`])}`
                         }));
+                        console.log('New updates:', newUpdates);
                         setPriceUpdates([...priceUpdates, ...newUpdates]);
                         setSelectedTargetPrices(new Set()); // Clear selection
                         setActiveTab('price-updates'); // Switch to Price Updates tab
