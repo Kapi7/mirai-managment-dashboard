@@ -105,7 +105,7 @@ export default function Pricing() {
 
   const fetchItems = async () => {
     setLoading(true);
-    setLoadingMessage('Loading items from Shopify... This may take 10-20 seconds on first load.');
+    setLoadingMessage('Loading items...');
     setError(null);
     try {
       const url = selectedMarket === 'all'
@@ -173,7 +173,7 @@ export default function Pricing() {
 
   const fetchTargetPrices = async () => {
     setLoading(true);
-    setLoadingMessage('Calculating target prices... This may take 10-20 seconds on first load.');
+    setLoadingMessage('Calculating target prices...');
     setError(null);
     try {
       const startTime = Date.now();
@@ -307,6 +307,14 @@ export default function Pricing() {
         } else {
           aVal = a[targetPricesSortColumn];
           bVal = b[targetPricesSortColumn];
+        }
+
+        // Special handling for priority (HIGH > MEDIUM > LOW)
+        if (targetPricesSortColumn === 'priority') {
+          const priorityMap = { 'HIGH': 3, 'MEDIUM': 2, 'LOW': 1 };
+          aVal = priorityMap[aVal] || 0;
+          bVal = priorityMap[bVal] || 0;
+          return targetPricesSortDirection === 'asc' ? aVal - bVal : bVal - aVal;
         }
 
         // Handle numeric values
@@ -451,8 +459,11 @@ export default function Pricing() {
               {loading ? (
                 <div className="space-y-4">
                   {loadingMessage && (
-                    <div className="text-center py-4 text-blue-600 font-medium">
-                      {loadingMessage}
+                    <div className="space-y-2">
+                      <div className="w-full bg-slate-200 rounded-full h-2.5">
+                        <div className="bg-blue-600 h-2.5 rounded-full animate-pulse" style={{width: '60%'}}></div>
+                      </div>
+                      <p className="text-center text-sm text-slate-600">Loading from Shopify...</p>
                     </div>
                   )}
                   <div className="space-y-2">
@@ -1080,8 +1091,11 @@ export default function Pricing() {
               {loading ? (
                 <div className="space-y-4">
                   {loadingMessage && (
-                    <div className="text-center py-4 text-blue-600 font-medium">
-                      {loadingMessage}
+                    <div className="space-y-2">
+                      <div className="w-full bg-slate-200 rounded-full h-2.5">
+                        <div className="bg-blue-600 h-2.5 rounded-full animate-pulse" style={{width: '60%'}}></div>
+                      </div>
+                      <p className="text-center text-sm text-slate-600">Calculating target prices...</p>
                     </div>
                   )}
                   <div className="space-y-2">
@@ -1170,6 +1184,24 @@ export default function Pricing() {
                           </TableHead>
                           <TableHead
                             className="text-right cursor-pointer hover:bg-slate-50"
+                            onClick={() => handleTargetPricesSort('comp_low')}
+                          >
+                            Comp Low{getTargetPricesSortIcon('comp_low')}
+                          </TableHead>
+                          <TableHead
+                            className="text-right cursor-pointer hover:bg-slate-50"
+                            onClick={() => handleTargetPricesSort('comp_avg')}
+                          >
+                            Comp Avg{getTargetPricesSortIcon('comp_avg')}
+                          </TableHead>
+                          <TableHead
+                            className="text-right cursor-pointer hover:bg-slate-50"
+                            onClick={() => handleTargetPricesSort('comp_high')}
+                          >
+                            Comp High{getTargetPricesSortIcon('comp_high')}
+                          </TableHead>
+                          <TableHead
+                            className="text-right cursor-pointer hover:bg-slate-50"
                             onClick={() => handleTargetPricesSort('loss_amount')}
                           >
                             Loss ${getTargetPricesSortIcon('loss_amount')}
@@ -1233,6 +1265,9 @@ export default function Pricing() {
                             <TableCell className="text-right">{formatCurrency(price[`target_${countryKey}`])}</TableCell>
                             <TableCell className="text-right">{formatCurrency(price[`suggested_${countryKey}`])}</TableCell>
                             <TableCell className="text-right font-semibold">{formatCurrency(price[`final_suggested_${countryKey}`])}</TableCell>
+                            <TableCell className="text-right text-slate-500">{formatCurrency(price[`comp_low_${countryKey}`] || 0)}</TableCell>
+                            <TableCell className="text-right text-slate-500">{formatCurrency(price[`comp_avg_${countryKey}`] || 0)}</TableCell>
+                            <TableCell className="text-right text-slate-500">{formatCurrency(price[`comp_high_${countryKey}`] || 0)}</TableCell>
                             <TableCell className="text-right">
                               <span className={(price[`loss_amount_${countryKey}`] || 0) < 0 ? 'text-red-600 font-semibold' : 'text-green-600'}>
                                 {formatCurrency(price[`loss_amount_${countryKey}`])}
