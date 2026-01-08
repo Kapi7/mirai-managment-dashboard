@@ -24,7 +24,7 @@ export default function Pricing() {
   const [selectedMarket, setSelectedMarket] = useState('all');
   const [markets, setMarkets] = useState([]);
   const [itemsPage, setItemsPage] = useState(0);
-  const [itemsPageSize] = useState(50);
+  const [itemsPageSize, setItemsPageSize] = useState(50);
   const [itemsSortColumn, setItemsSortColumn] = useState(null);
   const [itemsSortDirection, setItemsSortDirection] = useState('asc');
   const [selectedItems, setSelectedItems] = useState(new Set());
@@ -42,7 +42,7 @@ export default function Pricing() {
   const [selectedCountry, setSelectedCountry] = useState('US');
   const [countries, setCountries] = useState(['US', 'UK', 'AU', 'CA']);
   const [targetPricesPage, setTargetPricesPage] = useState(0);
-  const [targetPricesPageSize] = useState(50);
+  const [targetPricesPageSize, setTargetPricesPageSize] = useState(50);
   const [targetPricesSortColumn, setTargetPricesSortColumn] = useState(null);
   const [targetPricesSortDirection, setTargetPricesSortDirection] = useState('asc');
   const [targetPricesPriorityFilter, setTargetPricesPriorityFilter] = useState('all');
@@ -415,11 +415,12 @@ export default function Pricing() {
                         const newUpdates = selectedItemsData.map(item => ({
                           variant_id: item.variant_id,
                           item: item.item,
-                          market: 'US',
                           current_price: item.retail_base,
+                          current_compare_at: item.compare_at_base,
                           new_price: item.retail_base,
+                          new_compare_at: null,
+                          compare_at_policy: 'D',
                           new_cogs: null,
-                          compare_at: item.compare_at_base,
                           notes: ''
                         }));
                         console.log('New updates:', newUpdates);
@@ -542,7 +543,22 @@ export default function Pricing() {
                                   }}
                                 />
                               </TableCell>
-                              <TableCell className="font-mono text-sm">{item.variant_id}</TableCell>
+                              <TableCell className="font-mono text-sm">
+                                <div className="flex items-center gap-2">
+                                  <span>{item.variant_id}</span>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 w-6 p-0"
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(item.variant_id);
+                                    }}
+                                    title="Copy Variant ID"
+                                  >
+                                    📋
+                                  </Button>
+                                </div>
+                              </TableCell>
                               <TableCell className="font-medium">{item.item}</TableCell>
                               <TableCell className="text-right">{(item.weight || 0).toFixed(0)}</TableCell>
                               <TableCell className="text-right">{formatCurrency(item.cogs)}</TableCell>
@@ -562,8 +578,24 @@ export default function Pricing() {
 
                   {/* Pagination Controls */}
                   <div className="flex items-center justify-between mt-4 pt-4 border-t">
-                    <div className="text-sm text-slate-600">
-                      Showing {itemsPage * itemsPageSize + 1} to {Math.min((itemsPage + 1) * itemsPageSize, items.length)} of {items.length} items
+                    <div className="flex items-center gap-3">
+                      <div className="text-sm text-slate-600">
+                        Showing {itemsPage * itemsPageSize + 1} to {Math.min((itemsPage + 1) * itemsPageSize, items.length)} of {items.length} items
+                      </div>
+                      <Select value={itemsPageSize.toString()} onValueChange={(val) => {
+                        setItemsPageSize(parseInt(val));
+                        setItemsPage(0);
+                      }}>
+                        <SelectTrigger className="h-8 w-[90px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="50">50 / page</SelectItem>
+                          <SelectItem value="100">100 / page</SelectItem>
+                          <SelectItem value="200">200 / page</SelectItem>
+                          <SelectItem value="500">500 / page</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                     <div className="flex items-center gap-2">
                       <Button
@@ -628,11 +660,12 @@ export default function Pricing() {
                         setPriceUpdates([...priceUpdates, {
                           variant_id: '',
                           item: '',
-                          market: 'US',
                           current_price: 0,
+                          current_compare_at: 0,
                           new_price: 0,
+                          new_compare_at: null,
+                          compare_at_policy: 'D',
                           new_cogs: null,
-                          compare_at: 0,
                           notes: ''
                         }]);
                       }}
@@ -665,9 +698,10 @@ export default function Pricing() {
                   <ul className="list-disc list-inside space-y-1">
                     <li>Select items from Items or Target Prices tabs, then click "Add to Price Updates"</li>
                     <li>Click "+ Add Row" to manually add items</li>
-                    <li>Edit prices inline by clicking the fields</li>
+                    <li>Edit prices inline - Leave "New Compare At" blank to use policy</li>
+                    <li><strong>Policy B:</strong> GMC-compliant (compare_at = price), <strong>Policy D:</strong> Preserve discount %</li>
                     <li>Paste data from Excel/Sheets (variant_id, new_price format)</li>
-                    <li>Click "Execute Updates" when ready to push changes to Shopify</li>
+                    <li>Click "Execute Updates" when ready to push base price changes to Shopify</li>
                   </ul>
                 </div>
 
@@ -706,11 +740,12 @@ export default function Pricing() {
                             return {
                               variant_id,
                               item: itemData?.item || '',
-                              market: 'US',
                               current_price: itemData?.retail_base || itemData?.[`current_US`] || 0,
+                              current_compare_at: itemData?.compare_at_base || 0,
                               new_price,
+                              new_compare_at: null,
+                              compare_at_policy: 'D',
                               new_cogs,
-                              compare_at: itemData?.compare_at_base || 0,
                               notes: ''
                             };
                           });
@@ -751,11 +786,13 @@ export default function Pricing() {
                         <TableHead className="w-[40px]"></TableHead>
                         <TableHead>Variant ID</TableHead>
                         <TableHead>Item</TableHead>
-                        <TableHead>Market</TableHead>
-                        <TableHead className="text-right">Current</TableHead>
+                        <TableHead className="text-right">Current Price</TableHead>
+                        <TableHead className="text-right">Current Compare At</TableHead>
                         <TableHead className="text-right">New Price</TableHead>
+                        <TableHead className="text-right">New Compare At</TableHead>
+                        <TableHead>Compare At Policy</TableHead>
                         <TableHead className="text-right">New COGS</TableHead>
-                        <TableHead className="text-right">Change</TableHead>
+                        <TableHead className="text-right">Change %</TableHead>
                         <TableHead>Notes</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -794,8 +831,8 @@ export default function Pricing() {
 
                                     if (itemData) {
                                       newUpdates[idx].item = itemData.item;
-                                      newUpdates[idx].current_price = itemData.retail_base || itemData[`current_${newUpdates[idx].market}`] || 0;
-                                      newUpdates[idx].compare_at = itemData.compare_at_base || 0;
+                                      newUpdates[idx].current_price = itemData.retail_base || itemData[`current_US`] || 0;
+                                      newUpdates[idx].current_compare_at = itemData.compare_at_base || 0;
                                       // Set new_price to current if not already set
                                       if (newUpdates[idx].new_price === 0) {
                                         newUpdates[idx].new_price = newUpdates[idx].current_price;
@@ -809,28 +846,8 @@ export default function Pricing() {
                               />
                             </TableCell>
                             <TableCell className="font-medium text-sm max-w-[200px] truncate">{update.item || '-'}</TableCell>
-                            <TableCell>
-                              <Select
-                                value={update.market}
-                                onValueChange={(value) => {
-                                  const newUpdates = [...priceUpdates];
-                                  newUpdates[idx].market = value;
-                                  setPriceUpdates(newUpdates);
-                                }}
-                              >
-                                <SelectTrigger className="h-8 w-[80px]">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="US">US</SelectItem>
-                                  <SelectItem value="UK">UK</SelectItem>
-                                  <SelectItem value="AU">AU</SelectItem>
-                                  <SelectItem value="CA">CA</SelectItem>
-                                  <SelectItem value="EU">EU</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </TableCell>
                             <TableCell className="text-right text-sm">{formatCurrency(update.current_price)}</TableCell>
+                            <TableCell className="text-right text-sm">{formatCurrency(update.current_compare_at || 0)}</TableCell>
                             <TableCell className="text-right">
                               <Input
                                 type="number"
@@ -849,7 +866,39 @@ export default function Pricing() {
                                 type="number"
                                 step="0.01"
                                 className="text-right h-8 w-[100px]"
-                                value={update.new_cogs || ''}
+                                value={update.new_compare_at ?? ''}
+                                onChange={(e) => {
+                                  const newUpdates = [...priceUpdates];
+                                  newUpdates[idx].new_compare_at = e.target.value ? parseFloat(e.target.value) : null;
+                                  setPriceUpdates(newUpdates);
+                                }}
+                                placeholder="Auto"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Select
+                                value={update.compare_at_policy || 'D'}
+                                onValueChange={(value) => {
+                                  const newUpdates = [...priceUpdates];
+                                  newUpdates[idx].compare_at_policy = value;
+                                  setPriceUpdates(newUpdates);
+                                }}
+                              >
+                                <SelectTrigger className="h-8 w-[70px]">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="B">B</SelectItem>
+                                  <SelectItem value="D">D</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Input
+                                type="number"
+                                step="0.01"
+                                className="text-right h-8 w-[100px]"
+                                value={update.new_cogs ?? ''}
                                 onChange={(e) => {
                                   const newUpdates = [...priceUpdates];
                                   newUpdates[idx].new_cogs = e.target.value ? parseFloat(e.target.value) : null;
@@ -1007,11 +1056,12 @@ export default function Pricing() {
                         const newUpdates = selectedPricesData.map(price => ({
                           variant_id: price.variant_id,
                           item: price.item,
-                          market: selectedCountry,
                           current_price: price[`current_${countryKey}`],
+                          current_compare_at: 0,
                           new_price: price[`final_suggested_${countryKey}`],
+                          new_compare_at: null,
+                          compare_at_policy: 'D',
                           new_cogs: null,
-                          compare_at: 0,
                           notes: `Priority: ${price[`priority_${countryKey}`]}, Loss: ${formatCurrency(price[`loss_amount_${countryKey}`])}`
                         }));
                         console.log('New updates:', newUpdates);
@@ -1158,7 +1208,22 @@ export default function Pricing() {
                                 }}
                               />
                             </TableCell>
-                            <TableCell className="font-mono text-sm">{price.variant_id}</TableCell>
+                            <TableCell className="font-mono text-sm">
+                              <div className="flex items-center gap-2">
+                                <span>{price.variant_id}</span>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 w-6 p-0"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(price.variant_id);
+                                  }}
+                                  title="Copy Variant ID"
+                                >
+                                  📋
+                                </Button>
+                              </div>
+                            </TableCell>
                             <TableCell className="font-medium max-w-[250px] truncate">{price.item}</TableCell>
                             <TableCell className="text-right">{(price.weight_g || 0).toFixed(0)}</TableCell>
                             <TableCell className="text-right">{formatCurrency(price.cogs)}</TableCell>
@@ -1191,9 +1256,25 @@ export default function Pricing() {
 
                 {/* Pagination Controls */}
                 <div className="flex items-center justify-between mt-4 pt-4 border-t">
-                  <div className="text-sm text-slate-600">
-                    Showing {targetPricesPage * targetPricesPageSize + 1} to {Math.min((targetPricesPage + 1) * targetPricesPageSize, targetPrices.length)} of {targetPrices.length} items
-                    {(targetPricesPriorityFilter !== 'all' || targetPricesSearchFilter) && ` (filtered)`}
+                  <div className="flex items-center gap-3">
+                    <div className="text-sm text-slate-600">
+                      Showing {targetPricesPage * targetPricesPageSize + 1} to {Math.min((targetPricesPage + 1) * targetPricesPageSize, targetPrices.length)} of {targetPrices.length} items
+                      {(targetPricesPriorityFilter !== 'all' || targetPricesSearchFilter) && ` (filtered)`}
+                    </div>
+                    <Select value={targetPricesPageSize.toString()} onValueChange={(val) => {
+                      setTargetPricesPageSize(parseInt(val));
+                      setTargetPricesPage(0);
+                    }}>
+                      <SelectTrigger className="h-8 w-[90px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="50">50 / page</SelectItem>
+                        <SelectItem value="100">100 / page</SelectItem>
+                        <SelectItem value="200">200 / page</SelectItem>
+                        <SelectItem value="500">500 / page</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="flex items-center gap-2">
                     <Button
