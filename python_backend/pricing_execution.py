@@ -47,88 +47,7 @@ def _shopify_graphql(query: str, variables: Dict = None):
     return data
 
 
-def _log_to_sheets(updates: List[Dict[str, Any]]):
-    """
-    Log price updates to Google Sheets UpdatesLog tab
-    """
-    try:
-        import gspread
-        from google.oauth2.service_account import Credentials
-
-        SHEET_ID = os.getenv("GOOGLE_SHEET_ID_1")
-        GOOGLE_AUTH_MODE = os.getenv("GOOGLE_AUTH_MODE_1", "oauth").lower()
-
-        if not SHEET_ID:
-            print("⚠️ GOOGLE_SHEET_ID_1 not configured, skipping logging")
-            return
-
-        # Authenticate
-        if GOOGLE_AUTH_MODE == "service_account":
-            SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON_1")
-            if not SERVICE_ACCOUNT_JSON or not os.path.exists(SERVICE_ACCOUNT_JSON):
-                print("⚠️ Service account JSON not found, skipping logging")
-                return
-
-            SCOPES = [
-                "https://www.googleapis.com/auth/spreadsheets",
-                "https://www.googleapis.com/auth/drive"
-            ]
-            creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_JSON, scopes=SCOPES)
-            gc = gspread.authorize(creds)
-        else:  # oauth mode
-            OAUTH_DIR = os.getenv("GOOGLE_OAUTH_DIR_1", ".google_oauth_1")
-            token_path = os.path.join(OAUTH_DIR, "token.json")
-
-            if not os.path.exists(token_path):
-                print("⚠️ OAuth token not found, skipping logging")
-                return
-
-            gc = gspread.oauth(
-                credentials_filename=os.path.join(OAUTH_DIR, "credentials.json"),
-                authorized_user_filename=token_path
-            )
-
-        # Open sheet
-        sh = gc.open_by_key(SHEET_ID)
-
-        # Get or create UpdatesLog worksheet
-        try:
-            ws = sh.worksheet("UpdatesLog")
-        except:
-            ws = sh.add_worksheet(title="UpdatesLog", rows=1000, cols=20)
-            # Add header row
-            ws.append_row([
-                "timestamp", "variant_gid", "item", "scope", "currency",
-                "old_price", "new_price", "old_compare_at", "new_compare_at",
-                "status", "note"
-            ])
-
-        # Prepare rows to append
-        rows_to_add = []
-        for update in updates:
-            rows_to_add.append([
-                update.get("timestamp", ""),
-                update.get("variant_gid", ""),
-                update.get("item", ""),
-                update.get("scope", "US"),
-                update.get("currency", "USD"),
-                update.get("old_price", 0),
-                update.get("new_price", 0),
-                update.get("old_compare_at", 0),
-                update.get("new_compare_at", 0),
-                update.get("status", "success"),
-                update.get("note", "")
-            ])
-
-        # Append all rows
-        if rows_to_add:
-            ws.append_rows(rows_to_add)
-            print(f"✅ Logged {len(rows_to_add)} updates to Google Sheets")
-
-    except ImportError:
-        print("⚠️ gspread not installed, skipping logging")
-    except Exception as e:
-        print(f"⚠️ Failed to log to sheets: {e}")
+# Google Sheets logging removed - all updates tracked internally now
 
 
 def execute_updates(updates: List[Any]) -> Dict[str, Any]:
@@ -144,7 +63,6 @@ def execute_updates(updates: List[Any]) -> Dict[str, Any]:
     updated_count = 0
     failed_count = 0
     details = []
-    log_entries = []
 
     for update in updates:
         try:
@@ -268,21 +186,6 @@ def execute_updates(updates: List[Any]) -> Dict[str, Any]:
                 "message": f"Updated price to ${new_price:.2f}"
             })
 
-            # Log entry for sheets
-            log_entries.append({
-                "timestamp": datetime.utcnow().isoformat(),
-                "variant_gid": variant_gid,
-                "item": item_name,
-                "scope": "US",  # TODO: Make this dynamic based on market
-                "currency": "USD",
-                "old_price": update.current_price,
-                "new_price": new_price,
-                "old_compare_at": 0,  # We don't track this currently
-                "new_compare_at": new_compare_at or 0,
-                "status": "success",
-                "note": update.notes
-            })
-
             time.sleep(0.1)  # Rate limiting
 
         except Exception as e:
@@ -293,10 +196,6 @@ def execute_updates(updates: List[Any]) -> Dict[str, Any]:
                 "message": str(e)
             })
             print(f"❌ Failed to update {variant_id}: {e}")
-
-    # Log to Google Sheets
-    if log_entries:
-        _log_to_sheets(log_entries)
 
     message = f"Updated {updated_count} variants"
     if failed_count > 0:

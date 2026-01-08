@@ -56,6 +56,7 @@ export default function Pricing() {
 
   // Product Management tab state
   const [productManagementActions, setProductManagementActions] = useState([]);
+  const [productPasteInput, setProductPasteInput] = useState('');
 
   // Pre-fetch items on mount for faster initial load
   useEffect(() => {
@@ -1906,14 +1907,85 @@ export default function Pricing() {
             </CardHeader>
             <CardContent>
               <div className="space-y-6">
+                {/* Bulk Paste Section */}
+                <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                  <h3 className="text-sm font-semibold text-blue-900 mb-2">📋 Bulk Product Operations</h3>
+                  <p className="text-xs text-blue-700 mb-3">
+                    Paste variant IDs (one per line) to perform bulk operations. Default action is <strong>Delete</strong>.
+                  </p>
+                  <div className="flex gap-2">
+                    <textarea
+                      className="flex-1 p-2 border border-blue-300 rounded-lg font-mono text-sm"
+                      placeholder="51750779093364&#10;51750800228724&#10;51750801146228"
+                      value={productPasteInput}
+                      onChange={(e) => setProductPasteInput(e.target.value)}
+                      rows={5}
+                    />
+                    <div className="flex flex-col gap-2">
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => {
+                          const ids = productPasteInput.split('\n').filter(id => id.trim());
+                          if (ids.length === 0) {
+                            alert('Please enter at least one variant ID');
+                            return;
+                          }
+
+                          // Add all as delete actions
+                          const newActions = ids.map(id => ({
+                            action: 'delete',
+                            variant_id: id.trim(),
+                            title: '',
+                            price: 0,
+                            sku: '',
+                            inventory: 0
+                          }));
+
+                          setProductManagementActions([...productManagementActions, ...newActions]);
+                          setProductPasteInput('');
+                        }}
+                      >
+                        🗑️ Add {productPasteInput.split('\n').filter(id => id.trim()).length > 0 ? productPasteInput.split('\n').filter(id => id.trim()).length : ''} for Delete
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          const ids = productPasteInput.split('\n').filter(id => id.trim());
+                          if (ids.length === 0) {
+                            alert('Please enter at least one variant ID');
+                            return;
+                          }
+
+                          // Add all as add actions (user will need to fill details)
+                          const newActions = ids.map(id => ({
+                            action: 'add',
+                            variant_id: id.trim(),
+                            title: '',
+                            price: 0,
+                            sku: '',
+                            inventory: 0
+                          }));
+
+                          setProductManagementActions([...productManagementActions, ...newActions]);
+                          setProductPasteInput('');
+                        }}
+                      >
+                        ➕ Add {productPasteInput.split('\n').filter(id => id.trim()).length > 0 ? productPasteInput.split('\n').filter(id => id.trim()).length : ''} for Creation
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Action Buttons */}
                 <div className="flex gap-3">
                   <Button
-                    variant="default"
+                    variant="outline"
                     size="sm"
                     onClick={() => {
                       setProductManagementActions([...productManagementActions, {
-                        action: 'add',
+                        action: 'delete',
                         variant_id: '',
                         title: '',
                         price: 0,
@@ -1922,17 +1994,50 @@ export default function Pricing() {
                       }]);
                     }}
                   >
-                    + Add Product Row
+                    + Add Row (Delete)
                   </Button>
                   <Button
-                    variant="default"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      // Set all actions to delete
+                      const newActions = productManagementActions.map(action => ({
+                        ...action,
+                        action: 'delete'
+                      }));
+                      setProductManagementActions(newActions);
+                    }}
+                    disabled={productManagementActions.length === 0}
+                  >
+                    🗑️ Set All to Delete
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      // Set all actions to add
+                      const newActions = productManagementActions.map(action => ({
+                        ...action,
+                        action: 'add'
+                      }));
+                      setProductManagementActions(newActions);
+                    }}
+                    disabled={productManagementActions.length === 0}
+                  >
+                    ➕ Set All to Add
+                  </Button>
+                  <Button
+                    variant="destructive"
                     onClick={async () => {
                       if (productManagementActions.length === 0) {
                         alert('No actions to execute');
                         return;
                       }
 
-                      if (!confirm(`Execute ${productManagementActions.length} product actions?`)) {
+                      const deleteCount = productManagementActions.filter(a => a.action === 'delete').length;
+                      const addCount = productManagementActions.filter(a => a.action === 'add').length;
+
+                      if (!confirm(`Execute ${productManagementActions.length} actions?\n\n${deleteCount} deletions, ${addCount} additions`)) {
                         return;
                       }
 
@@ -1969,11 +2074,11 @@ export default function Pricing() {
                 <div className="bg-slate-50 p-4 rounded-lg text-sm text-slate-600">
                   <p className="font-semibold mb-2">How to use:</p>
                   <ul className="list-disc list-inside space-y-1">
-                    <li>Click "+ Add Product Row" to add a new product action</li>
-                    <li>Select action type: Add (create new product) or Delete (remove existing)</li>
-                    <li>Fill in product details for Add action</li>
-                    <li>Enter variant ID for Delete action</li>
-                    <li>Click "Execute Actions" to push changes to Shopify</li>
+                    <li><strong>Bulk Operations:</strong> Paste variant IDs (one per line) in the blue box above</li>
+                    <li><strong>Delete (Default):</strong> Click "🗑️ Add X for Delete" to queue bulk deletions</li>
+                    <li><strong>Add Products:</strong> Click "➕ Add X for Creation" (then fill product details in table)</li>
+                    <li><strong>Mass Update:</strong> Use "Set All to Delete" or "Set All to Add" to change all actions at once</li>
+                    <li><strong>Execute:</strong> Click "Execute Actions" to push changes to Shopify</li>
                   </ul>
                 </div>
 
@@ -2026,8 +2131,8 @@ export default function Pricing() {
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  <SelectItem value="add">Add</SelectItem>
-                                  <SelectItem value="delete">Delete</SelectItem>
+                                  <SelectItem value="delete">🗑️ Delete</SelectItem>
+                                  <SelectItem value="add">➕ Add</SelectItem>
                                 </SelectContent>
                               </Select>
                             </TableCell>
