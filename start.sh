@@ -6,21 +6,38 @@ echo "🚀 Starting Mirai Dashboard services..."
 # Start Python backend
 echo "📊 Starting Python backend on port 8080..."
 cd python_backend
-python3 server.py &
+python3 server.py 2>&1 | sed 's/^/[PYTHON] /' &
 PYTHON_PID=$!
 echo "Python backend PID: $PYTHON_PID"
 
-# Wait for Python backend to be ready
+# Wait for Python backend with retry logic
 echo "⏳ Waiting for Python backend to be ready..."
-sleep 5
+MAX_RETRIES=10
+RETRY_COUNT=0
+RETRY_DELAY=2
 
-# Check if Python backend is running
-if ! curl -s http://localhost:8080/health > /dev/null; then
-    echo "❌ Python backend failed to start"
-    kill $PYTHON_PID 2>/dev/null || true
-    exit 1
-fi
-echo "✅ Python backend is ready"
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+    if curl -s http://localhost:8080/health > /dev/null 2>&1; then
+        echo "✅ Python backend is ready (attempt $((RETRY_COUNT + 1))/$MAX_RETRIES)"
+        break
+    fi
+
+    # Check if process is still running
+    if ! kill -0 $PYTHON_PID 2>/dev/null; then
+        echo "❌ Python backend process died during startup"
+        exit 1
+    fi
+
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+    if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+        echo "⏳ Python backend not ready yet, retrying in ${RETRY_DELAY}s... (attempt $RETRY_COUNT/$MAX_RETRIES)"
+        sleep $RETRY_DELAY
+    else
+        echo "❌ Python backend failed to start after $MAX_RETRIES attempts"
+        kill $PYTHON_PID 2>/dev/null || true
+        exit 1
+    fi
+done
 
 # Start Node.js server
 echo "📱 Starting Node.js server..."

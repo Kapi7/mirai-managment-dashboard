@@ -56,7 +56,9 @@ app.get('/reports-api/pricing/*', async (req, res) => {
 
     console.log(`📊 Proxying GET pricing request: ${path}`);
 
-    const response = await fetch(url);
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(30000) // 30 second timeout
+    });
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -68,6 +70,23 @@ app.get('/reports-api/pricing/*', async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('❌ Pricing API GET error:', error);
+
+    // Handle connection refused (Python backend not available)
+    if (error.cause?.code === 'ECONNREFUSED') {
+      return res.status(503).json({
+        error: 'Python backend unavailable. Please try again in a moment.',
+        details: 'The pricing service is temporarily unavailable.'
+      });
+    }
+
+    // Handle timeout
+    if (error.name === 'TimeoutError') {
+      return res.status(504).json({
+        error: 'Request timeout',
+        details: 'The pricing service took too long to respond.'
+      });
+    }
+
     res.status(500).json({ error: error.message });
   }
 });
@@ -86,7 +105,8 @@ app.post('/reports-api/pricing/*', async (req, res) => {
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(req.body)
+      body: JSON.stringify(req.body),
+      signal: AbortSignal.timeout(30000) // 30 second timeout
     });
 
     if (!response.ok) {
@@ -99,6 +119,23 @@ app.post('/reports-api/pricing/*', async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('❌ Pricing API POST error:', error);
+
+    // Handle connection refused (Python backend not available)
+    if (error.cause?.code === 'ECONNREFUSED') {
+      return res.status(503).json({
+        error: 'Python backend unavailable. Please try again in a moment.',
+        details: 'The pricing service is temporarily unavailable.'
+      });
+    }
+
+    // Handle timeout
+    if (error.name === 'TimeoutError') {
+      return res.status(504).json({
+        error: 'Request timeout',
+        details: 'The pricing service took too long to respond.'
+      });
+    }
+
     res.status(500).json({ error: error.message });
   }
 });
