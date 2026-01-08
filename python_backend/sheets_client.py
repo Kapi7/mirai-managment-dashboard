@@ -114,7 +114,7 @@ def _header_matches(existing: List[str], expected: List[str]) -> bool:
     return ex == exp
 
 
-def ensure_month_layout(ws: gspread.Worksheet, headers: List[str], year: int, month: int) -> None:
+def ensure_month_layout(ws, headers: List[str], year: int, month: int) -> None:
     """
     Guarantees:
       - Row 1 has headers (A1:S1)
@@ -249,7 +249,7 @@ def ensure_month_layout(ws: gspread.Worksheet, headers: List[str], year: int, mo
     _with_retries(rules.save)
 
 
-def update_single_day_row(ws: gspread.Worksheet, day_int: int, row_data: List[Any], *, year: int, month: int, headers: List[str]) -> None:
+def update_single_day_row(ws, day_int: int, row_data: List[Any], *, year: int, month: int, headers: List[str]) -> None:
     """
     Updates ONLY the row corresponding to the specific day number.
     Day 1 is row 2 (row 1 is header), so day X is row X + 1.
