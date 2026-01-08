@@ -6,7 +6,7 @@ echo "🚀 Starting Mirai Dashboard services..."
 # Start Python backend
 echo "📊 Starting Python backend on port 8080..."
 cd python_backend
-python3 server.py 2>&1 | sed 's/^/[PYTHON] /' &
+uvicorn simple_server:app --host 127.0.0.1 --port 8080 2>&1 | sed 's/^/[PYTHON] /' &
 PYTHON_PID=$!
 echo "Python backend PID: $PYTHON_PID"
 
