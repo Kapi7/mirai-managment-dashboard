@@ -375,7 +375,27 @@ export default function Pricing() {
                 </div>
                 <div className="flex items-center gap-3">
                   {selectedItems.size > 0 && (
-                    <Button variant="default" size="sm">
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={() => {
+                        // Add selected items to price updates
+                        const selectedItemsData = items.filter(item => selectedItems.has(item.variant_id));
+                        const newUpdates = selectedItemsData.map(item => ({
+                          variant_id: item.variant_id,
+                          item: item.item,
+                          market: 'US',
+                          current_price: item.retail_base,
+                          new_price: item.retail_base,
+                          new_cogs: null,
+                          compare_at: item.compare_at_base,
+                          notes: ''
+                        }));
+                        setPriceUpdates([...priceUpdates, ...newUpdates]);
+                        setSelectedItems(new Set()); // Clear selection
+                        setActiveTab('price-updates'); // Switch to Price Updates tab
+                      }}
+                    >
                       Add {selectedItems.size} to Price Updates
                     </Button>
                   )}
@@ -542,55 +562,178 @@ export default function Pricing() {
         <TabsContent value="price-updates">
           <Card>
             <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle>Pending Price Updates</CardTitle>
-                  <CardDescription>Review and apply price changes</CardDescription>
+              <div className="flex flex-col gap-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>Price Updates Staging</CardTitle>
+                    <CardDescription>Add items, set new prices, then execute updates</CardDescription>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        // Add manual row
+                        setPriceUpdates([...priceUpdates, {
+                          variant_id: '',
+                          item: '',
+                          market: 'US',
+                          current_price: 0,
+                          new_price: 0,
+                          new_cogs: null,
+                          compare_at: 0,
+                          notes: ''
+                        }]);
+                      }}
+                    >
+                      + Add Row
+                    </Button>
+                    <Button
+                      variant="default"
+                      disabled={priceUpdates.length === 0}
+                      onClick={() => {
+                        alert(`Would execute ${priceUpdates.length} price updates to Shopify`);
+                        // TODO: Implement actual update execution
+                      }}
+                    >
+                      Execute Updates ({priceUpdates.length})
+                    </Button>
+                  </div>
                 </div>
-                <Button variant="default" disabled={priceUpdates.length === 0}>
-                  Apply Updates ({priceUpdates.length})
-                </Button>
+
+                {/* Instructions */}
+                <div className="bg-slate-50 p-4 rounded-lg text-sm text-slate-600">
+                  <p className="font-semibold mb-2">How to use:</p>
+                  <ul className="list-disc list-inside space-y-1">
+                    <li>Select items from Items or Target Prices tabs, then click "Add to Price Updates"</li>
+                    <li>Click "+ Add Row" to manually add items</li>
+                    <li>Edit prices inline by clicking the fields</li>
+                    <li>Paste data from Excel/Sheets (variant_id, new_price format)</li>
+                    <li>Click "Execute Updates" when ready to push changes to Shopify</li>
+                  </ul>
+                </div>
               </div>
             </CardHeader>
             <CardContent>
-              {loading ? (
-                <div className="space-y-2">
-                  {[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-12 w-full" />)}
+              {priceUpdates.length === 0 ? (
+                <div className="text-center py-12 text-slate-500">
+                  <p className="text-lg font-medium mb-2">No price updates staged</p>
+                  <p className="text-sm">Select items from other tabs or click "+ Add Row" to begin</p>
                 </div>
-              ) : priceUpdates.length === 0 ? (
-                <div className="text-center py-8 text-slate-500">No pending updates</div>
               ) : (
                 <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
+                        <TableHead className="w-[40px]"></TableHead>
                         <TableHead>Variant ID</TableHead>
                         <TableHead>Item</TableHead>
                         <TableHead>Market</TableHead>
-                        <TableHead className="text-right">Current Price</TableHead>
+                        <TableHead className="text-right">Current</TableHead>
                         <TableHead className="text-right">New Price</TableHead>
+                        <TableHead className="text-right">New COGS</TableHead>
                         <TableHead className="text-right">Change</TableHead>
-                        <TableHead className="text-right">Compare At</TableHead>
                         <TableHead>Notes</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {priceUpdates.map((update, idx) => {
-                        const changePct = ((update.new_price - update.current_price) / update.current_price) * 100;
+                        const changePct = update.current_price > 0
+                          ? ((update.new_price - update.current_price) / update.current_price) * 100
+                          : 0;
                         return (
                           <TableRow key={idx}>
-                            <TableCell className="font-mono text-sm">{update.variant_id}</TableCell>
-                            <TableCell className="font-medium">{update.item}</TableCell>
-                            <TableCell><Badge variant="outline">{update.market}</Badge></TableCell>
-                            <TableCell className="text-right">{formatCurrency(update.current_price)}</TableCell>
-                            <TableCell className="text-right font-semibold">{formatCurrency(update.new_price)}</TableCell>
+                            <TableCell>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 w-6 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                                onClick={() => {
+                                  setPriceUpdates(priceUpdates.filter((_, i) => i !== idx));
+                                }}
+                              >
+                                ×
+                              </Button>
+                            </TableCell>
+                            <TableCell>
+                              <Input
+                                className="font-mono text-sm h-8"
+                                value={update.variant_id}
+                                onChange={(e) => {
+                                  const newUpdates = [...priceUpdates];
+                                  newUpdates[idx].variant_id = e.target.value;
+                                  setPriceUpdates(newUpdates);
+                                }}
+                                placeholder="Variant ID"
+                              />
+                            </TableCell>
+                            <TableCell className="font-medium text-sm max-w-[200px] truncate">{update.item || '-'}</TableCell>
+                            <TableCell>
+                              <Select
+                                value={update.market}
+                                onValueChange={(value) => {
+                                  const newUpdates = [...priceUpdates];
+                                  newUpdates[idx].market = value;
+                                  setPriceUpdates(newUpdates);
+                                }}
+                              >
+                                <SelectTrigger className="h-8 w-[80px]">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="US">US</SelectItem>
+                                  <SelectItem value="UK">UK</SelectItem>
+                                  <SelectItem value="AU">AU</SelectItem>
+                                  <SelectItem value="CA">CA</SelectItem>
+                                  <SelectItem value="EU">EU</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </TableCell>
+                            <TableCell className="text-right text-sm">{formatCurrency(update.current_price)}</TableCell>
                             <TableCell className="text-right">
-                              <span className={changePct >= 0 ? 'text-green-600' : 'text-red-600'}>
-                                {changePct >= 0 ? '+' : ''}{formatPercent(changePct)}
+                              <Input
+                                type="number"
+                                step="0.01"
+                                className="text-right h-8 w-[100px]"
+                                value={update.new_price}
+                                onChange={(e) => {
+                                  const newUpdates = [...priceUpdates];
+                                  newUpdates[idx].new_price = parseFloat(e.target.value) || 0;
+                                  setPriceUpdates(newUpdates);
+                                }}
+                              />
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Input
+                                type="number"
+                                step="0.01"
+                                className="text-right h-8 w-[100px]"
+                                value={update.new_cogs || ''}
+                                onChange={(e) => {
+                                  const newUpdates = [...priceUpdates];
+                                  newUpdates[idx].new_cogs = e.target.value ? parseFloat(e.target.value) : null;
+                                  setPriceUpdates(newUpdates);
+                                }}
+                                placeholder="Optional"
+                              />
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <span className={changePct >= 0 ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>
+                                {changePct >= 0 ? '+' : ''}{changePct.toFixed(2)}%
                               </span>
                             </TableCell>
-                            <TableCell className="text-right">{formatCurrency(update.compare_at)}</TableCell>
-                            <TableCell className="text-sm text-slate-600">{update.notes}</TableCell>
+                            <TableCell>
+                              <Input
+                                className="h-8 text-sm"
+                                value={update.notes}
+                                onChange={(e) => {
+                                  const newUpdates = [...priceUpdates];
+                                  newUpdates[idx].notes = e.target.value;
+                                  setPriceUpdates(newUpdates);
+                                }}
+                                placeholder="Optional notes"
+                              />
+                            </TableCell>
                           </TableRow>
                         );
                       })}
@@ -710,7 +853,28 @@ export default function Pricing() {
                     </SelectContent>
                   </Select>
                   {selectedTargetPrices.size > 0 && (
-                    <Button variant="default" size="sm">
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={() => {
+                        // Add selected target prices to price updates
+                        const countryKey = selectedCountry;
+                        const selectedPricesData = targetPrices.filter(price => selectedTargetPrices.has(price.variant_id));
+                        const newUpdates = selectedPricesData.map(price => ({
+                          variant_id: price.variant_id,
+                          item: price.item,
+                          market: selectedCountry,
+                          current_price: price[`current_${countryKey}`],
+                          new_price: price[`final_suggested_${countryKey}`],
+                          new_cogs: null,
+                          compare_at: 0,
+                          notes: `Priority: ${price[`priority_${countryKey}`]}, Loss: ${formatCurrency(price[`loss_amount_${countryKey}`])}`
+                        }));
+                        setPriceUpdates([...priceUpdates, ...newUpdates]);
+                        setSelectedTargetPrices(new Set()); // Clear selection
+                        setActiveTab('price-updates'); // Switch to Price Updates tab
+                      }}
+                    >
                       Add {selectedTargetPrices.size} to Price Updates
                     </Button>
                   )}
