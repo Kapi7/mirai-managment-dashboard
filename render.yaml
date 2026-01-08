@@ -7,16 +7,14 @@ services:
       npm install
       npm run build
       cd python_backend && pip install -r requirements.txt
-    startCommand: |
-      # Start Python server in background
-      cd python_backend && python server.py &
-      # Start Node.js server in foreground
-      cd .. && node server/index.js
+    startCommand: bash start.sh
     envVars:
       - key: NODE_VERSION
         value: 18
       - key: PYTHON_VERSION
         value: 3.11
+      - key: PYTHON_BACKEND_URL
+        value: http://localhost:8080
       # Add all your environment variables here
       - key: SHOPIFY_STORE
         sync: false

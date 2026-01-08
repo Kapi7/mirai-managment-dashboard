@@ -1,44 +1,28 @@
 #!/bin/bash
 set -e
 
-echo "🚀 Starting Mirai Dashboard with Python backend + Node.js frontend"
+echo "🚀 Starting Mirai Dashboard services..."
 
-# Install Python dependencies
-echo "📦 Installing Python dependencies..."
+# Start Python backend
+echo "📊 Starting Python backend on port 8080..."
 cd python_backend
-
-# Use venv if it exists (local dev), otherwise install globally (Render)
-if [ -d "venv" ]; then
-  echo "Using existing virtualenv"
-  source venv/bin/activate
-else
-  echo "Installing packages globally"
-  python3 -m pip install -r requirements.txt --quiet || pip install -r requirements.txt --quiet
-fi
-
-# Start Python backend on port 8080 in background (localhost only)
-echo "🐍 Starting Python reports backend on port 8080 (internal only)..."
-uvicorn simple_server:app --host 127.0.0.1 --port 8080 &
+python3 server.py &
 PYTHON_PID=$!
+echo "Python backend PID: $PYTHON_PID"
 
-# Give Python backend a moment to start
-sleep 3
+# Wait for Python backend to be ready
+echo "⏳ Waiting for Python backend to be ready..."
+sleep 5
 
 # Check if Python backend is running
-if ! kill -0 $PYTHON_PID 2>/dev/null; then
-  echo "❌ Python backend failed to start"
-  exit 1
+if ! curl -s http://localhost:8080/health > /dev/null; then
+    echo "❌ Python backend failed to start"
+    kill $PYTHON_PID 2>/dev/null || true
+    exit 1
 fi
+echo "✅ Python backend is ready"
 
-echo "✅ Python backend running (PID: $PYTHON_PID)"
-
-# Build frontend
-echo "📦 Building frontend..."
+# Start Node.js server
+echo "📱 Starting Node.js server..."
 cd ..
-npm install --production=false --quiet
-npm run build
-
-# Start Node.js server on main port (10000 for Render, or PORT env var)
-echo "🚀 Starting Node.js server on port ${PORT:-10000}..."
-cd server
-exec node index.js
+exec node server/index.js
