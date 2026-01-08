@@ -30,3 +30,6 @@ google-ads-2.yaml
 .idea/
 *.swp
 *.swo
+# Persistent data files (regenerated on each server start)
+update_log.json
+competitor_data.json
