@@ -58,6 +58,12 @@ export default function Pricing() {
   const [productManagementActions, setProductManagementActions] = useState([]);
   const [productPasteInput, setProductPasteInput] = useState('');
 
+  // Korealy Reconciliation tab state
+  const [korealyReconciliation, setKorealyReconciliation] = useState([]);
+  const [korealyStats, setKorealyStats] = useState({});
+  const [korealySelectedRows, setKorealySelectedRows] = useState(new Set());
+  const [korealyStatusFilter, setKorealyStatusFilter] = useState('all');
+
   // Pre-fetch items on mount for faster initial load
   useEffect(() => {
     fetchMarkets();
@@ -91,6 +97,9 @@ export default function Pricing() {
         break;
       case 'competitor-analysis':
         fetchCompetitorAnalysis();
+        break;
+      case 'korealy-reconciliation':
+        fetchKorealyReconciliation();
         break;
       default:
         break;
@@ -217,6 +226,33 @@ export default function Pricing() {
     } catch (err) {
       console.error('Target prices fetch error:', err);
       setError(`Failed to fetch target prices: ${err.message}`);
+      setLoadingMessage('');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchKorealyReconciliation = async () => {
+    setLoading(true);
+    setLoadingMessage('Running Korealy reconciliation...');
+    setError(null);
+    try {
+      const response = await fetch(`${API_URL}/pricing/korealy-reconciliation`);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      const result = await response.json();
+
+      if (result.success) {
+        setKorealyReconciliation(result.results || []);
+        setKorealyStats(result.stats || {});
+        setLoadingMessage('');
+      } else {
+        setError(result.message || 'Failed to run Korealy reconciliation');
+      }
+    } catch (err) {
+      console.error('Korealy reconciliation error:', err);
+      setError(`Failed to run Korealy reconciliation: ${err.message}`);
       setLoadingMessage('');
     } finally {
       setLoading(false);
@@ -469,7 +505,7 @@ export default function Pricing() {
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-6">
+        <TabsList className="grid w-full grid-cols-7">
           <TabsTrigger value="items">
             <DollarSign className="h-4 w-4 mr-2" />
             Items
@@ -489,6 +525,10 @@ export default function Pricing() {
           <TabsTrigger value="competitor-analysis">
             <BarChart3 className="h-4 w-4 mr-2" />
             Competitors
+          </TabsTrigger>
+          <TabsTrigger value="korealy-reconciliation">
+            <Filter className="h-4 w-4 mr-2" />
+            Korealy
           </TabsTrigger>
           <TabsTrigger value="product-management">
             <Package className="h-4 w-4 mr-2" />
@@ -1890,6 +1930,266 @@ export default function Pricing() {
                   )}
                 </div>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* KOREALY RECONCILIATION TAB */}
+        <TabsContent value="korealy-reconciliation">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Korealy Reconciliation</CardTitle>
+                  <CardDescription>
+                    Compare Korealy supplier prices with Shopify COGS and sync mismatches
+                  </CardDescription>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setKorealyReconciliation([]);
+                      setKorealyStats({});
+                      setKorealySelectedRows(new Set());
+                      fetchKorealyReconciliation();
+                    }}
+                  >
+                    🔄 Re-run Reconciliation
+                  </Button>
+                  <Button
+                    onClick={async () => {
+                      if (korealySelectedRows.size === 0) {
+                        alert('Please select items to sync');
+                        return;
+                      }
+
+                      if (!confirm(`Sync ${korealySelectedRows.size} selected items to Shopify?`)) {
+                        return;
+                      }
+
+                      setLoading(true);
+                      try {
+                        // Build updates array
+                        const updates = Array.from(korealySelectedRows).map(idx => {
+                          const record = korealyReconciliation[idx];
+                          return {
+                            variant_id: record.variant_id,
+                            new_cogs: record.korealy_cogs
+                          };
+                        });
+
+                        const response = await fetch(`${API_URL}/pricing/korealy-sync`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ updates })
+                        });
+
+                        const result = await response.json();
+
+                        if (result.success) {
+                          alert(`✅ Synced ${result.updated_count} items to Shopify`);
+                          setKorealySelectedRows(new Set());
+                          fetchKorealyReconciliation(); // Refresh
+                        } else {
+                          alert(`❌ Sync failed: ${result.message}`);
+                        }
+                      } catch (err) {
+                        alert(`❌ Sync failed: ${err.message}`);
+                      } finally {
+                        setLoading(false);
+                      }
+                    }}
+                    disabled={korealySelectedRows.size === 0}
+                  >
+                    💾 Sync {korealySelectedRows.size > 0 ? korealySelectedRows.size : ''} to Shopify
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {/* Summary Stats */}
+              {korealyStats && Object.keys(korealyStats).length > 0 && (
+                <div className="grid grid-cols-6 gap-4 mb-6">
+                  <div className="bg-blue-50 p-4 rounded-lg">
+                    <div className="text-sm text-blue-600 font-medium">Total</div>
+                    <div className="text-2xl font-bold">{korealyStats.total || 0}</div>
+                  </div>
+                  <div className="bg-green-50 p-4 rounded-lg">
+                    <div className="text-sm text-green-600 font-medium">Match</div>
+                    <div className="text-2xl font-bold">{korealyStats.MATCH || 0}</div>
+                  </div>
+                  <div className="bg-red-50 p-4 rounded-lg">
+                    <div className="text-sm text-red-600 font-medium">Mismatch</div>
+                    <div className="text-2xl font-bold">{korealyStats.MISMATCH || 0}</div>
+                  </div>
+                  <div className="bg-yellow-50 p-4 rounded-lg">
+                    <div className="text-sm text-yellow-600 font-medium">No Mapping</div>
+                    <div className="text-2xl font-bold">{korealyStats.NO_MAPPING || 0}</div>
+                  </div>
+                  <div className="bg-orange-50 p-4 rounded-lg">
+                    <div className="text-sm text-orange-600 font-medium">No Korealy COGS</div>
+                    <div className="text-2xl font-bold">{korealyStats.NO_COGS_IN_KOREALY || 0}</div>
+                  </div>
+                  <div className="bg-purple-50 p-4 rounded-lg">
+                    <div className="text-sm text-purple-600 font-medium">No Shopify COGS</div>
+                    <div className="text-2xl font-bold">{korealyStats.NO_COGS_IN_SHOPIFY || 0}</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Status Filter */}
+              <div className="flex gap-2 mb-4">
+                <Button
+                  variant={korealyStatusFilter === 'all' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setKorealyStatusFilter('all')}
+                >
+                  All ({korealyReconciliation.length})
+                </Button>
+                <Button
+                  variant={korealyStatusFilter === 'MISMATCH' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setKorealyStatusFilter('MISMATCH')}
+                >
+                  Mismatch ({korealyStats.MISMATCH || 0})
+                </Button>
+                <Button
+                  variant={korealyStatusFilter === 'NO_MAPPING' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setKorealyStatusFilter('NO_MAPPING')}
+                >
+                  No Mapping ({korealyStats.NO_MAPPING || 0})
+                </Button>
+                <Button
+                  variant={korealyStatusFilter === 'MATCH' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setKorealyStatusFilter('MATCH')}
+                >
+                  Match ({korealyStats.MATCH || 0})
+                </Button>
+              </div>
+
+              {/* Results Table */}
+              {(() => {
+                const filtered = korealyStatusFilter === 'all'
+                  ? korealyReconciliation
+                  : korealyReconciliation.filter(r => r.status === korealyStatusFilter);
+
+                return (
+                  <div className="border rounded-lg overflow-hidden">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-12">
+                            <input
+                              type="checkbox"
+                              checked={korealySelectedRows.size === filtered.length && filtered.length > 0}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  const newSet = new Set();
+                                  filtered.forEach((_, idx) => {
+                                    const originalIdx = korealyReconciliation.indexOf(_);
+                                    newSet.add(originalIdx);
+                                  });
+                                  setKorealySelectedRows(newSet);
+                                } else {
+                                  setKorealySelectedRows(new Set());
+                                }
+                              }}
+                            />
+                          </TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Korealy Title</TableHead>
+                          <TableHead>Shopify Item</TableHead>
+                          <TableHead className="text-right">Korealy COGS</TableHead>
+                          <TableHead className="text-right">Shopify COGS</TableHead>
+                          <TableHead className="text-right">Delta</TableHead>
+                          <TableHead className="text-right">% Diff</TableHead>
+                          <TableHead>Variant ID</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filtered.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={9} className="text-center text-slate-500 py-8">
+                              {korealyReconciliation.length === 0
+                                ? 'No reconciliation data. Click "Re-run Reconciliation" to load data.'
+                                : 'No items match the current filter.'}
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          filtered.map((record, idx) => {
+                            const originalIdx = korealyReconciliation.indexOf(record);
+                            const isSelected = korealySelectedRows.has(originalIdx);
+                            const canSync = record.status === 'MISMATCH' && record.variant_id;
+
+                            return (
+                              <TableRow key={idx}>
+                                <TableCell>
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    disabled={!canSync}
+                                    onChange={(e) => {
+                                      const newSet = new Set(korealySelectedRows);
+                                      if (e.target.checked) {
+                                        newSet.add(originalIdx);
+                                      } else {
+                                        newSet.delete(originalIdx);
+                                      }
+                                      setKorealySelectedRows(newSet);
+                                    }}
+                                  />
+                                </TableCell>
+                                <TableCell>
+                                  <span className={`px-2 py-1 rounded text-xs font-medium ${
+                                    record.status === 'MATCH' ? 'bg-green-100 text-green-800' :
+                                    record.status === 'MISMATCH' ? 'bg-red-100 text-red-800' :
+                                    record.status === 'NO_MAPPING' ? 'bg-yellow-100 text-yellow-800' :
+                                    'bg-gray-100 text-gray-800'
+                                  }`}>
+                                    {record.status}
+                                  </span>
+                                </TableCell>
+                                <TableCell className="max-w-xs truncate" title={record.korealy_title}>
+                                  {record.korealy_title}
+                                </TableCell>
+                                <TableCell className="max-w-xs truncate" title={record.shopify_item || '-'}>
+                                  {record.shopify_item || '-'}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  {record.korealy_cogs ? `${record.korealy_currency} ${record.korealy_cogs.toFixed(2)}` : '-'}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  {record.shopify_cogs ? `${record.shopify_currency} ${record.shopify_cogs.toFixed(2)}` : '-'}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  {record.delta !== null ? (
+                                    <span className={record.delta > 0 ? 'text-red-600' : record.delta < 0 ? 'text-green-600' : ''}>
+                                      {record.delta > 0 ? '+' : ''}{record.delta.toFixed(2)}
+                                    </span>
+                                  ) : '-'}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  {record.pct_diff !== null ? (
+                                    <span className={record.pct_diff > 0 ? 'text-red-600' : record.pct_diff < 0 ? 'text-green-600' : ''}>
+                                      {record.pct_diff > 0 ? '+' : ''}{record.pct_diff.toFixed(1)}%
+                                    </span>
+                                  ) : '-'}
+                                </TableCell>
+                                <TableCell className="font-mono text-sm">
+                                  {record.variant_id || '-'}
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                );
+              })()}
             </CardContent>
           </Card>
         </TabsContent>

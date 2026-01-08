@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, date
 from calendar import monthrange
 import os
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 import pytz
 from fastapi import FastAPI, HTTPException
@@ -80,6 +80,11 @@ class ProductActionsRequest(BaseModel):
 class CompetitorPriceCheckRequest(BaseModel):
     """Request body for competitor price check"""
     variant_ids: List[str]
+
+
+class KorealySyncRequest(BaseModel):
+    """Request body for syncing Korealy COGS to Shopify"""
+    updates: List[Dict[str, Any]]  # List of {variant_id, new_cogs}
 
 
 # ---------- FastAPI app ----------
@@ -395,6 +400,92 @@ async def debug_cache_status():
 
 # ---------- Pricing Endpoints ----------
 
+# GET endpoints for data fetching
+@app.get("/pricing/markets")
+async def get_markets():
+    """Get available markets"""
+    try:
+        from pricing_logic import get_available_markets
+        markets = get_available_markets()
+        return {"markets": markets}
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"Could not import pricing_logic: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/pricing/countries")
+async def get_countries():
+    """Get available countries for target pricing"""
+    try:
+        from pricing_logic import get_available_countries
+        countries = get_available_countries()
+        return {"countries": countries}
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"Could not import pricing_logic: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/pricing/items")
+async def get_items(market: Optional[str] = None, use_cache: bool = True):
+    """
+    Get product variants from Shopify
+    Optional market filter
+    """
+    try:
+        from pricing_logic import fetch_items
+        items = fetch_items(market_filter=market, use_cache=use_cache)
+        return {"items": items}
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"Could not import pricing_logic: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/pricing/price-updates")
+async def get_price_updates():
+    """Get pending price updates"""
+    try:
+        from pricing_logic import fetch_price_updates
+        updates = fetch_price_updates()
+        return {"updates": updates}
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"Could not import pricing_logic: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/pricing/update-log")
+async def get_update_log(limit: Optional[int] = None):
+    """Get price update history"""
+    try:
+        from pricing_logic import fetch_update_log
+        log = fetch_update_log(limit=limit)
+        return {"log": log}
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"Could not import pricing_logic: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/pricing/target-prices")
+async def get_target_prices(country: str = "US", use_cache: bool = True):
+    """
+    Calculate target prices based on Shopify data
+    Returns calculated metrics for each variant
+    """
+    try:
+        from pricing_logic import fetch_target_prices
+        target_prices = fetch_target_prices(country_filter=country, use_cache=use_cache)
+        return {"target_prices": target_prices}
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"Could not import pricing_logic: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# POST endpoints for actions
 @app.post("/pricing/execute-updates")
 async def execute_price_updates(req: ExecuteUpdatesRequest):
     """
@@ -495,6 +586,82 @@ async def check_competitor_prices(req: CompetitorPriceCheckRequest):
         raise HTTPException(
             status_code=500,
             detail=f"Failed to check competitor prices: {str(e)}"
+        )
+
+
+@app.get("/pricing/korealy-reconciliation")
+async def get_korealy_reconciliation():
+    """
+    Run Korealy reconciliation
+
+    Fetches Korealy supplier prices from Google Sheets,
+    compares with Shopify COGS, and returns mismatch analysis.
+    """
+    try:
+        from korealy_reconciliation import run_reconciliation
+
+        result = run_reconciliation()
+
+        return {
+            "success": result["success"],
+            "results": result["results"],
+            "stats": result["stats"],
+            "message": result["message"]
+        }
+
+    except ImportError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not import korealy_reconciliation module: {e}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to run Korealy reconciliation: {str(e)}"
+        )
+
+
+@app.post("/pricing/korealy-sync")
+async def sync_korealy_to_shopify(req: KorealySyncRequest):
+    """
+    Sync selected Korealy COGS to Shopify
+
+    Updates Shopify COGS with Korealy supplier prices for selected products.
+    """
+    try:
+        from korealy_reconciliation import sync_korealy_to_shopify
+
+        # Build variant_ids list and cogs_map from updates
+        variant_ids = []
+        korealy_cogs_map = {}
+
+        for update in req.updates:
+            variant_id = update.get("variant_id")
+            new_cogs = update.get("new_cogs")
+
+            if variant_id and new_cogs is not None:
+                variant_ids.append(str(variant_id))
+                korealy_cogs_map[str(variant_id)] = float(new_cogs)
+
+        result = sync_korealy_to_shopify(variant_ids, korealy_cogs_map)
+
+        return {
+            "success": True,
+            "updated_count": result["updated_count"],
+            "failed_count": result["failed_count"],
+            "message": result["message"],
+            "details": result.get("details", [])
+        }
+
+    except ImportError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not import korealy_reconciliation module: {e}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to sync Korealy COGS: {str(e)}"
         )
 
 
