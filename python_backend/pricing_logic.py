@@ -21,12 +21,16 @@ SHOPIFY_API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2025-07")
 _CACHE = {}
 _CACHE_TTL = 300  # seconds
 
+# Persistent data directory - use RENDER_DISK_PATH env var if available (for Render Disk)
+# Otherwise fall back to local directory
+_DATA_DIR = os.getenv("RENDER_DISK_PATH", os.path.dirname(__file__))
+
 # Persistent competitor data storage (survives cache clears AND server restarts)
-_COMPETITOR_DATA_FILE = os.path.join(os.path.dirname(__file__), "competitor_data.json")
+_COMPETITOR_DATA_FILE = os.path.join(_DATA_DIR, "competitor_data.json")
 _COMPETITOR_DATA = {}  # variant_id -> {comp_low, comp_avg, comp_high, ...}
 
 # Persistent update log file
-_UPDATE_LOG_FILE = os.path.join(os.path.dirname(__file__), "update_log.json")
+_UPDATE_LOG_FILE = os.path.join(_DATA_DIR, "update_log.json")
 _UPDATE_LOG = []  # In-memory cache of update records
 
 
