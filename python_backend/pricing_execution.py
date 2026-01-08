@@ -382,7 +382,7 @@ def check_competitor_prices(variant_ids: List[str]) -> Dict[str, Any]:
         }
 
     from smart_pricing import analyze_competitor_prices
-    from pricing_logic import update_competitor_data
+    from pricing_logic import update_competitor_data, log_competitor_scan
 
     results = []
     scanned_count = 0
@@ -494,7 +494,7 @@ def check_competitor_prices(variant_ids: List[str]) -> Dict[str, Any]:
                     comp_note = "Floor (25% margin)"
 
             # Store competitor data for use in target prices
-            update_competitor_data(variant_id, {
+            scan_data = {
                 "comp_low": analysis["comp_low"],
                 "comp_avg": analysis["comp_avg"],
                 "comp_high": analysis["comp_high"],
@@ -503,7 +503,12 @@ def check_competitor_prices(variant_ids: List[str]) -> Dict[str, Any]:
                 "filtered_count": analysis["filtered_count"],
                 "competitive_price": competitive_price,
                 "top_sellers": top_sellers,
-            })
+            }
+            update_competitor_data(variant_id, scan_data)
+
+            # Log scan to history
+            item_name = f"{product_title} - {variant_title}"
+            log_competitor_scan(variant_id, item_name, scan_data)
 
             results.append({
                 "variant_id": variant_id,

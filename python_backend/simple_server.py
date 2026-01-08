@@ -308,6 +308,20 @@ async def get_korealy_reconciliation():
         raise HTTPException(status_code=500, detail=f"Failed to run Korealy reconciliation: {str(e)}")
 
 
+@app.get("/pricing/scan-history")
+async def get_scan_history(limit: int = 100):
+    """
+    Get competitor scan history
+    Query param: ?limit=100
+    """
+    try:
+        from pricing_logic import get_scan_history as fetch_history
+        data = fetch_history(limit=limit)
+        return {"data": data}
+    except Exception as e:
+        return {"error": str(e), "data": []}
+
+
 @app.post("/pricing/refresh-cache")
 async def refresh_cache():
     """

@@ -53,6 +53,9 @@ export default function Pricing() {
   // Competitor Analysis tab state
   const [competitorAnalysis, setCompetitorAnalysis] = useState(null);
   const [variantIdsToCheck, setVariantIdsToCheck] = useState('');
+  const [scanHistory, setScanHistory] = useState([]);
+  const [scanHistorySortColumn, setScanHistorySortColumn] = useState('timestamp');
+  const [scanHistorySortDirection, setScanHistorySortDirection] = useState('desc');
 
   // Product Management tab state
   const [productManagementActions, setProductManagementActions] = useState([]);
@@ -97,6 +100,7 @@ export default function Pricing() {
         break;
       case 'competitor-analysis':
         fetchCompetitorAnalysis();
+        fetchScanHistory();
         break;
       case 'korealy-reconciliation':
         fetchKorealyReconciliation();
@@ -306,6 +310,49 @@ export default function Pricing() {
       setError(`Failed to analyze competitor data: ${err.message}`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchScanHistory = async () => {
+    try {
+      const response = await fetch(`${API_URL}/pricing/scan-history?limit=200`);
+      const result = await response.json();
+      if (result.data) {
+        setScanHistory(result.data);
+      }
+    } catch (err) {
+      console.error('Error fetching scan history:', err);
+    }
+  };
+
+  // Sort scan history
+  const sortedScanHistory = useMemo(() => {
+    if (!scanHistory.length) return [];
+    const sorted = [...scanHistory].sort((a, b) => {
+      let aVal = a[scanHistorySortColumn];
+      let bVal = b[scanHistorySortColumn];
+      if (scanHistorySortColumn === 'timestamp') {
+        aVal = new Date(aVal || 0).getTime();
+        bVal = new Date(bVal || 0).getTime();
+      } else if (typeof aVal === 'number' && typeof bVal === 'number') {
+        // numeric compare
+      } else {
+        aVal = String(aVal || '').toLowerCase();
+        bVal = String(bVal || '').toLowerCase();
+      }
+      if (aVal < bVal) return scanHistorySortDirection === 'asc' ? -1 : 1;
+      if (aVal > bVal) return scanHistorySortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+    return sorted;
+  }, [scanHistory, scanHistorySortColumn, scanHistorySortDirection]);
+
+  const handleScanHistorySort = (column) => {
+    if (scanHistorySortColumn === column) {
+      setScanHistorySortDirection(scanHistorySortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setScanHistorySortColumn(column);
+      setScanHistorySortDirection('desc');
     }
   };
 
@@ -1968,6 +2015,124 @@ export default function Pricing() {
                       <p className="text-sm text-slate-600 mb-2">Your prices are within ±15% of competitor average - well positioned</p>
                     </div>
                   )}
+
+                  {/* Scan History Section */}
+                  <div className="mt-6 pt-6 border-t">
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <h3 className="text-lg font-semibold text-slate-800">📜 Scan History</h3>
+                        <p className="text-sm text-slate-600">Previous competitor price scans with timestamps</p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={fetchScanHistory}
+                      >
+                        🔄 Refresh
+                      </Button>
+                    </div>
+                    {sortedScanHistory.length === 0 ? (
+                      <div className="text-center py-6 text-slate-500">
+                        <p>No scan history yet. Run a competitor price scan to see results here.</p>
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
+                        <Table>
+                          <TableHeader className="sticky top-0 bg-white">
+                            <TableRow>
+                              <TableHead
+                                className="cursor-pointer hover:bg-slate-50"
+                                onClick={() => handleScanHistorySort('timestamp')}
+                              >
+                                <div className="flex items-center gap-1">
+                                  Timestamp
+                                  {scanHistorySortColumn === 'timestamp' && (
+                                    scanHistorySortDirection === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />
+                                  )}
+                                </div>
+                              </TableHead>
+                              <TableHead
+                                className="cursor-pointer hover:bg-slate-50"
+                                onClick={() => handleScanHistorySort('item')}
+                              >
+                                <div className="flex items-center gap-1">
+                                  Item
+                                  {scanHistorySortColumn === 'item' && (
+                                    scanHistorySortDirection === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />
+                                  )}
+                                </div>
+                              </TableHead>
+                              <TableHead className="text-right">Comp Low</TableHead>
+                              <TableHead className="text-right">Comp Avg</TableHead>
+                              <TableHead className="text-right">Comp High</TableHead>
+                              <TableHead className="text-right">Prices Found</TableHead>
+                              <TableHead className="text-center">Actions</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {sortedScanHistory.map((scan, idx) => (
+                              <TableRow key={`${scan.variant_id}-${scan.timestamp}-${idx}`}>
+                                <TableCell className="text-sm text-slate-600 whitespace-nowrap">
+                                  {new Date(scan.timestamp).toLocaleString()}
+                                </TableCell>
+                                <TableCell className="font-medium max-w-[250px] truncate" title={scan.item}>
+                                  {scan.item}
+                                </TableCell>
+                                <TableCell className="text-right text-slate-600">
+                                  {scan.comp_low ? formatCurrency(scan.comp_low) : '-'}
+                                </TableCell>
+                                <TableCell className="text-right text-slate-600">
+                                  {scan.comp_avg ? formatCurrency(scan.comp_avg) : '-'}
+                                </TableCell>
+                                <TableCell className="text-right text-slate-600">
+                                  {scan.comp_high ? formatCurrency(scan.comp_high) : '-'}
+                                </TableCell>
+                                <TableCell className="text-right text-sm">
+                                  <span className="text-slate-600" title={`Raw: ${scan.raw_count}, Trusted: ${scan.trusted_count}, Filtered: ${scan.filtered_count}`}>
+                                    {scan.filtered_count || 0} / {scan.raw_count || 0}
+                                  </span>
+                                </TableCell>
+                                <TableCell className="text-center">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={async () => {
+                                      if (!confirm(`Re-scan competitor prices for:\n${scan.item}?`)) return;
+                                      setLoading(true);
+                                      setLoadingMessage('Re-scanning prices...');
+                                      try {
+                                        const response = await fetch(`${API_URL}/pricing/check-competitor-prices`, {
+                                          method: 'POST',
+                                          headers: { 'Content-Type': 'application/json' },
+                                          body: JSON.stringify({ variant_ids: [scan.variant_id] })
+                                        });
+                                        const result = await response.json();
+                                        if (result.success) {
+                                          alert(`✅ Re-scan complete!\n\n${result.message}`);
+                                          fetchScanHistory();
+                                          fetchTargetPrices();
+                                        } else {
+                                          alert(`❌ Re-scan failed: ${result.message}`);
+                                        }
+                                      } catch (err) {
+                                        alert(`❌ Re-scan failed: ${err.message}`);
+                                      } finally {
+                                        setLoading(false);
+                                        setLoadingMessage('');
+                                      }
+                                    }}
+                                    title="Re-scan this item"
+                                  >
+                                    🔍 Re-scan
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </CardContent>

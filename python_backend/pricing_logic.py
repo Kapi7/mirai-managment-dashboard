@@ -40,8 +40,13 @@ _COMPETITOR_DATA = {}  # variant_id -> {comp_low, comp_avg, comp_high, ...}
 _UPDATE_LOG_FILE = os.path.join(_DATA_DIR, "update_log.json")
 _UPDATE_LOG = []  # In-memory cache of update records
 
+# Persistent competitor scan history
+_SCAN_HISTORY_FILE = os.path.join(_DATA_DIR, "scan_history.json")
+_SCAN_HISTORY = []  # List of {timestamp, variant_id, item, comp_low, comp_avg, comp_high, ...}
+
 print(f"📁 Competitor data file: {_COMPETITOR_DATA_FILE}")
 print(f"📁 Update log file: {_UPDATE_LOG_FILE}")
+print(f"📁 Scan history file: {_SCAN_HISTORY_FILE}")
 
 
 def _load_update_log() -> List[Dict[str, Any]]:
@@ -96,9 +101,36 @@ def _save_competitor_data() -> None:
         print(f"⚠️ Could not save competitor data: {e}")
 
 
+def _load_scan_history() -> List[Dict[str, Any]]:
+    """Load scan history from file"""
+    global _SCAN_HISTORY
+    try:
+        if os.path.exists(_SCAN_HISTORY_FILE):
+            with open(_SCAN_HISTORY_FILE, 'r') as f:
+                import json
+                _SCAN_HISTORY = json.load(f)
+                print(f"📂 Loaded {len(_SCAN_HISTORY)} scan history records from {_SCAN_HISTORY_FILE}")
+        return _SCAN_HISTORY
+    except Exception as e:
+        print(f"⚠️ Could not load scan history: {e}")
+        return []
+
+
+def _save_scan_history() -> None:
+    """Save scan history to file"""
+    try:
+        import json
+        with open(_SCAN_HISTORY_FILE, 'w') as f:
+            json.dump(_SCAN_HISTORY, f, indent=2)
+        print(f"💾 Saved {len(_SCAN_HISTORY)} scan history records to {_SCAN_HISTORY_FILE}")
+    except Exception as e:
+        print(f"⚠️ Could not save scan history: {e}")
+
+
 # Load existing data on module import
 _load_update_log()
 _load_competitor_data()
+_load_scan_history()
 
 def _get_cache(key: str):
     """Get cached value if not expired"""
@@ -754,3 +786,60 @@ def clear_competitor_data() -> None:
     """Clear all stored competitor data (and delete the file)"""
     _COMPETITOR_DATA.clear()
     _save_competitor_data()
+
+
+# ================== COMPETITOR SCAN HISTORY ==================
+def log_competitor_scan(variant_id: str, item: str, scan_result: Dict[str, Any]) -> None:
+    """
+    Log a competitor scan to history
+
+    Args:
+        variant_id: The variant ID that was scanned
+        item: Product name
+        scan_result: Dict with comp_low, comp_avg, comp_high, etc.
+    """
+    from datetime import datetime
+
+    record = {
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "variant_id": str(variant_id),
+        "item": item,
+        "comp_low": scan_result.get("comp_low"),
+        "comp_avg": scan_result.get("comp_avg"),
+        "comp_high": scan_result.get("comp_high"),
+        "raw_count": scan_result.get("raw_count", 0),
+        "trusted_count": scan_result.get("trusted_count", 0),
+        "filtered_count": scan_result.get("filtered_count", 0),
+        "competitive_price": scan_result.get("competitive_price"),
+        "top_sellers": scan_result.get("top_sellers", []),
+    }
+
+    _SCAN_HISTORY.append(record)
+
+    # Keep only last 1000 records
+    if len(_SCAN_HISTORY) > 1000:
+        _SCAN_HISTORY.pop(0)
+
+    _save_scan_history()
+
+
+def get_scan_history(limit: int = 100) -> List[Dict[str, Any]]:
+    """
+    Get competitor scan history, sorted by timestamp descending
+
+    Args:
+        limit: Maximum number of records to return
+
+    Returns:
+        List of scan history records, newest first
+    """
+    result = sorted(_SCAN_HISTORY, key=lambda x: x.get("timestamp", ""), reverse=True)
+    if limit and limit > 0:
+        result = result[:limit]
+    return result
+
+
+def clear_scan_history() -> None:
+    """Clear all scan history"""
+    _SCAN_HISTORY.clear()
+    _save_scan_history()
