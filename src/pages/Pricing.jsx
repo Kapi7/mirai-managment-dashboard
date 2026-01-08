@@ -911,6 +911,7 @@ export default function Pricing() {
                     <li>Click "+ Add Row" to manually add items</li>
                     <li>Edit prices inline - Use policy to control compare_at pricing</li>
                     <li><strong>Policy B:</strong> GMC-compliant (compare_at = price), <strong>Policy D:</strong> Keep discount %, <strong>Manual:</strong> Set compare_at manually</li>
+                    <li><strong>🧠 Smart Pricing:</strong> Suggested & Breakeven use dynamic CPA (12% of retail, $8-$25) + Smart competitor analysis (trusted sellers, outlier-filtered)</li>
                     <li>Paste data from Excel/Sheets (variant_id, new_price format)</li>
                     <li>Click "Execute Updates" when ready to push base price changes to Shopify</li>
                   </ul>
@@ -1696,12 +1697,16 @@ export default function Pricing() {
               ) : (
                 <div className="space-y-6">
                   {/* Variant ID Price Check */}
-                  <div className="bg-amber-50 p-4 rounded-lg border border-amber-200">
-                    <h3 className="text-sm font-semibold text-amber-900 mb-2">🔍 Check Competitor Prices for Specific Products</h3>
-                    <p className="text-xs text-amber-700 mb-3">Enter variant IDs (one per line) to scan competitor prices via SerpAPI</p>
+                  <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                    <h3 className="text-sm font-semibold text-blue-900 mb-2">🧠 Smart Competitor Price Analysis</h3>
+                    <p className="text-xs text-blue-700 mb-3">
+                      Intelligent price scanning with automatic filtering:
+                      <span className="font-semibold"> Trusted Sellers Only</span> (excludes Mercari, Poshmark, eBay individuals) +
+                      <span className="font-semibold"> Outlier Removal</span> (median-based 0.4x-2.5x filtering)
+                    </p>
                     <div className="flex gap-2">
                       <textarea
-                        className="flex-1 p-2 border border-amber-300 rounded-lg font-mono text-sm"
+                        className="flex-1 p-2 border border-blue-300 rounded-lg font-mono text-sm"
                         placeholder="51750779093364&#10;51750800228724&#10;51750801146228"
                         value={variantIdsToCheck}
                         onChange={(e) => setVariantIdsToCheck(e.target.value)}
@@ -1718,14 +1723,14 @@ export default function Pricing() {
                               return;
                             }
 
-                            // Copy command to clipboard
+                            // Copy command with note about smart filtering
                             const command = `cd /Users/kapi7/price-bot && python3 compare_prices_serpapi.py --sheet-tab Items --limit ${ids.length}`;
                             navigator.clipboard.writeText(command);
 
-                            alert(`Command copied to clipboard!\n\nPaste into terminal to run price scan for ${ids.length} variant IDs.\n\nNote: Make sure these variant IDs are in the Items tab of your Google Sheet.`);
+                            alert(`✅ Command copied to clipboard!\n\n🧠 Smart Filtering Applied:\n- Trusted sellers only (no P2P marketplaces)\n- Outlier removal (median-based)\n- Dynamic CPA calculation\n\nPaste into terminal to scan ${ids.length} variant IDs.`);
                           }}
                         >
-                          📋 Copy Command
+                          🚀 Scan Prices
                         </Button>
                         <Button
                           variant="outline"
@@ -1733,20 +1738,22 @@ export default function Pricing() {
                           onClick={() => {
                             // Export variant IDs to clipboard for pasting into Google Sheets
                             navigator.clipboard.writeText(variantIdsToCheck);
-                            alert('Variant IDs copied!\n\nPaste into column A of the "Items" tab in your Google Sheet, then run the price scan command.');
+                            alert('Variant IDs copied!\n\nPaste into column A of the "Items" tab in your Google Sheet.');
                           }}
                         >
-                          Export to Sheet
+                          📋 Export IDs
                         </Button>
                       </div>
                     </div>
-                    <div className="mt-2 text-xs text-amber-700">
-                      <p><strong>Steps:</strong></p>
-                      <ol className="list-decimal list-inside ml-2 space-y-1">
-                        <li>Click "Export to Sheet" and paste into Items tab (column A)</li>
-                        <li>Click "Copy Command" and run in terminal</li>
-                        <li>Refresh this page to see updated competitor data</li>
-                      </ol>
+                    <div className="mt-3 text-xs text-blue-700 bg-blue-100 p-2 rounded">
+                      <p className="font-semibold mb-1">🧠 Smart Analysis Features:</p>
+                      <ul className="list-disc list-inside ml-2 space-y-1">
+                        <li><strong>Trusted Sellers:</strong> Auto-filters out Mercari, Poshmark, eBay individuals, AliExpress, Wish, Temu</li>
+                        <li><strong>Outlier Removal:</strong> Median-based filtering (keeps 0.4x to 2.5x median range, requires 5+ prices)</li>
+                        <li><strong>Dynamic CPA:</strong> 12% of retail price ($8-$25 bounds) - not fixed $15</li>
+                        <li><strong>Competitive Strategy:</strong> Undercut avg by 3%, never below 25% margin floor</li>
+                        <li><strong>Results:</strong> After scanning, data syncs to Target Prices tab with smart calculations</li>
+                      </ul>
                     </div>
                   </div>
                   {/* Summary Cards */}
@@ -1760,7 +1767,8 @@ export default function Pricing() {
                     <Card>
                       <CardContent className="pt-6">
                         <div className="text-2xl font-bold text-blue-600">{competitorAnalysis.withCompetitorData}</div>
-                        <p className="text-xs text-slate-500 mt-1">With Competitor Data</p>
+                        <p className="text-xs text-slate-500 mt-1">With Smart-Filtered Data</p>
+                        <p className="text-xs text-blue-600 font-semibold mt-1">🧠 Trusted + Outliers Removed</p>
                       </CardContent>
                     </Card>
                     <Card>
@@ -1773,6 +1781,7 @@ export default function Pricing() {
                       <CardContent className="pt-6">
                         <div className="text-2xl font-bold text-green-600">{competitorAnalysis.underpriced.length}</div>
                         <p className="text-xs text-slate-500 mt-1">Underpriced (&lt;15%)</p>
+                        <p className="text-xs text-green-600 font-semibold mt-1">💰 Revenue Opportunity</p>
                       </CardContent>
                     </Card>
                   </div>
