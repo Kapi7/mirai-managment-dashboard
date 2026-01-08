@@ -51,6 +51,7 @@ export default function Pricing() {
 
   // Competitor Analysis tab state
   const [competitorAnalysis, setCompetitorAnalysis] = useState(null);
+  const [variantIdsToCheck, setVariantIdsToCheck] = useState('');
 
   // Pre-fetch items on mount for faster initial load
   useEffect(() => {
@@ -1625,6 +1626,60 @@ export default function Pricing() {
                 </div>
               ) : (
                 <div className="space-y-6">
+                  {/* Variant ID Price Check */}
+                  <div className="bg-amber-50 p-4 rounded-lg border border-amber-200">
+                    <h3 className="text-sm font-semibold text-amber-900 mb-2">🔍 Check Competitor Prices for Specific Products</h3>
+                    <p className="text-xs text-amber-700 mb-3">Enter variant IDs (one per line) to scan competitor prices via SerpAPI</p>
+                    <div className="flex gap-2">
+                      <textarea
+                        className="flex-1 p-2 border border-amber-300 rounded-lg font-mono text-sm"
+                        placeholder="51750779093364&#10;51750800228724&#10;51750801146228"
+                        value={variantIdsToCheck}
+                        onChange={(e) => setVariantIdsToCheck(e.target.value)}
+                        rows={3}
+                      />
+                      <div className="flex flex-col gap-2">
+                        <Button
+                          variant="default"
+                          size="sm"
+                          onClick={() => {
+                            const ids = variantIdsToCheck.split('\n').filter(id => id.trim());
+                            if (ids.length === 0) {
+                              alert('Please enter at least one variant ID');
+                              return;
+                            }
+
+                            // Copy command to clipboard
+                            const command = `cd /Users/kapi7/price-bot && python3 compare_prices_serpapi.py --sheet-tab Items --limit ${ids.length}`;
+                            navigator.clipboard.writeText(command);
+
+                            alert(`Command copied to clipboard!\n\nPaste into terminal to run price scan for ${ids.length} variant IDs.\n\nNote: Make sure these variant IDs are in the Items tab of your Google Sheet.`);
+                          }}
+                        >
+                          📋 Copy Command
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            // Export variant IDs to clipboard for pasting into Google Sheets
+                            navigator.clipboard.writeText(variantIdsToCheck);
+                            alert('Variant IDs copied!\n\nPaste into column A of the "Items" tab in your Google Sheet, then run the price scan command.');
+                          }}
+                        >
+                          Export to Sheet
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="mt-2 text-xs text-amber-700">
+                      <p><strong>Steps:</strong></p>
+                      <ol className="list-decimal list-inside ml-2 space-y-1">
+                        <li>Click "Export to Sheet" and paste into Items tab (column A)</li>
+                        <li>Click "Copy Command" and run in terminal</li>
+                        <li>Refresh this page to see updated competitor data</li>
+                      </ol>
+                    </div>
+                  </div>
                   {/* Summary Cards */}
                   <div className="grid grid-cols-4 gap-4">
                     <Card>
