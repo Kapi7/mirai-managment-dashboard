@@ -26,6 +26,7 @@ export default function Pricing() {
   const [itemsPageSize] = useState(50);
   const [itemsSortColumn, setItemsSortColumn] = useState(null);
   const [itemsSortDirection, setItemsSortDirection] = useState('asc');
+  const [selectedItems, setSelectedItems] = useState(new Set());
 
   // Price Updates tab state
   const [priceUpdates, setPriceUpdates] = useState([]);
@@ -372,18 +373,25 @@ export default function Pricing() {
                   <CardTitle>Product Items</CardTitle>
                   <CardDescription>View product inventory with pricing</CardDescription>
                 </div>
-                <Select value={selectedMarket} onValueChange={setSelectedMarket}>
-                  <SelectTrigger className="w-[180px]">
-                    <SelectValue placeholder="Select market" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {markets.map((market) => (
-                      <SelectItem key={market} value={market}>
-                        {market === 'all' ? 'All Markets' : market}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="flex items-center gap-3">
+                  {selectedItems.size > 0 && (
+                    <Button variant="default" size="sm">
+                      Add {selectedItems.size} to Price Updates
+                    </Button>
+                  )}
+                  <Select value={selectedMarket} onValueChange={setSelectedMarket}>
+                    <SelectTrigger className="w-[180px]">
+                      <SelectValue placeholder="Select market" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {markets.map((market) => (
+                        <SelectItem key={market} value={market}>
+                          {market === 'all' ? 'All Markets' : market}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </CardHeader>
             <CardContent>
@@ -399,6 +407,18 @@ export default function Pricing() {
                     <Table>
                       <TableHeader>
                         <TableRow>
+                          <TableHead className="w-[50px]">
+                            <Checkbox
+                              checked={selectedItems.size === sortedAndPaginatedItems.length && sortedAndPaginatedItems.length > 0}
+                              onCheckedChange={(checked) => {
+                                if (checked) {
+                                  setSelectedItems(new Set(sortedAndPaginatedItems.map(i => i.variant_id)));
+                                } else {
+                                  setSelectedItems(new Set());
+                                }
+                              }}
+                            />
+                          </TableHead>
                           <TableHead
                             className="cursor-pointer hover:bg-slate-50"
                             onClick={() => handleItemsSort('variant_id')}
@@ -438,16 +458,33 @@ export default function Pricing() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {sortedAndPaginatedItems.map((item) => (
-                          <TableRow key={item.variant_id}>
-                            <TableCell className="font-mono text-sm">{item.variant_id}</TableCell>
-                            <TableCell className="font-medium">{item.item}</TableCell>
-                            <TableCell className="text-right">{(item.weight || 0).toFixed(0)}</TableCell>
-                            <TableCell className="text-right">{formatCurrency(item.cogs)}</TableCell>
-                            <TableCell className="text-right">{formatCurrency(item.retail_base)}</TableCell>
-                            <TableCell className="text-right">{formatCurrency(item.compare_at_base)}</TableCell>
-                          </TableRow>
-                        ))}
+                        {sortedAndPaginatedItems.map((item) => {
+                          const isSelected = selectedItems.has(item.variant_id);
+                          return (
+                            <TableRow key={item.variant_id} className={isSelected ? 'bg-indigo-50' : ''}>
+                              <TableCell>
+                                <Checkbox
+                                  checked={isSelected}
+                                  onCheckedChange={(checked) => {
+                                    const newSet = new Set(selectedItems);
+                                    if (checked) {
+                                      newSet.add(item.variant_id);
+                                    } else {
+                                      newSet.delete(item.variant_id);
+                                    }
+                                    setSelectedItems(newSet);
+                                  }}
+                                />
+                              </TableCell>
+                              <TableCell className="font-mono text-sm">{item.variant_id}</TableCell>
+                              <TableCell className="font-medium">{item.item}</TableCell>
+                              <TableCell className="text-right">{(item.weight || 0).toFixed(0)}</TableCell>
+                              <TableCell className="text-right">{formatCurrency(item.cogs)}</TableCell>
+                              <TableCell className="text-right">{formatCurrency(item.retail_base)}</TableCell>
+                              <TableCell className="text-right">{formatCurrency(item.compare_at_base)}</TableCell>
+                            </TableRow>
+                          );
+                        })}
                       </TableBody>
                     </Table>
                   </div>
