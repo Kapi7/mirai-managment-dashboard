@@ -8,7 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
-import { DollarSign, TrendingUp, Clock, Target, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ArrowUpDown, ArrowUp, ArrowDown, Search, Filter } from 'lucide-react';
+import { DollarSign, TrendingUp, Clock, Target, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ArrowUpDown, ArrowUp, ArrowDown, Search, Filter, BarChart3 } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_REPORT_API_URL ||
   (import.meta.env.DEV ? 'http://localhost:8080' : '/reports-api');
@@ -49,6 +49,9 @@ export default function Pricing() {
   const [targetPricesSearchFilter, setTargetPricesSearchFilter] = useState('');
   const [selectedTargetPrices, setSelectedTargetPrices] = useState(new Set());
 
+  // Competitor Analysis tab state
+  const [competitorAnalysis, setCompetitorAnalysis] = useState(null);
+
   // Pre-fetch items on mount for faster initial load
   useEffect(() => {
     fetchMarkets();
@@ -59,6 +62,9 @@ export default function Pricing() {
     }
   }, []);
 
+  // Track if price updates were loaded from backend (to avoid overwriting user edits)
+  const [priceUpdatesLoadedFromBackend, setPriceUpdatesLoadedFromBackend] = useState(false);
+
   // Fetch data when tab changes
   useEffect(() => {
     switch (activeTab) {
@@ -66,13 +72,19 @@ export default function Pricing() {
         fetchItems();
         break;
       case 'price-updates':
-        fetchPriceUpdates();
+        // Only fetch from backend if we haven't loaded yet (prevents overwriting user-added items)
+        if (!priceUpdatesLoadedFromBackend) {
+          fetchPriceUpdates();
+        }
         break;
       case 'update-log':
         fetchUpdateLog();
         break;
       case 'target-prices':
         fetchTargetPrices();
+        break;
+      case 'competitor-analysis':
+        fetchCompetitorAnalysis();
         break;
       default:
         break;
@@ -144,6 +156,7 @@ export default function Pricing() {
         setError(result.error);
       } else {
         setPriceUpdates(result.data || []);
+        setPriceUpdatesLoadedFromBackend(true);
       }
     } catch (err) {
       setError(`Failed to fetch price updates: ${err.message}`);
@@ -199,6 +212,56 @@ export default function Pricing() {
       console.error('Target prices fetch error:', err);
       setError(`Failed to fetch target prices: ${err.message}`);
       setLoadingMessage('');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchCompetitorAnalysis = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      // Calculate competitor analysis from target prices
+      const countryKey = selectedCountry;
+      const withCompetitors = targetPrices.filter(p =>
+        p[`comp_avg_${countryKey}`] && p[`comp_avg_${countryKey}`] > 0
+      );
+
+      const overpriced = withCompetitors.filter(p => {
+        const current = p[`current_${countryKey}`];
+        const compAvg = p[`comp_avg_${countryKey}`];
+        return current > compAvg * 1.15;
+      });
+
+      const underpriced = withCompetitors.filter(p => {
+        const current = p[`current_${countryKey}`];
+        const compAvg = p[`comp_avg_${countryKey}`];
+        return current < compAvg * 0.85;
+      });
+
+      const competitive = withCompetitors.filter(p => {
+        const current = p[`current_${countryKey}`];
+        const compAvg = p[`comp_avg_${countryKey}`];
+        return current >= compAvg * 0.85 && current <= compAvg * 1.15;
+      });
+
+      setCompetitorAnalysis({
+        totalProducts: targetPrices.length,
+        withCompetitorData: withCompetitors.length,
+        overpriced: overpriced.sort((a, b) => {
+          const aDiff = (a[`current_${countryKey}`] / a[`comp_avg_${countryKey}`]) - 1;
+          const bDiff = (b[`current_${countryKey}`] / b[`comp_avg_${countryKey}`]) - 1;
+          return bDiff - aDiff;
+        }),
+        underpriced: underpriced.sort((a, b) => {
+          const aDiff = 1 - (a[`current_${countryKey}`] / a[`comp_avg_${countryKey}`]);
+          const bDiff = 1 - (b[`current_${countryKey}`] / b[`comp_avg_${countryKey}`]);
+          return bDiff - aDiff;
+        }),
+        competitive,
+      });
+    } catch (err) {
+      setError(`Failed to analyze competitor data: ${err.message}`);
     } finally {
       setLoading(false);
     }
@@ -381,7 +444,7 @@ export default function Pricing() {
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="items">
             <DollarSign className="h-4 w-4 mr-2" />
             Items
@@ -398,6 +461,10 @@ export default function Pricing() {
             <Target className="h-4 w-4 mr-2" />
             Target Prices
           </TabsTrigger>
+          <TabsTrigger value="competitor-analysis">
+            <BarChart3 className="h-4 w-4 mr-2" />
+            Competitors
+          </TabsTrigger>
         </TabsList>
 
         {/* ITEMS TAB */}
@@ -411,34 +478,47 @@ export default function Pricing() {
                 </div>
                 <div className="flex items-center gap-3">
                   {selectedItems.size > 0 && (
-                    <Button
-                      variant="default"
-                      size="sm"
-                      onClick={() => {
-                        console.log('Add to Price Updates clicked (Items)');
-                        console.log('Selected items:', selectedItems);
-                        // Add selected items to price updates
-                        const selectedItemsData = items.filter(item => selectedItems.has(item.variant_id));
-                        console.log('Selected items data:', selectedItemsData);
-                        const newUpdates = selectedItemsData.map(item => ({
-                          variant_id: item.variant_id,
-                          item: item.item,
-                          current_price: item.retail_base,
-                          current_compare_at: item.compare_at_base,
-                          new_price: item.retail_base,
-                          new_compare_at: null,
-                          compare_at_policy: 'D',
-                          new_cogs: null,
-                          notes: ''
-                        }));
-                        console.log('New updates:', newUpdates);
-                        setPriceUpdates([...priceUpdates, ...newUpdates]);
-                        setSelectedItems(new Set()); // Clear selection
-                        setActiveTab('price-updates'); // Switch to Price Updates tab
-                      }}
-                    >
-                      Add {selectedItems.size} to Price Updates
-                    </Button>
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          const selectedItemsData = items.filter(item => selectedItems.has(item.variant_id));
+                          const variantIds = selectedItemsData.map(item => item.variant_id).join('\n');
+                          navigator.clipboard.writeText(variantIds);
+                        }}
+                      >
+                        📋 Copy {selectedItems.size} Variant IDs
+                      </Button>
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={() => {
+                          console.log('Add to Price Updates clicked (Items)');
+                          console.log('Selected items:', selectedItems);
+                          // Add selected items to price updates
+                          const selectedItemsData = items.filter(item => selectedItems.has(item.variant_id));
+                          console.log('Selected items data:', selectedItemsData);
+                          const newUpdates = selectedItemsData.map(item => ({
+                            variant_id: item.variant_id,
+                            item: item.item,
+                            current_price: item.retail_base,
+                            current_compare_at: item.compare_at_base,
+                            new_price: item.retail_base,
+                            new_compare_at: null,
+                            compare_at_policy: 'D',
+                            new_cogs: null,
+                            notes: ''
+                          }));
+                          console.log('New updates:', newUpdates);
+                          setPriceUpdates([...priceUpdates, ...newUpdates]);
+                          setSelectedItems(new Set()); // Clear selection
+                          setActiveTab('price-updates'); // Switch to Price Updates tab
+                        }}
+                      >
+                        Add {selectedItems.size} to Price Updates
+                      </Button>
+                    </>
                   )}
                   <Select value={selectedMarket} onValueChange={setSelectedMarket}>
                     <SelectTrigger className="w-[180px]">
@@ -554,22 +634,7 @@ export default function Pricing() {
                                   }}
                                 />
                               </TableCell>
-                              <TableCell className="font-mono text-sm">
-                                <div className="flex items-center gap-2">
-                                  <span>{item.variant_id}</span>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-6 w-6 p-0"
-                                    onClick={() => {
-                                      navigator.clipboard.writeText(item.variant_id);
-                                    }}
-                                    title="Copy Variant ID"
-                                  >
-                                    📋
-                                  </Button>
-                                </div>
-                              </TableCell>
+                              <TableCell className="font-mono text-sm">{item.variant_id}</TableCell>
                               <TableCell className="font-medium">{item.item}</TableCell>
                               <TableCell className="text-right">{(item.weight || 0).toFixed(0)}</TableCell>
                               <TableCell className="text-right">{formatCurrency(item.cogs)}</TableCell>
@@ -709,8 +774,8 @@ export default function Pricing() {
                   <ul className="list-disc list-inside space-y-1">
                     <li>Select items from Items or Target Prices tabs, then click "Add to Price Updates"</li>
                     <li>Click "+ Add Row" to manually add items</li>
-                    <li>Edit prices inline - Leave "New Compare At" blank to use policy</li>
-                    <li><strong>Policy B:</strong> GMC-compliant (compare_at = price), <strong>Policy D:</strong> Preserve discount %</li>
+                    <li>Edit prices inline - Use policy to control compare_at pricing</li>
+                    <li><strong>Policy A:</strong> No compare at, <strong>Policy B:</strong> GMC-compliant (compare_at = price), <strong>Manual:</strong> Set compare_at manually</li>
                     <li>Paste data from Excel/Sheets (variant_id, new_price format)</li>
                     <li>Click "Execute Updates" when ready to push base price changes to Shopify</li>
                   </ul>
@@ -794,17 +859,17 @@ export default function Pricing() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead className="w-[40px]"></TableHead>
-                        <TableHead>Variant ID</TableHead>
-                        <TableHead>Item</TableHead>
-                        <TableHead className="text-right">Current Price</TableHead>
-                        <TableHead className="text-right">Current Compare At</TableHead>
-                        <TableHead className="text-right">New Price</TableHead>
-                        <TableHead className="text-right">New Compare At</TableHead>
-                        <TableHead>Compare At Policy</TableHead>
-                        <TableHead className="text-right">New COGS</TableHead>
-                        <TableHead className="text-right">Change %</TableHead>
-                        <TableHead>Notes</TableHead>
+                        <TableHead className="w-[40px] text-center"></TableHead>
+                        <TableHead className="text-center">Variant ID</TableHead>
+                        <TableHead className="text-center">Item</TableHead>
+                        <TableHead className="text-center">Current Price</TableHead>
+                        <TableHead className="text-center">Current Compare At</TableHead>
+                        <TableHead className="text-center">New Price</TableHead>
+                        <TableHead className="text-center">New Compare At</TableHead>
+                        <TableHead className="text-center">Compare At Policy</TableHead>
+                        <TableHead className="text-center">New COGS</TableHead>
+                        <TableHead className="text-center">Change %</TableHead>
+                        <TableHead className="text-center">Notes</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -814,7 +879,7 @@ export default function Pricing() {
                           : 0;
                         return (
                           <TableRow key={idx}>
-                            <TableCell>
+                            <TableCell className="text-center">
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -826,9 +891,9 @@ export default function Pricing() {
                                 ×
                               </Button>
                             </TableCell>
-                            <TableCell>
+                            <TableCell className="text-center">
                               <Input
-                                className="font-mono text-sm h-8"
+                                className="font-mono text-sm h-8 text-center"
                                 value={update.variant_id}
                                 onChange={(e) => {
                                   const newUpdates = [...priceUpdates];
@@ -856,76 +921,94 @@ export default function Pricing() {
                                 placeholder="Variant ID"
                               />
                             </TableCell>
-                            <TableCell className="font-medium text-sm max-w-[200px] truncate">{update.item || '-'}</TableCell>
-                            <TableCell className="text-right text-sm">{formatCurrency(update.current_price)}</TableCell>
-                            <TableCell className="text-right text-sm">{formatCurrency(update.current_compare_at || 0)}</TableCell>
-                            <TableCell className="text-right">
-                              <Input
-                                type="number"
-                                step="0.01"
-                                className="text-right h-8 w-[100px]"
-                                value={update.new_price}
-                                onChange={(e) => {
-                                  const newUpdates = [...priceUpdates];
-                                  newUpdates[idx].new_price = parseFloat(e.target.value) || 0;
-                                  setPriceUpdates(newUpdates);
-                                }}
-                              />
+                            <TableCell className="font-medium text-sm max-w-[200px] truncate text-center">{update.item || '-'}</TableCell>
+                            <TableCell className="text-center text-sm">{formatCurrency(update.current_price)}</TableCell>
+                            <TableCell className="text-center text-sm">{formatCurrency(update.current_compare_at || 0)}</TableCell>
+                            <TableCell className="text-center">
+                              <div className="flex justify-center">
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  className="text-center h-8 w-[100px]"
+                                  value={update.new_price}
+                                  onChange={(e) => {
+                                    const newUpdates = [...priceUpdates];
+                                    newUpdates[idx].new_price = parseFloat(e.target.value) || 0;
+                                    setPriceUpdates(newUpdates);
+                                  }}
+                                />
+                              </div>
                             </TableCell>
-                            <TableCell className="text-right">
-                              <Input
-                                type="number"
-                                step="0.01"
-                                className="text-right h-8 w-[100px]"
-                                value={update.new_compare_at ?? ''}
-                                onChange={(e) => {
-                                  const newUpdates = [...priceUpdates];
-                                  newUpdates[idx].new_compare_at = e.target.value ? parseFloat(e.target.value) : null;
-                                  setPriceUpdates(newUpdates);
-                                }}
-                                placeholder="Auto"
-                              />
+                            <TableCell className="text-center">
+                              <div className="flex justify-center">
+                                {update.compare_at_policy === 'Manual' ? (
+                                  <Input
+                                    type="number"
+                                    step="0.01"
+                                    className="text-center h-8 w-[100px]"
+                                    value={update.new_compare_at ?? ''}
+                                    onChange={(e) => {
+                                      const newUpdates = [...priceUpdates];
+                                      newUpdates[idx].new_compare_at = e.target.value ? parseFloat(e.target.value) : null;
+                                      setPriceUpdates(newUpdates);
+                                    }}
+                                    placeholder="Enter value"
+                                  />
+                                ) : (
+                                  <span className="text-sm text-slate-500">Auto</span>
+                                )}
+                              </div>
                             </TableCell>
-                            <TableCell>
-                              <Select
-                                value={update.compare_at_policy || 'D'}
-                                onValueChange={(value) => {
-                                  const newUpdates = [...priceUpdates];
-                                  newUpdates[idx].compare_at_policy = value;
-                                  setPriceUpdates(newUpdates);
-                                }}
-                              >
-                                <SelectTrigger className="h-8 w-[70px]">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="B">B</SelectItem>
-                                  <SelectItem value="D">D</SelectItem>
-                                </SelectContent>
-                              </Select>
+                            <TableCell className="text-center">
+                              <div className="flex justify-center">
+                                <Select
+                                  value={update.compare_at_policy || 'D'}
+                                  onValueChange={(value) => {
+                                    const newUpdates = [...priceUpdates];
+                                    // Map B/D to backend values (B stays B, D stays D)
+                                    newUpdates[idx].compare_at_policy = value;
+                                    // Clear new_compare_at if switching away from Manual
+                                    if (value !== 'Manual') {
+                                      newUpdates[idx].new_compare_at = null;
+                                    }
+                                    setPriceUpdates(newUpdates);
+                                  }}
+                                >
+                                  <SelectTrigger className="h-8 w-[90px]">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="A">A</SelectItem>
+                                    <SelectItem value="B">B</SelectItem>
+                                    <SelectItem value="Manual">Manual</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
                             </TableCell>
-                            <TableCell className="text-right">
-                              <Input
-                                type="number"
-                                step="0.01"
-                                className="text-right h-8 w-[100px]"
-                                value={update.new_cogs ?? ''}
-                                onChange={(e) => {
-                                  const newUpdates = [...priceUpdates];
-                                  newUpdates[idx].new_cogs = e.target.value ? parseFloat(e.target.value) : null;
-                                  setPriceUpdates(newUpdates);
-                                }}
-                                placeholder="Optional"
-                              />
+                            <TableCell className="text-center">
+                              <div className="flex justify-center">
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  className="text-center h-8 w-[100px]"
+                                  value={update.new_cogs ?? ''}
+                                  onChange={(e) => {
+                                    const newUpdates = [...priceUpdates];
+                                    newUpdates[idx].new_cogs = e.target.value ? parseFloat(e.target.value) : null;
+                                    setPriceUpdates(newUpdates);
+                                  }}
+                                  placeholder="Optional"
+                                />
+                              </div>
                             </TableCell>
-                            <TableCell className="text-right">
+                            <TableCell className="text-center">
                               <span className={changePct >= 0 ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>
                                 {changePct >= 0 ? '+' : ''}{changePct.toFixed(2)}%
                               </span>
                             </TableCell>
-                            <TableCell>
+                            <TableCell className="text-center">
                               <Input
-                                className="h-8 text-sm"
+                                className="h-8 text-sm text-center"
                                 value={update.notes}
                                 onChange={(e) => {
                                   const newUpdates = [...priceUpdates];
@@ -1054,35 +1137,48 @@ export default function Pricing() {
                     </SelectContent>
                   </Select>
                   {selectedTargetPrices.size > 0 && (
-                    <Button
-                      variant="default"
-                      size="sm"
-                      onClick={() => {
-                        console.log('Add to Price Updates clicked (Target Prices)');
-                        console.log('Selected target prices:', selectedTargetPrices);
-                        // Add selected target prices to price updates
-                        const countryKey = selectedCountry;
-                        const selectedPricesData = targetPrices.filter(price => selectedTargetPrices.has(price.variant_id));
-                        console.log('Selected prices data:', selectedPricesData);
-                        const newUpdates = selectedPricesData.map(price => ({
-                          variant_id: price.variant_id,
-                          item: price.item,
-                          current_price: price[`current_${countryKey}`],
-                          current_compare_at: 0,
-                          new_price: price[`final_suggested_${countryKey}`],
-                          new_compare_at: null,
-                          compare_at_policy: 'D',
-                          new_cogs: null,
-                          notes: `Priority: ${price[`priority_${countryKey}`]}, Loss: ${formatCurrency(price[`loss_amount_${countryKey}`])}`
-                        }));
-                        console.log('New updates:', newUpdates);
-                        setPriceUpdates([...priceUpdates, ...newUpdates]);
-                        setSelectedTargetPrices(new Set()); // Clear selection
-                        setActiveTab('price-updates'); // Switch to Price Updates tab
-                      }}
-                    >
-                      Add {selectedTargetPrices.size} to Price Updates
-                    </Button>
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          const selectedPricesData = targetPrices.filter(price => selectedTargetPrices.has(price.variant_id));
+                          const variantIds = selectedPricesData.map(price => price.variant_id).join('\n');
+                          navigator.clipboard.writeText(variantIds);
+                        }}
+                      >
+                        📋 Copy {selectedTargetPrices.size} Variant IDs
+                      </Button>
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={() => {
+                          console.log('Add to Price Updates clicked (Target Prices)');
+                          console.log('Selected target prices:', selectedTargetPrices);
+                          // Add selected target prices to price updates
+                          const countryKey = selectedCountry;
+                          const selectedPricesData = targetPrices.filter(price => selectedTargetPrices.has(price.variant_id));
+                          console.log('Selected prices data:', selectedPricesData);
+                          const newUpdates = selectedPricesData.map(price => ({
+                            variant_id: price.variant_id,
+                            item: price.item,
+                            current_price: price[`current_${countryKey}`],
+                            current_compare_at: 0,
+                            new_price: price[`final_suggested_${countryKey}`],
+                            new_compare_at: null,
+                            compare_at_policy: 'D',
+                            new_cogs: null,
+                            notes: `Priority: ${price[`priority_${countryKey}`]}, Loss: ${formatCurrency(price[`loss_amount_${countryKey}`])}`
+                          }));
+                          console.log('New updates:', newUpdates);
+                          setPriceUpdates([...priceUpdates, ...newUpdates]);
+                          setSelectedTargetPrices(new Set()); // Clear selection
+                          setActiveTab('price-updates'); // Switch to Price Updates tab
+                        }}
+                      >
+                        Add {selectedTargetPrices.size} to Price Updates
+                      </Button>
+                    </>
                   )}
                 </div>
               </div>
@@ -1106,6 +1202,45 @@ export default function Pricing() {
                 <div className="text-center py-8 text-slate-500">No target prices available</div>
               ) : (
                 <>
+                  {/* Competitor Price Summary */}
+                  {(() => {
+                    const countryKey = selectedCountry;
+                    const withCompData = targetPrices.filter(p =>
+                      p[`comp_avg_${countryKey}`] && p[`comp_avg_${countryKey}`] > 0
+                    );
+
+                    if (withCompData.length === 0) return null;
+
+                    const compLows = withCompData.map(p => p[`comp_low_${countryKey}`]).filter(v => v > 0);
+                    const compAvgs = withCompData.map(p => p[`comp_avg_${countryKey}`]).filter(v => v > 0);
+                    const compHighs = withCompData.map(p => p[`comp_high_${countryKey}`]).filter(v => v > 0);
+
+                    const avgLow = compLows.length > 0 ? compLows.reduce((a, b) => a + b, 0) / compLows.length : 0;
+                    const avgAvg = compAvgs.length > 0 ? compAvgs.reduce((a, b) => a + b, 0) / compAvgs.length : 0;
+                    const avgHigh = compHighs.length > 0 ? compHighs.reduce((a, b) => a + b, 0) / compHighs.length : 0;
+
+                    return (
+                      <div className="mb-6 p-4 bg-blue-50 rounded-lg">
+                        <h3 className="text-sm font-semibold text-blue-900 mb-3">Competitor Price Summary ({withCompData.length} products)</h3>
+                        <div className="grid grid-cols-3 gap-4">
+                          <div>
+                            <p className="text-xs text-slate-600 mb-1">Average Low Price</p>
+                            <p className="text-2xl font-bold text-blue-600">{formatCurrency(avgLow)}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-600 mb-1">Average Mid Price</p>
+                            <p className="text-2xl font-bold text-blue-700">{formatCurrency(avgAvg)}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-600 mb-1">Average High Price</p>
+                            <p className="text-2xl font-bold text-blue-800">{formatCurrency(avgHigh)}</p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+
                   <div className="overflow-x-auto">
                     <Table>
                       <TableHeader>
@@ -1240,22 +1375,7 @@ export default function Pricing() {
                                 }}
                               />
                             </TableCell>
-                            <TableCell className="font-mono text-sm">
-                              <div className="flex items-center gap-2">
-                                <span>{price.variant_id}</span>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-6 w-6 p-0"
-                                  onClick={() => {
-                                    navigator.clipboard.writeText(price.variant_id);
-                                  }}
-                                  title="Copy Variant ID"
-                                >
-                                  📋
-                                </Button>
-                              </div>
-                            </TableCell>
+                            <TableCell className="font-mono text-sm">{price.variant_id}</TableCell>
                             <TableCell className="font-medium max-w-[250px] truncate">{price.item}</TableCell>
                             <TableCell className="text-right">{(price.weight_g || 0).toFixed(0)}</TableCell>
                             <TableCell className="text-right">{formatCurrency(price.cogs)}</TableCell>
@@ -1350,6 +1470,176 @@ export default function Pricing() {
                   </div>
                 </div>
               </>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* COMPETITOR ANALYSIS TAB */}
+        <TabsContent value="competitor-analysis">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Competitor Price Analysis</CardTitle>
+                  <CardDescription>Smart comparison of your prices vs. competitors</CardDescription>
+                </div>
+                <Select value={selectedCountry} onValueChange={setSelectedCountry}>
+                  <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Select country" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {countries.map((country) => (
+                      <SelectItem key={country} value={country}>
+                        {country}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {loading ? (
+                <div className="space-y-2">
+                  {[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-12 w-full" />)}
+                </div>
+              ) : !competitorAnalysis ? (
+                <div className="text-center py-8 text-slate-500">
+                  <p>Loading competitor analysis...</p>
+                  <p className="text-sm mt-2">Switch to Target Prices tab first to load data</p>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {/* Summary Cards */}
+                  <div className="grid grid-cols-4 gap-4">
+                    <Card>
+                      <CardContent className="pt-6">
+                        <div className="text-2xl font-bold">{competitorAnalysis.totalProducts}</div>
+                        <p className="text-xs text-slate-500 mt-1">Total Products</p>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardContent className="pt-6">
+                        <div className="text-2xl font-bold text-blue-600">{competitorAnalysis.withCompetitorData}</div>
+                        <p className="text-xs text-slate-500 mt-1">With Competitor Data</p>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardContent className="pt-6">
+                        <div className="text-2xl font-bold text-red-600">{competitorAnalysis.overpriced.length}</div>
+                        <p className="text-xs text-slate-500 mt-1">Overpriced (&gt;15%)</p>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardContent className="pt-6">
+                        <div className="text-2xl font-bold text-green-600">{competitorAnalysis.underpriced.length}</div>
+                        <p className="text-xs text-slate-500 mt-1">Underpriced (&lt;15%)</p>
+                      </CardContent>
+                    </Card>
+                  </div>
+
+                  {/* Overpriced Products */}
+                  {competitorAnalysis.overpriced.length > 0 && (
+                    <div>
+                      <h3 className="text-lg font-semibold mb-3 text-red-700">🚨 Overpriced Products ({competitorAnalysis.overpriced.length})</h3>
+                      <p className="text-sm text-slate-600 mb-4">Your prices are &gt;15% higher than competitor average - you may be losing sales</p>
+                      <div className="overflow-x-auto">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Item</TableHead>
+                              <TableHead className="text-right">Your Price</TableHead>
+                              <TableHead className="text-right">Comp Low</TableHead>
+                              <TableHead className="text-right">Comp Avg</TableHead>
+                              <TableHead className="text-right">Comp High</TableHead>
+                              <TableHead className="text-right">vs Average</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {competitorAnalysis.overpriced.slice(0, 10).map((product) => {
+                              const countryKey = selectedCountry;
+                              const current = product[`current_${countryKey}`];
+                              const compAvg = product[`comp_avg_${countryKey}`];
+                              const compLow = product[`comp_low_${countryKey}`];
+                              const compHigh = product[`comp_high_${countryKey}`];
+                              const diffPct = ((current - compAvg) / compAvg) * 100;
+                              return (
+                                <TableRow key={product.variant_id}>
+                                  <TableCell className="font-medium max-w-[300px] truncate">{product.item}</TableCell>
+                                  <TableCell className="text-right font-semibold">{formatCurrency(current)}</TableCell>
+                                  <TableCell className="text-right text-slate-600">{formatCurrency(compLow)}</TableCell>
+                                  <TableCell className="text-right text-slate-600">{formatCurrency(compAvg)}</TableCell>
+                                  <TableCell className="text-right text-slate-600">{formatCurrency(compHigh)}</TableCell>
+                                  <TableCell className="text-right">
+                                    <span className="text-red-600 font-semibold">+{diffPct.toFixed(1)}%</span>
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })}
+                          </TableBody>
+                        </Table>
+                      </div>
+                      {competitorAnalysis.overpriced.length > 10 && (
+                        <p className="text-sm text-slate-500 mt-2">... and {competitorAnalysis.overpriced.length - 10} more</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Underpriced Products */}
+                  {competitorAnalysis.underpriced.length > 0 && (
+                    <div>
+                      <h3 className="text-lg font-semibold mb-3 text-green-700">💰 Underpriced Products ({competitorAnalysis.underpriced.length})</h3>
+                      <p className="text-sm text-slate-600 mb-4">Your prices are &lt;15% lower than competitor average - opportunity to raise prices</p>
+                      <div className="overflow-x-auto">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Item</TableHead>
+                              <TableHead className="text-right">Your Price</TableHead>
+                              <TableHead className="text-right">Comp Low</TableHead>
+                              <TableHead className="text-right">Comp Avg</TableHead>
+                              <TableHead className="text-right">Comp High</TableHead>
+                              <TableHead className="text-right">vs Average</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {competitorAnalysis.underpriced.slice(0, 10).map((product) => {
+                              const countryKey = selectedCountry;
+                              const current = product[`current_${countryKey}`];
+                              const compAvg = product[`comp_avg_${countryKey}`];
+                              const compLow = product[`comp_low_${countryKey}`];
+                              const compHigh = product[`comp_high_${countryKey}`];
+                              const diffPct = ((current - compAvg) / compAvg) * 100;
+                              return (
+                                <TableRow key={product.variant_id}>
+                                  <TableCell className="font-medium max-w-[300px] truncate">{product.item}</TableCell>
+                                  <TableCell className="text-right font-semibold">{formatCurrency(current)}</TableCell>
+                                  <TableCell className="text-right text-slate-600">{formatCurrency(compLow)}</TableCell>
+                                  <TableCell className="text-right text-slate-600">{formatCurrency(compAvg)}</TableCell>
+                                  <TableCell className="text-right text-slate-600">{formatCurrency(compHigh)}</TableCell>
+                                  <TableCell className="text-right">
+                                    <span className="text-green-600 font-semibold">{diffPct.toFixed(1)}%</span>
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })}
+                          </TableBody>
+                        </Table>
+                      </div>
+                      {competitorAnalysis.underpriced.length > 10 && (
+                        <p className="text-sm text-slate-500 mt-2">... and {competitorAnalysis.underpriced.length - 10} more</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Competitive Products */}
+                  {competitorAnalysis.competitive.length > 0 && (
+                    <div>
+                      <h3 className="text-lg font-semibold mb-3 text-blue-700">✅ Competitively Priced ({competitorAnalysis.competitive.length})</h3>
+                      <p className="text-sm text-slate-600 mb-2">Your prices are within ±15% of competitor average - well positioned</p>
+                    </div>
+                  )}
+                </div>
               )}
             </CardContent>
           </Card>
