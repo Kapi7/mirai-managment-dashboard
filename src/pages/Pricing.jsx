@@ -8,7 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
-import { DollarSign, TrendingUp, Clock, Target, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ArrowUpDown, ArrowUp, ArrowDown, Search, Filter, BarChart3 } from 'lucide-react';
+import { DollarSign, TrendingUp, Clock, Target, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ArrowUpDown, ArrowUp, ArrowDown, Search, Filter, BarChart3, Package } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_REPORT_API_URL ||
   (import.meta.env.DEV ? 'http://localhost:8080' : '/reports-api');
@@ -53,6 +53,9 @@ export default function Pricing() {
   // Competitor Analysis tab state
   const [competitorAnalysis, setCompetitorAnalysis] = useState(null);
   const [variantIdsToCheck, setVariantIdsToCheck] = useState('');
+
+  // Product Management tab state
+  const [productManagementActions, setProductManagementActions] = useState([]);
 
   // Pre-fetch items on mount for faster initial load
   useEffect(() => {
@@ -465,7 +468,7 @@ export default function Pricing() {
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="items">
             <DollarSign className="h-4 w-4 mr-2" />
             Items
@@ -485,6 +488,10 @@ export default function Pricing() {
           <TabsTrigger value="competitor-analysis">
             <BarChart3 className="h-4 w-4 mr-2" />
             Competitors
+          </TabsTrigger>
+          <TabsTrigger value="product-management">
+            <Package className="h-4 w-4 mr-2" />
+            Products
           </TabsTrigger>
         </TabsList>
 
@@ -859,9 +866,36 @@ export default function Pricing() {
                     <Button
                       variant="default"
                       disabled={priceUpdates.length === 0}
-                      onClick={() => {
-                        alert(`Would execute ${priceUpdates.length} price updates to Shopify`);
-                        // TODO: Implement actual update execution
+                      onClick={async () => {
+                        if (!confirm(`Execute ${priceUpdates.length} price updates to Shopify?`)) {
+                          return;
+                        }
+
+                        setLoading(true);
+                        try {
+                          const response = await fetch(`${API_URL}/pricing/execute-updates`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ updates: priceUpdates })
+                          });
+
+                          const result = await response.json();
+
+                          if (result.error) {
+                            alert(`Error: ${result.error}`);
+                          } else {
+                            // Clear price updates and switch to update log
+                            setPriceUpdates([]);
+                            setPriceUpdatesLoadedFromBackend(false);
+                            setActiveTab('update-log');
+                            // Refresh update log
+                            fetchUpdateLog();
+                          }
+                        } catch (err) {
+                          alert(`Failed to execute updates: ${err.message}`);
+                        } finally {
+                          setLoading(false);
+                        }
                       }}
                     >
                       Execute Updates ({priceUpdates.length})
@@ -1846,6 +1880,220 @@ export default function Pricing() {
                   )}
                 </div>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* PRODUCT MANAGEMENT TAB */}
+        <TabsContent value="product-management">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Product Management</CardTitle>
+                  <CardDescription>Add or delete products from Shopify</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-6">
+                {/* Action Buttons */}
+                <div className="flex gap-3">
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => {
+                      setProductManagementActions([...productManagementActions, {
+                        action: 'add',
+                        variant_id: '',
+                        title: '',
+                        price: 0,
+                        sku: '',
+                        inventory: 0
+                      }]);
+                    }}
+                  >
+                    + Add Product Row
+                  </Button>
+                  <Button
+                    variant="default"
+                    onClick={async () => {
+                      if (productManagementActions.length === 0) {
+                        alert('No actions to execute');
+                        return;
+                      }
+
+                      if (!confirm(`Execute ${productManagementActions.length} product actions?`)) {
+                        return;
+                      }
+
+                      setLoading(true);
+                      try {
+                        const response = await fetch(`${API_URL}/pricing/product-actions`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ actions: productManagementActions })
+                        });
+
+                        const result = await response.json();
+
+                        if (result.error) {
+                          alert(`Error: ${result.error}`);
+                        } else {
+                          alert(`Success: ${result.message || 'Actions executed'}`);
+                          setProductManagementActions([]);
+                          fetchItems(); // Refresh items list
+                        }
+                      } catch (err) {
+                        alert(`Failed to execute actions: ${err.message}`);
+                      } finally {
+                        setLoading(false);
+                      }
+                    }}
+                    disabled={productManagementActions.length === 0}
+                  >
+                    Execute Actions ({productManagementActions.length})
+                  </Button>
+                </div>
+
+                {/* Instructions */}
+                <div className="bg-slate-50 p-4 rounded-lg text-sm text-slate-600">
+                  <p className="font-semibold mb-2">How to use:</p>
+                  <ul className="list-disc list-inside space-y-1">
+                    <li>Click "+ Add Product Row" to add a new product action</li>
+                    <li>Select action type: Add (create new product) or Delete (remove existing)</li>
+                    <li>Fill in product details for Add action</li>
+                    <li>Enter variant ID for Delete action</li>
+                    <li>Click "Execute Actions" to push changes to Shopify</li>
+                  </ul>
+                </div>
+
+                {/* Actions Table */}
+                {productManagementActions.length === 0 ? (
+                  <div className="text-center py-12 text-slate-500 border-2 border-dashed border-slate-200 rounded-lg">
+                    <Package className="h-12 w-12 mx-auto mb-4 text-slate-400" />
+                    <p className="text-sm">No product actions yet</p>
+                    <p className="text-sm">Click "+ Add Product Row" to begin</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-[40px] text-center"></TableHead>
+                          <TableHead className="text-center">Action</TableHead>
+                          <TableHead className="text-center">Variant ID</TableHead>
+                          <TableHead className="text-center">Title</TableHead>
+                          <TableHead className="text-center">Price</TableHead>
+                          <TableHead className="text-center">SKU</TableHead>
+                          <TableHead className="text-center">Inventory</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {productManagementActions.map((action, idx) => (
+                          <TableRow key={idx}>
+                            <TableCell className="text-center">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 w-6 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                                onClick={() => {
+                                  setProductManagementActions(productManagementActions.filter((_, i) => i !== idx));
+                                }}
+                              >
+                                ×
+                              </Button>
+                            </TableCell>
+                            <TableCell className="text-center">
+                              <Select
+                                value={action.action}
+                                onValueChange={(value) => {
+                                  const newActions = [...productManagementActions];
+                                  newActions[idx].action = value;
+                                  setProductManagementActions(newActions);
+                                }}
+                              >
+                                <SelectTrigger className="h-8 w-[100px]">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="add">Add</SelectItem>
+                                  <SelectItem value="delete">Delete</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </TableCell>
+                            <TableCell className="text-center">
+                              <Input
+                                className="font-mono text-sm h-8 text-center"
+                                value={action.variant_id}
+                                onChange={(e) => {
+                                  const newActions = [...productManagementActions];
+                                  newActions[idx].variant_id = e.target.value;
+                                  setProductManagementActions(newActions);
+                                }}
+                                placeholder="Variant ID"
+                              />
+                            </TableCell>
+                            <TableCell className="text-center">
+                              <Input
+                                className="text-sm h-8 text-center"
+                                value={action.title}
+                                onChange={(e) => {
+                                  const newActions = [...productManagementActions];
+                                  newActions[idx].title = e.target.value;
+                                  setProductManagementActions(newActions);
+                                }}
+                                placeholder="Product Title"
+                                disabled={action.action === 'delete'}
+                              />
+                            </TableCell>
+                            <TableCell className="text-center">
+                              <Input
+                                type="number"
+                                step="0.01"
+                                className="text-center h-8 w-[100px]"
+                                value={action.price}
+                                onChange={(e) => {
+                                  const newActions = [...productManagementActions];
+                                  newActions[idx].price = parseFloat(e.target.value) || 0;
+                                  setProductManagementActions(newActions);
+                                }}
+                                disabled={action.action === 'delete'}
+                              />
+                            </TableCell>
+                            <TableCell className="text-center">
+                              <Input
+                                className="text-sm h-8 w-[120px] text-center"
+                                value={action.sku}
+                                onChange={(e) => {
+                                  const newActions = [...productManagementActions];
+                                  newActions[idx].sku = e.target.value;
+                                  setProductManagementActions(newActions);
+                                }}
+                                placeholder="SKU"
+                                disabled={action.action === 'delete'}
+                              />
+                            </TableCell>
+                            <TableCell className="text-center">
+                              <Input
+                                type="number"
+                                className="text-center h-8 w-[80px]"
+                                value={action.inventory}
+                                onChange={(e) => {
+                                  const newActions = [...productManagementActions];
+                                  newActions[idx].inventory = parseInt(e.target.value) || 0;
+                                  setProductManagementActions(newActions);
+                                }}
+                                disabled={action.action === 'delete'}
+                              />
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
