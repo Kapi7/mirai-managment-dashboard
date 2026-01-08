@@ -784,7 +784,25 @@ export default function Pricing() {
                                 value={update.variant_id}
                                 onChange={(e) => {
                                   const newUpdates = [...priceUpdates];
-                                  newUpdates[idx].variant_id = e.target.value;
+                                  const enteredId = e.target.value;
+                                  newUpdates[idx].variant_id = enteredId;
+
+                                  // Auto-lookup item details when variant ID is entered
+                                  if (enteredId.trim()) {
+                                    const itemData = items.find(i => i.variant_id === enteredId) ||
+                                                   targetPrices.find(p => p.variant_id === enteredId);
+
+                                    if (itemData) {
+                                      newUpdates[idx].item = itemData.item;
+                                      newUpdates[idx].current_price = itemData.retail_base || itemData[`current_${newUpdates[idx].market}`] || 0;
+                                      newUpdates[idx].compare_at = itemData.compare_at_base || 0;
+                                      // Set new_price to current if not already set
+                                      if (newUpdates[idx].new_price === 0) {
+                                        newUpdates[idx].new_price = newUpdates[idx].current_price;
+                                      }
+                                    }
+                                  }
+
                                   setPriceUpdates(newUpdates);
                                 }}
                                 placeholder="Variant ID"
