@@ -30,6 +30,8 @@ export default function Pricing() {
 
   // Price Updates tab state
   const [priceUpdates, setPriceUpdates] = useState([]);
+  const [showPasteDialog, setShowPasteDialog] = useState(false);
+  const [pasteText, setPasteText] = useState('');
 
   // Update Log tab state
   const [updateLog, setUpdateLog] = useState([]);
@@ -609,6 +611,13 @@ export default function Pricing() {
                       + Add Row
                     </Button>
                     <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowPasteDialog(!showPasteDialog)}
+                    >
+                      📋 Paste Data
+                    </Button>
+                    <Button
                       variant="default"
                       disabled={priceUpdates.length === 0}
                       onClick={() => {
@@ -632,6 +641,71 @@ export default function Pricing() {
                     <li>Click "Execute Updates" when ready to push changes to Shopify</li>
                   </ul>
                 </div>
+
+                {/* Paste Dialog */}
+                {showPasteDialog && (
+                  <div className="bg-white border border-slate-300 rounded-lg p-4">
+                    <h3 className="font-semibold mb-2">Paste Data</h3>
+                    <p className="text-sm text-slate-600 mb-3">
+                      Paste variant IDs and new prices (tab or comma separated). Format: variant_id, new_price
+                    </p>
+                    <textarea
+                      className="w-full h-32 p-3 border border-slate-300 rounded-lg font-mono text-sm mb-3"
+                      placeholder="51750779093364	35.99
+51750800228724	24.50
+51750801146228	43.99"
+                      value={pasteText}
+                      onChange={(e) => setPasteText(e.target.value)}
+                    />
+                    <div className="flex gap-2">
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={() => {
+                          // Parse pasted data
+                          const lines = pasteText.split('\n').filter(line => line.trim());
+                          const newUpdates = lines.map(line => {
+                            const parts = line.split(/[\t,]/).map(p => p.trim());
+                            const variant_id = parts[0] || '';
+                            const new_price = parseFloat(parts[1]) || 0;
+                            const new_cogs = parts[2] ? parseFloat(parts[2]) : null;
+
+                            // Try to find item in items or targetPrices
+                            const itemData = items.find(i => i.variant_id === variant_id) ||
+                                           targetPrices.find(p => p.variant_id === variant_id);
+
+                            return {
+                              variant_id,
+                              item: itemData?.item || '',
+                              market: 'US',
+                              current_price: itemData?.retail_base || itemData?.[`current_US`] || 0,
+                              new_price,
+                              new_cogs,
+                              compare_at: itemData?.compare_at_base || 0,
+                              notes: ''
+                            };
+                          });
+
+                          setPriceUpdates([...priceUpdates, ...newUpdates]);
+                          setPasteText('');
+                          setShowPasteDialog(false);
+                        }}
+                      >
+                        Add {pasteText.split('\n').filter(l => l.trim()).length} Items
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setPasteText('');
+                          setShowPasteDialog(false);
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
             </CardHeader>
             <CardContent>
