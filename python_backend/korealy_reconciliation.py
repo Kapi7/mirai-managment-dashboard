@@ -592,6 +592,16 @@ def run_reconciliation() -> Dict[str, Any]:
         Dict with reconciliation results and summary stats
     """
     try:
+        # Step 0: Check if Korealy CSV exists
+        if not os.path.exists(KOREALY_CSV_PATH):
+            print(f"❌ Korealy CSV not found at: {KOREALY_CSV_PATH}")
+            return {
+                "success": False,
+                "results": [],
+                "stats": {},
+                "message": f"Korealy CSV file not found. Expected at: {KOREALY_CSV_PATH}. Please upload the CSV or set KOREALY_CSV_PATH environment variable."
+            }
+
         # Step 1: Fetch Shopify data
         print("📊 Fetching Shopify variants...")
         shopify_variants = fetch_shopify_variants_with_cogs()

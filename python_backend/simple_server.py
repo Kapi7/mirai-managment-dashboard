@@ -54,6 +54,20 @@ async def startup_event():
         if exists:
             break
 
+    # Check data persistence
+    print("\n💾 Data Persistence:")
+    render_disk = os.getenv("RENDER_DISK_PATH", "not set")
+    print(f"  RENDER_DISK_PATH: {render_disk}")
+
+    # Check if pricing_logic has loaded any data
+    try:
+        from pricing_logic import _COMPETITOR_DATA, _UPDATE_LOG, _DATA_DIR
+        print(f"  Data directory: {_DATA_DIR}")
+        print(f"  Competitor data loaded: {len(_COMPETITOR_DATA)} variants")
+        print(f"  Update log loaded: {len(_UPDATE_LOG)} entries")
+    except Exception as e:
+        print(f"  ⚠️ Could not check pricing data: {e}")
+
     print("\n" + "=" * 60)
     print()
 

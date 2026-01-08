@@ -25,6 +25,13 @@ _CACHE_TTL = 300  # seconds
 # Otherwise fall back to local directory
 _DATA_DIR = os.getenv("RENDER_DISK_PATH", os.path.dirname(__file__))
 
+# Log the data directory being used
+print(f"📁 Data directory: {_DATA_DIR}")
+print(f"   RENDER_DISK_PATH env: {os.getenv('RENDER_DISK_PATH', 'NOT SET')}")
+
+# Ensure data directory exists
+os.makedirs(_DATA_DIR, exist_ok=True)
+
 # Persistent competitor data storage (survives cache clears AND server restarts)
 _COMPETITOR_DATA_FILE = os.path.join(_DATA_DIR, "competitor_data.json")
 _COMPETITOR_DATA = {}  # variant_id -> {comp_low, comp_avg, comp_high, ...}
@@ -32,6 +39,9 @@ _COMPETITOR_DATA = {}  # variant_id -> {comp_low, comp_avg, comp_high, ...}
 # Persistent update log file
 _UPDATE_LOG_FILE = os.path.join(_DATA_DIR, "update_log.json")
 _UPDATE_LOG = []  # In-memory cache of update records
+
+print(f"📁 Competitor data file: {_COMPETITOR_DATA_FILE}")
+print(f"📁 Update log file: {_UPDATE_LOG_FILE}")
 
 
 def _load_update_log() -> List[Dict[str, Any]]:
