@@ -24,8 +24,39 @@ _CACHE_TTL = 300  # seconds
 # Persistent competitor data storage (survives cache clears)
 _COMPETITOR_DATA = {}  # variant_id -> {comp_low, comp_avg, comp_high, ...}
 
-# In-memory update log (fallback when Google Sheets not configured)
-_UPDATE_LOG = []  # List of update records
+# Persistent update log file
+_UPDATE_LOG_FILE = os.path.join(os.path.dirname(__file__), "update_log.json")
+_UPDATE_LOG = []  # In-memory cache of update records
+
+
+def _load_update_log() -> List[Dict[str, Any]]:
+    """Load update log from file"""
+    global _UPDATE_LOG
+    try:
+        if os.path.exists(_UPDATE_LOG_FILE):
+            with open(_UPDATE_LOG_FILE, 'r') as f:
+                import json
+                _UPDATE_LOG = json.load(f)
+                print(f"📂 Loaded {len(_UPDATE_LOG)} updates from {_UPDATE_LOG_FILE}")
+        return _UPDATE_LOG
+    except Exception as e:
+        print(f"⚠️ Could not load update log: {e}")
+        return []
+
+
+def _save_update_log() -> None:
+    """Save update log to file"""
+    try:
+        import json
+        with open(_UPDATE_LOG_FILE, 'w') as f:
+            json.dump(_UPDATE_LOG, f, indent=2)
+        print(f"💾 Saved {len(_UPDATE_LOG)} updates to {_UPDATE_LOG_FILE}")
+    except Exception as e:
+        print(f"⚠️ Could not save update log: {e}")
+
+
+# Load existing updates on module import
+_load_update_log()
 
 def _get_cache(key: str):
     """Get cached value if not expired"""
@@ -438,19 +469,23 @@ def log_price_update(
         "notes": notes
     }
 
-    # Add to in-memory log
+    # Add to log
     _UPDATE_LOG.append(record)
 
-    # Keep only last 1000 records in memory
-    if len(_UPDATE_LOG) > 1000:
+    # Keep only last 5000 records
+    if len(_UPDATE_LOG) > 5000:
         _UPDATE_LOG.pop(0)
+
+    # Save to file for persistence
+    _save_update_log()
 
     print(f"📝 Logged update: {variant_id} ${old_price} -> ${new_price} ({status})")
 
 
 def clear_update_log() -> None:
-    """Clear the in-memory update log"""
+    """Clear the update log (both memory and file)"""
     _UPDATE_LOG.clear()
+    _save_update_log()
 
 
 def invalidate_cache(keys: Optional[List[str]] = None) -> Dict[str, Any]:
