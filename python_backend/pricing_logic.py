@@ -21,6 +21,9 @@ SHOPIFY_API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2025-07")
 _CACHE = {}
 _CACHE_TTL = 300  # seconds
 
+# Persistent competitor data storage (survives cache clears)
+_COMPETITOR_DATA = {}  # variant_id -> {comp_low, comp_avg, comp_high, ...}
+
 def _get_cache(key: str):
     """Get cached value if not expired"""
     if key in _CACHE:
@@ -460,6 +463,32 @@ def fetch_target_prices(country_filter: Optional[str] = "US", use_cache: bool = 
         else:
             priority = "LOW"
 
+        # Get competitor data if available
+        comp_data = _COMPETITOR_DATA.get(str(variant_id), {})
+        comp_low = comp_data.get("comp_low", 0.0) or 0.0
+        comp_avg = comp_data.get("comp_avg", 0.0) or 0.0
+        comp_high = comp_data.get("comp_high", 0.0) or 0.0
+
+        # Calculate competitive price if we have competitor data
+        competitive_price = 0.0
+        comp_note = "N/A"
+        if comp_avg > 0:
+            # Undercut average by 3%, but maintain minimum margin
+            min_margin = 0.25  # 25% minimum margin
+            min_price = cogs * (1 + min_margin) if cogs > 0 else 0
+            target_competitive = comp_avg * 0.97  # 3% undercut
+
+            if target_competitive >= min_price:
+                competitive_price = target_competitive
+                comp_note = "3% below avg"
+            elif min_price > 0:
+                competitive_price = min_price
+                comp_note = "Floor (25% margin)"
+
+            # Recalculate final_suggested with competitor data
+            if competitive_price > 0 and competitive_price < final_suggested:
+                final_suggested = competitive_price
+
         # Build result with country suffix (country already defined at function start)
         result = {
             "variant_id": variant_id,
@@ -471,11 +500,11 @@ def fetch_target_prices(country_filter: Optional[str] = "US", use_cache: bool = 
             f"breakeven_{country}": round(breakeven, 2),
             f"target_{country}": round(target_price, 2),
             f"suggested_{country}": round(suggested_price, 2),
-            f"comp_low_{country}": 0.0,  # Will be populated with competitor data later
-            f"comp_avg_{country}": 0.0,
-            f"comp_high_{country}": 0.0,
-            f"competitive_price_{country}": 0.0,
-            f"comp_note_{country}": "N/A",
+            f"comp_low_{country}": round(comp_low, 2),
+            f"comp_avg_{country}": round(comp_avg, 2),
+            f"comp_high_{country}": round(comp_high, 2),
+            f"competitive_price_{country}": round(competitive_price, 2),
+            f"comp_note_{country}": comp_note,
             f"final_suggested_{country}": round(final_suggested, 2),
             f"loss_amount_{country}": round(loss_amount, 2),
             f"priority_{country}": priority,
@@ -503,3 +532,47 @@ def get_available_markets() -> List[str]:
 def get_available_countries() -> List[str]:
     """Get list of available countries for target pricing"""
     return ["US", "UK", "AU", "CA"]
+
+
+# ================== COMPETITOR DATA STORAGE ==================
+def update_competitor_data(variant_id: str, data: Dict[str, Any]) -> None:
+    """
+    Store competitor data for a variant
+
+    Args:
+        variant_id: The variant ID
+        data: Dict with comp_low, comp_avg, comp_high, etc.
+    """
+    _COMPETITOR_DATA[str(variant_id)] = data
+    # Clear target prices cache to force recalculation with new competitor data
+    keys_to_clear = [k for k in _CACHE.keys() if k.startswith("target_prices_")]
+    for k in keys_to_clear:
+        del _CACHE[k]
+
+
+def get_competitor_data(variant_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Get stored competitor data for a variant
+
+    Args:
+        variant_id: The variant ID
+
+    Returns:
+        Dict with competitor data or None if not available
+    """
+    return _COMPETITOR_DATA.get(str(variant_id))
+
+
+def get_all_competitor_data() -> Dict[str, Dict[str, Any]]:
+    """
+    Get all stored competitor data
+
+    Returns:
+        Dict mapping variant_id -> competitor data
+    """
+    return _COMPETITOR_DATA.copy()
+
+
+def clear_competitor_data() -> None:
+    """Clear all stored competitor data"""
+    _COMPETITOR_DATA.clear()

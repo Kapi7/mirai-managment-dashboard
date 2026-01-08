@@ -32,7 +32,8 @@ if not KOREALY_CSV_PATH:
         KOREALY_CSV_PATH = os.path.join(os.path.dirname(__file__), "Korealy Products - Prices.csv")
 
 # Regex patterns for parsing Korealy data
-PRICE_RE = re.compile(r"(?:US?\$|USD|€|£)\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)")
+# Match prices with currency symbols: $, US$, USD, €, £
+PRICE_RE = re.compile(r"(?:US?\$|\$|USD|€|£)\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)")
 PROD_ID_RE = re.compile(r"\bProduct\s*#\s*(\d+)\b", re.IGNORECASE)
 PID_RE = re.compile(r"\bShop\s*PID\s*#\s*(\d+)\b", re.IGNORECASE)
 
@@ -176,25 +177,46 @@ def fetch_korealy_data_from_csv() -> List[List[str]]:
 
 def parse_korealy_sheet(values_2d: List[List[str]]) -> List[Dict[str, Any]]:
     """
-    Parse Korealy sheet using state machine
+    Parse Korealy sheet using improved state machine (matching price-bot logic)
+
+    Open a new card when:
+      1) first non-empty cell == 'Product Image'
+      2) or first non-empty startswith 'Supplier' AND current card already had Supplier
+      3) or a 'Product #' line appears while current card already had a Product #
+      4) or a 'Shop PID #' line appears while current card already had a Shop PID
 
     Args:
-        values_2d: 2D list of cell values from Google Sheets
+        values_2d: 2D list of cell values from CSV
 
     Returns:
         List of dicts with keys: korealy_product_id, shop_pid, title, cogs, currency
     """
-    records = []
-    current_card = {}
-    in_card = False
+    # Regex for metadata lines to skip when finding title
+    META_LINE_RE = re.compile(
+        r"^(?:product\s*image|supplier\s*:|supplier$|product\s*#|shop\s*pid|product\s*id|shop\s*product\s*id)\b",
+        re.IGNORECASE
+    )
 
-    def flush_card():
-        """Save current card and reset"""
-        nonlocal current_card, in_card
-        if current_card and current_card.get("title"):
-            records.append(current_card.copy())
-        current_card = {}
-        in_card = False
+    def _first_nonempty_cell_lower(row: List[str]) -> str:
+        for c in row or []:
+            s = (c or "").strip()
+            if s:
+                return s.lower()
+        return ""
+
+    def _first_meaningful_title(lines: List[str]) -> Optional[str]:
+        """Find first non-metadata line as title"""
+        for ln in lines:
+            s = (ln or "").strip()
+            if not s:
+                continue
+            if META_LINE_RE.match(s):
+                continue
+            # Skip price-only lines
+            if PRICE_RE.match(s):
+                continue
+            return s
+        return None
 
     def detect_currency(text: str) -> str:
         """Detect currency from price string"""
@@ -205,80 +227,111 @@ def parse_korealy_sheet(values_2d: List[List[str]]) -> List[Dict[str, Any]]:
         else:
             return "USD"
 
-    def extract_price(text: str) -> Optional[float]:
-        """Extract numeric price from text"""
-        match = PRICE_RE.search(text)
-        if match:
-            price_str = match.group(1).replace(",", "")
-            return float(price_str)
-        return None
+    records = []
+
+    # State for current card
+    current_lines: List[str] = []
+    seen_supplier = False
+    seen_prod_id = False
+    seen_pid = False
+
+    starts_by = {"product_image": 0, "supplier_repeat": 0, "product_id_repeat": 0, "pid_repeat": 0}
+
+    def push_block():
+        """Save current card and reset state"""
+        nonlocal current_lines, seen_supplier, seen_prod_id, seen_pid
+
+        if not current_lines or all(not (ln or "").strip() for ln in current_lines):
+            return
+
+        text = "\n".join(current_lines)
+
+        m_prod = PROD_ID_RE.search(text)
+        m_pid = PID_RE.search(text)
+        title = _first_meaningful_title(current_lines)
+
+        price_val = None
+        currency = None
+        for ln in current_lines:
+            for m in PRICE_RE.finditer(ln):
+                raw = m.group(0)
+                num = m.group(1)
+                try:
+                    price_val = float(num.replace(",", ""))
+                    currency = detect_currency(raw)
+                except Exception:
+                    pass
+
+        records.append({
+            "korealy_product_id": m_prod.group(1) if m_prod else None,
+            "shop_pid": m_pid.group(1) if m_pid else None,
+            "title": title or None,
+            "cogs": price_val,
+            "currency": currency if price_val is not None else None,
+        })
+
+        # Reset state
+        current_lines = []
+        seen_supplier = False
+        seen_prod_id = False
+        seen_pid = False
 
     # Process each row
     for row in values_2d:
-        if not row or not any(row):  # Skip empty rows
+        first = _first_nonempty_cell_lower(row)
+        cells = [c.strip() for c in (row or []) if (c or "").strip()]
+        line = " | ".join(cells) if cells else ""
+
+        # Boundary check: "Product Image"
+        if first.startswith("product image"):
+            push_block()
+            starts_by["product_image"] += 1
+            if line:
+                current_lines.append(line)
             continue
 
-        first_cell = row[0].strip()
+        # Track tokens inside current card and detect boundaries
+        if line:
+            # Check for supplier repeat
+            if first.startswith("supplier"):
+                if seen_supplier:
+                    push_block()
+                    starts_by["supplier_repeat"] += 1
+                seen_supplier = True
 
-        # Start new card only on "Product Image"
-        if "Product Image" in first_cell:
-            flush_card()
-            in_card = True
-            continue
+            # Check for Product # repeat
+            if PROD_ID_RE.search(line):
+                if seen_prod_id:
+                    push_block()
+                    starts_by["product_id_repeat"] += 1
+                seen_prod_id = True
 
-        if not in_card:
-            continue
+            # Check for Shop PID repeat
+            if PID_RE.search(line):
+                if seen_pid:
+                    push_block()
+                    starts_by["pid_repeat"] += 1
+                seen_pid = True
 
-        # Extract Product ID
-        prod_match = PROD_ID_RE.search(first_cell)
-        if prod_match and "korealy_product_id" not in current_card:
-            current_card["korealy_product_id"] = prod_match.group(1)
-            continue
-
-        # Extract Shop PID
-        pid_match = PID_RE.search(first_cell)
-        if pid_match and "shop_pid" not in current_card:
-            current_card["shop_pid"] = pid_match.group(1)
-            continue
-
-        # Extract price (look across all cells in row)
-        for cell in row:
-            if not cell:
-                continue
-
-            price = extract_price(cell)
-            if price and "cogs" not in current_card:
-                current_card["cogs"] = price
-                current_card["currency"] = detect_currency(cell)
-                break
-
-        # Extract title (first substantive text line that's not metadata)
-        if "title" not in current_card and first_cell and not any([
-            "Product Image" in first_cell,
-            "Supplier" in first_cell,
-            "Product #" in first_cell,
-            "Shop PID #" in first_cell,
-            PRICE_RE.search(first_cell)
-        ]):
-            current_card["title"] = first_cell
+            current_lines.append(line)
+        else:
+            current_lines.append("")
 
     # Flush last card
-    flush_card()
+    push_block()
 
-    # De-duplicate by korealy_product_id (CSV has duplicates)
-    seen_ids = set()
-    unique_records = []
-    for record in records:
-        product_id = record.get("korealy_product_id")
-        if product_id and product_id not in seen_ids:
-            seen_ids.add(product_id)
-            unique_records.append(record)
-        elif not product_id:
-            # Keep records without IDs (shouldn't happen but handle gracefully)
-            unique_records.append(record)
+    total_cards = len(records)
+    print(f"🔎 Card starts → Product Image: {starts_by['product_image']}, "
+          f"Supplier repeat: {starts_by['supplier_repeat']}, "
+          f"Product# repeat: {starts_by['product_id_repeat']}, "
+          f"Shop PID repeat: {starts_by['pid_repeat']}. "
+          f"Total cards: {total_cards}")
 
-    print(f"✅ Parsed {len(unique_records)} unique Korealy products (removed {len(records) - len(unique_records)} duplicates)")
-    return unique_records
+    # Filter out records without valid data
+    valid_records = [r for r in records if r.get("title") or r.get("korealy_product_id")]
+
+    print(f"✅ Parsed {len(valid_records)} Korealy products")
+    return valid_records
 
 
 def normalize_name(name: str) -> str:

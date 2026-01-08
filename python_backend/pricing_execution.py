@@ -106,11 +106,11 @@ def execute_updates(updates: List[Any]) -> Dict[str, Any]:
             else:
                 new_compare_at = None
 
-            # Update via GraphQL
+            # Update via GraphQL - use productVariantsBulkUpdate for API 2025+
             mutation = """
-            mutation($input: ProductVariantInput!) {
-                productVariantUpdate(input: $input) {
-                    productVariant {
+            mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+                productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+                    productVariants {
                         id
                         price
                         compareAtPrice
@@ -123,17 +123,33 @@ def execute_updates(updates: List[Any]) -> Dict[str, Any]:
             }
             """
 
-            input_data = {
+            # First, get the product ID for this variant
+            product_query = """
+            query($id: ID!) {
+                productVariant(id: $id) {
+                    product {
+                        id
+                    }
+                }
+            }
+            """
+            product_result = _shopify_graphql(product_query, {"id": variant_gid})
+            product_id = product_result["data"]["productVariant"]["product"]["id"]
+
+            variant_input = {
                 "id": variant_gid,
                 "price": str(new_price)
             }
 
             if new_compare_at is not None:
-                input_data["compareAtPrice"] = str(new_compare_at)
+                variant_input["compareAtPrice"] = str(new_compare_at)
 
-            result = _shopify_graphql(mutation, {"input": input_data})
+            result = _shopify_graphql(mutation, {
+                "productId": product_id,
+                "variants": [variant_input]
+            })
 
-            user_errors = result["data"]["productVariantUpdate"]["userErrors"]
+            user_errors = result["data"]["productVariantsBulkUpdate"]["userErrors"]
             if user_errors:
                 error_msg = "; ".join([e["message"] for e in user_errors])
                 raise RuntimeError(error_msg)
@@ -352,6 +368,7 @@ def check_competitor_prices(variant_ids: List[str]) -> Dict[str, Any]:
         }
 
     from smart_pricing import analyze_competitor_prices
+    from pricing_logic import update_competitor_data
 
     results = []
     scanned_count = 0
@@ -416,6 +433,16 @@ def check_competitor_prices(variant_ids: List[str]) -> Dict[str, Any]:
             # Apply smart filtering
             analysis = analyze_competitor_prices(competitor_prices)
 
+            # Store competitor data for use in target prices
+            update_competitor_data(variant_id, {
+                "comp_low": analysis["comp_low"],
+                "comp_avg": analysis["comp_avg"],
+                "comp_high": analysis["comp_high"],
+                "raw_count": analysis["raw_count"],
+                "trusted_count": analysis["trusted_count"],
+                "filtered_count": analysis["filtered_count"],
+            })
+
             results.append({
                 "variant_id": variant_id,
                 "product_name": f"{product_title} - {variant_title}",
@@ -440,5 +467,5 @@ def check_competitor_prices(variant_ids: List[str]) -> Dict[str, Any]:
     return {
         "scanned_count": scanned_count,
         "results": results,
-        "message": f"Scanned {scanned_count} variants with smart filtering"
+        "message": f"Scanned {scanned_count} variants with smart filtering. Results merged into target prices."
     }

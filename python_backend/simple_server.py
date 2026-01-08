@@ -66,7 +66,7 @@ async def health():
 async def daily_report(req: DateRangeRequest):
     """
     Return daily metrics for the date range.
-    This is a simplified version that will call the actual data fetching functions.
+    Uses real data from Shopify, Google Ads, Meta, etc.
     """
     try:
         # Parse dates
@@ -77,7 +77,6 @@ async def daily_report(req: DateRangeRequest):
             raise HTTPException(status_code=400, detail="start_date must be <= end_date")
 
         # Import the actual data fetching logic
-        # We'll use the existing modules but call them cleanly
         from report_logic import fetch_daily_reports
 
         data = fetch_daily_reports(start_date, end_date)
@@ -85,38 +84,13 @@ async def daily_report(req: DateRangeRequest):
         return {"data": data}
 
     except ImportError as e:
-        # If report_logic doesn't exist yet, return mock data
-        return {
-            "data": [
-                {
-                    "date": req.start_date,
-                    "label": "Mock Data",
-                    "orders": 10,
-                    "gross": 1000.0,
-                    "discounts": 50.0,
-                    "refunds": 0.0,
-                    "net": 950.0,
-                    "cogs": 300.0,
-                    "shipping_charged": 100.0,
-                    "shipping_cost": 50.0,
-                    "google_spend": 100.0,
-                    "meta_spend": 50.0,
-                    "total_spend": 150.0,
-                    "google_pur": 5,
-                    "meta_pur": 3,
-                    "google_cpa": 20.0,
-                    "meta_cpa": 16.67,
-                    "general_cpa": 18.75,
-                    "psp_usd": 25.0,
-                    "operational_profit": 425.0,
-                    "net_margin": 425.0,
-                    "margin_pct": 44.74,
-                    "aov": 95.0,
-                    "returning_customers": 2
-                }
-            ]
-        }
+        # Log import error and return error response
+        print(f"❌ Import error in daily_report: {e}")
+        raise HTTPException(status_code=500, detail=f"Module import error: {e}")
     except Exception as e:
+        print(f"❌ Error in daily_report: {e}")
+        import traceback
+        traceback.print_exc()
         return {"error": str(e), "data": []}
 
 
@@ -239,7 +213,19 @@ async def execute_price_updates(req: ExecuteUpdatesRequest):
     """
     try:
         from pricing_execution import execute_updates
+
+        print(f"📝 Executing {len(req.updates)} price updates...")
         result = execute_updates(req.updates)
+
+        # Log the result
+        print(f"✅ Price updates complete: {result['updated_count']} updated, {result['failed_count']} failed")
+        if result.get("details"):
+            for detail in result["details"]:
+                status = detail.get("status", "unknown")
+                vid = detail.get("variant_id", "?")
+                msg = detail.get("message", "")
+                print(f"   - {vid}: {status} - {msg}")
+
         return {
             "success": True,
             "updated_count": result["updated_count"],
@@ -248,8 +234,12 @@ async def execute_price_updates(req: ExecuteUpdatesRequest):
             "details": result.get("details", [])
         }
     except ImportError as e:
+        print(f"❌ Import error in execute_price_updates: {e}")
         raise HTTPException(status_code=500, detail=f"Could not import pricing_execution module: {e}")
     except Exception as e:
+        print(f"❌ Error in execute_price_updates: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to execute price updates: {str(e)}")
 
 
