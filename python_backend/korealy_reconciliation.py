@@ -220,8 +220,8 @@ def parse_korealy_sheet(values_2d: List[List[str]]) -> List[Dict[str, Any]]:
 
         first_cell = row[0].strip()
 
-        # Start new card on "Product Image" or when supplier repeats
-        if "Product Image" in first_cell or (in_card and "Supplier" in first_cell):
+        # Start new card only on "Product Image"
+        if "Product Image" in first_cell:
             flush_card()
             in_card = True
             continue
@@ -265,8 +265,20 @@ def parse_korealy_sheet(values_2d: List[List[str]]) -> List[Dict[str, Any]]:
     # Flush last card
     flush_card()
 
-    print(f"✅ Parsed {len(records)} Korealy products")
-    return records
+    # De-duplicate by korealy_product_id (CSV has duplicates)
+    seen_ids = set()
+    unique_records = []
+    for record in records:
+        product_id = record.get("korealy_product_id")
+        if product_id and product_id not in seen_ids:
+            seen_ids.add(product_id)
+            unique_records.append(record)
+        elif not product_id:
+            # Keep records without IDs (shouldn't happen but handle gracefully)
+            unique_records.append(record)
+
+    print(f"✅ Parsed {len(unique_records)} unique Korealy products (removed {len(records) - len(unique_records)} duplicates)")
+    return unique_records
 
 
 def normalize_name(name: str) -> str:
