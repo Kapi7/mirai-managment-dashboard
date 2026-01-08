@@ -1,8 +1,17 @@
 # sheets_client.py — Month tab writer + header/MTD auto-bootstrap + robust retries
 import os, calendar, time, random
 from typing import List, Tuple, Dict, Any, Callable, Type, Optional
-import gspread
-from requests import exceptions as req_exc
+
+# Make gspread optional to avoid import errors when not installed
+try:
+    import gspread
+    from requests import exceptions as req_exc
+    HAS_GSPREAD = True
+except ImportError:
+    gspread = None
+    req_exc = None
+    HAS_GSPREAD = False
+    print("⚠️ gspread not installed - Google Sheets integration disabled")
 
 try:
     from gspread_formatting import (

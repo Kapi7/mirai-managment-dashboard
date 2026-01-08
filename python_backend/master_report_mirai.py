@@ -23,7 +23,14 @@ from shopify_client import (
 from config import SHOPIFY_STORES
 from paypal_client import fetch_transactions, extract_shipping_and_fees
 from transform import paypal_to_df, paypal_shipping_total_grouped
-from sheets_client import ensure_month_tab, update_single_day_row
+# Make sheets_client optional
+try:
+    from sheets_client import ensure_month_tab, update_single_day_row
+    HAS_SHEETS = True
+except ImportError:
+    ensure_month_tab = None
+    update_single_day_row = None
+    HAS_SHEETS = False
 from telegram_client import upsert_daily_summary
 from psp_fee import get_psp_fees_daily
 from google_ads_spend import daily_spend_usd_aligned
@@ -791,24 +798,27 @@ def run_once(day_str: str | None = None, debug_day: str | None = None) -> None:
 
     # Build month rows (for sheet update of TODAY only)
     month_name, year, month, rows_by_day, _ = build_month_rows(anchor, shop_tz)
-    _, ws_month = ensure_month_tab(month_name)
 
     day_number = anchor.day
     day_row_data = rows_by_day.get(day_number)
 
-    # A) Update Google Sheet Row (today only)
-    if day_row_data:
-        update_single_day_row(
-            ws_month,
-            day_number,
-            day_row_data,
-            year=year,
-            month=month,
-            headers=MONTH_HEADERS,
-        )
-        print(f"✅ Successfully patched Sheet for Day {day_number}")
+    # A) Update Google Sheet Row (today only) - only if sheets_client is available
+    if HAS_SHEETS and ensure_month_tab and update_single_day_row:
+        _, ws_month = ensure_month_tab(month_name)
+        if day_row_data:
+            update_single_day_row(
+                ws_month,
+                day_number,
+                day_row_data,
+                year=year,
+                month=month,
+                headers=MONTH_HEADERS,
+            )
+            print(f"✅ Successfully patched Sheet for Day {day_number}")
+        else:
+            print(f"⚠️ No Sheet data found for Day {day_number}")
     else:
-        print(f"⚠️ No Sheet data found for Day {day_number}")
+        print(f"ℹ️ Skipping Google Sheets update (gspread not available)")
 
     # B) Telegram Summary — compute today, yesterday, and MTD
     yday = anchor - timedelta(days=1)
