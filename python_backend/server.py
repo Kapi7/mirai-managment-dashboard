@@ -407,7 +407,7 @@ async def get_markets():
     try:
         from pricing_logic import get_available_markets
         markets = get_available_markets()
-        return {"markets": markets}
+        return {"data": markets, "markets": markets}  # Support both formats
     except ImportError as e:
         raise HTTPException(status_code=500, detail=f"Could not import pricing_logic: {e}")
     except Exception as e:
@@ -420,7 +420,7 @@ async def get_countries():
     try:
         from pricing_logic import get_available_countries
         countries = get_available_countries()
-        return {"countries": countries}
+        return {"data": countries, "countries": countries}  # Support both formats
     except ImportError as e:
         raise HTTPException(status_code=500, detail=f"Could not import pricing_logic: {e}")
     except Exception as e:
@@ -436,7 +436,7 @@ async def get_items(market: Optional[str] = None, use_cache: bool = True):
     try:
         from pricing_logic import fetch_items
         items = fetch_items(market_filter=market, use_cache=use_cache)
-        return {"items": items}
+        return {"data": items, "items": items}  # Support both formats
     except ImportError as e:
         raise HTTPException(status_code=500, detail=f"Could not import pricing_logic: {e}")
     except Exception as e:
@@ -449,7 +449,7 @@ async def get_price_updates():
     try:
         from pricing_logic import fetch_price_updates
         updates = fetch_price_updates()
-        return {"updates": updates}
+        return {"data": updates, "updates": updates}  # Support both formats
     except ImportError as e:
         raise HTTPException(status_code=500, detail=f"Could not import pricing_logic: {e}")
     except Exception as e:
@@ -462,7 +462,7 @@ async def get_update_log(limit: Optional[int] = None):
     try:
         from pricing_logic import fetch_update_log
         log = fetch_update_log(limit=limit)
-        return {"log": log}
+        return {"data": log, "log": log}  # Support both formats
     except ImportError as e:
         raise HTTPException(status_code=500, detail=f"Could not import pricing_logic: {e}")
     except Exception as e:
@@ -478,7 +478,7 @@ async def get_target_prices(country: str = "US", use_cache: bool = True):
     try:
         from pricing_logic import fetch_target_prices
         target_prices = fetch_target_prices(country_filter=country, use_cache=use_cache)
-        return {"target_prices": target_prices}
+        return {"data": target_prices, "target_prices": target_prices}  # Support both formats
     except ImportError as e:
         raise HTTPException(status_code=500, detail=f"Could not import pricing_logic: {e}")
     except Exception as e:

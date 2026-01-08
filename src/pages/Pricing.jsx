@@ -920,19 +920,26 @@ export default function Pricing() {
                             body: JSON.stringify({ updates: priceUpdates })
                           });
 
+                          if (!response.ok) {
+                            const errorText = await response.text();
+                            throw new Error(`HTTP ${response.status}: ${errorText}`);
+                          }
+
                           const result = await response.json();
 
-                          if (result.error) {
-                            alert(`Error: ${result.error}`);
-                          } else {
+                          if (result.success) {
+                            alert(`✅ Success!\n\nUpdated: ${result.updated_count}\nFailed: ${result.failed_count}\n\n${result.message}`);
                             // Clear price updates and switch to update log
                             setPriceUpdates([]);
                             setPriceUpdatesLoadedFromBackend(false);
                             setActiveTab('update-log');
                             // Refresh update log
                             fetchUpdateLog();
+                          } else {
+                            alert(`❌ Error: ${result.message || 'Unknown error'}`);
                           }
                         } catch (err) {
+                          console.error('Execute updates error:', err);
                           alert(`Failed to execute updates: ${err.message}`);
                         } finally {
                           setLoading(false);
@@ -1757,19 +1764,52 @@ export default function Pricing() {
                         <Button
                           variant="default"
                           size="sm"
-                          onClick={() => {
+                          onClick={async () => {
                             const ids = variantIdsToCheck.split('\n').filter(id => id.trim());
                             if (ids.length === 0) {
                               alert('Please enter at least one variant ID');
                               return;
                             }
 
-                            // Copy command with note about smart filtering
-                            const command = `cd /Users/kapi7/price-bot && python3 compare_prices_serpapi.py --sheet-tab Items --limit ${ids.length}`;
-                            navigator.clipboard.writeText(command);
+                            if (!confirm(`Scan competitor prices for ${ids.length} variant IDs?\n\n⏱️ This will take approximately ${Math.ceil(ids.length * 0.6 / 60)} minutes (SerpAPI rate limit: 1 request per 0.6s)\n\n🧠 Smart filtering will be applied:\n- Trusted sellers only\n- Outlier removal\n- Low/Avg/High pricing`)) {
+                              return;
+                            }
 
-                            alert(`✅ Command copied to clipboard!\n\n🧠 Smart Filtering Applied:\n- Trusted sellers only (no P2P marketplaces)\n- Outlier removal (median-based)\n- Dynamic CPA calculation\n\nPaste into terminal to scan ${ids.length} variant IDs.`);
+                            setLoading(true);
+                            setLoadingMessage(`Scanning ${ids.length} variant IDs... (${Math.ceil(ids.length * 0.6 / 60)} min)`);
+
+                            try {
+                              const response = await fetch(`${API_URL}/pricing/check-competitor-prices`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ variant_ids: ids })
+                              });
+
+                              if (!response.ok) {
+                                const errorText = await response.text();
+                                throw new Error(`HTTP ${response.status}: ${errorText}`);
+                              }
+
+                              const result = await response.json();
+
+                              if (result.success) {
+                                alert(`✅ Scan Complete!\n\nScanned: ${result.scanned_count} variants\n\n${result.message}\n\nResults have been merged into Target Prices tab with competitor data (comp_low, comp_avg, comp_high).`);
+
+                                // Refresh target prices to show updated competitor data
+                                fetchTargetPrices();
+                                setActiveTab('target-prices');
+                              } else {
+                                alert(`❌ Scan failed: ${result.message || 'Unknown error'}`);
+                              }
+                            } catch (err) {
+                              console.error('Competitor price scan error:', err);
+                              alert(`❌ Failed to scan prices: ${err.message}`);
+                            } finally {
+                              setLoading(false);
+                              setLoadingMessage('');
+                            }
                           }}
+                          disabled={loading}
                         >
                           🚀 Scan Prices
                         </Button>
