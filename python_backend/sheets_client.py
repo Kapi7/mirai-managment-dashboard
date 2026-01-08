@@ -36,20 +36,27 @@ SCOPES = [
 # ---------------- retries ----------------
 def _with_retries(
     fn: Callable, *args, _tries: int = 6, _base: float = 0.8, _max_sleep: float = 8.0,
-    _retry_on: Tuple[Type[BaseException], ...] = (
-        gspread.exceptions.APIError,
-        req_exc.ConnectionError,
-        req_exc.Timeout,
-        req_exc.ChunkedEncodingError,
-    ),
+    _retry_on: Tuple[Type[BaseException], ...] = None,
     **kwargs,
 ):
+    # Build default retry exceptions only if gspread is available
+    if _retry_on is None:
+        if HAS_GSPREAD and gspread and req_exc:
+            _retry_on = (
+                gspread.exceptions.APIError,
+                req_exc.ConnectionError,
+                req_exc.Timeout,
+                req_exc.ChunkedEncodingError,
+            )
+        else:
+            _retry_on = (Exception,)  # Fallback to generic exception
+
     attempt = 0
     while True:
         try:
             return fn(*args, **kwargs)
         except _retry_on as e:
-            if isinstance(e, gspread.exceptions.APIError):
+            if HAS_GSPREAD and gspread and isinstance(e, gspread.exceptions.APIError):
                 resp = getattr(e, "response", None)
                 status = getattr(resp, "status_code", None)
                 if status not in (500, 502, 503, 504, 429, None):
@@ -63,7 +70,9 @@ def _with_retries(
 
 
 # ---------------- gspread client ----------------
-def _client() -> gspread.Client:
+def _client():
+    if not HAS_GSPREAD:
+        raise RuntimeError("gspread not installed")
     from pathlib import Path
     oauth_dir = Path(os.getenv(OAUTH_DIR_ENV, ".google_oauth"))
     oauth_dir.mkdir(parents=True, exist_ok=True)
@@ -78,6 +87,8 @@ def _client() -> gspread.Client:
     )
 
 def _open_sheet():
+    if not HAS_GSPREAD:
+        raise RuntimeError("gspread not installed")
     sheet_id = (os.getenv(SHEET_ID_ENV) or "").strip()
     if not sheet_id:
         raise RuntimeError("GOOGLE_SHEET_ID_MASTER not set in env")
@@ -86,7 +97,9 @@ def _open_sheet():
 
 
 # ---------------- worksheet helpers ----------------
-def ensure_month_tab(month_label: str) -> Tuple[gspread.Spreadsheet, gspread.Worksheet]:
+def ensure_month_tab(month_label: str) -> Tuple[Any, Any]:
+    if not HAS_GSPREAD:
+        raise RuntimeError("gspread not installed - Google Sheets integration unavailable")
     sh = _open_sheet()
     try:
         ws = _with_retries(sh.worksheet, month_label)
