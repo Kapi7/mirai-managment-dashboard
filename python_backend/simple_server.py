@@ -3,14 +3,196 @@ Simple FastAPI server for dashboard reports - NO automation, NO Telegram, NO com
 Just: fetch data from APIs → calculate metrics → return JSON
 """
 import os
+import uuid
+import asyncio
+import threading
 from datetime import datetime, date, timedelta
 from typing import List, Optional, Dict, Any
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import pytz
 
 app = FastAPI(title="Mirai Reports API - Simple", version="2.0.0")
+
+# ==================== BACKGROUND TASK TRACKING ====================
+# In-memory store for background task progress
+_BACKGROUND_TASKS: Dict[str, Dict[str, Any]] = {}
+
+
+def _run_competitor_scan_background(task_id: str, variant_ids: List[str]):
+    """Run competitor price scan in background thread with progress tracking"""
+    import time
+    import requests
+
+    task = _BACKGROUND_TASKS[task_id]
+    task["status"] = "running"
+    task["started_at"] = datetime.utcnow().isoformat() + "Z"
+
+    try:
+        from smart_pricing import analyze_competitor_prices
+        from pricing_logic import update_competitor_data, log_competitor_scan
+
+        SERPAPI_KEY = os.getenv("SERPAPI_KEY") or os.getenv("SERPAPI_API_KEY")
+        SHOPIFY_STORE = os.getenv("SHOPIFY_STORE")
+        SHOPIFY_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN") or os.getenv("SHOPIFY_TOKEN")
+        SHOPIFY_API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2025-07")
+
+        if not SERPAPI_KEY:
+            task["status"] = "failed"
+            task["error"] = "SerpAPI key not configured"
+            return
+
+        results = []
+        total = len(variant_ids)
+
+        for idx, variant_id in enumerate(variant_ids):
+            task["progress"] = idx
+            task["current_item"] = variant_id
+
+            try:
+                variant_gid = f"gid://shopify/ProductVariant/{variant_id}"
+
+                # Get product details from Shopify
+                url = f"https://{SHOPIFY_STORE}/admin/api/{SHOPIFY_API_VERSION}/graphql.json"
+                headers = {
+                    "Content-Type": "application/json",
+                    "X-Shopify-Access-Token": SHOPIFY_TOKEN
+                }
+
+                query = """
+                query($id: ID!) {
+                    productVariant(id: $id) {
+                        id
+                        title
+                        sku
+                        price
+                        compareAtPrice
+                        product { title }
+                        inventoryItem { unitCost { amount } }
+                    }
+                }
+                """
+
+                response = requests.post(url, json={"query": query, "variables": {"id": variant_gid}}, headers=headers, timeout=30)
+                response.raise_for_status()
+                data = response.json()
+
+                if "errors" in data:
+                    raise RuntimeError(f"GraphQL errors: {data['errors']}")
+
+                variant = data["data"]["productVariant"]
+                product_title = variant["product"]["title"]
+                variant_title = variant["title"]
+                sku = variant["sku"]
+                current_price = float(variant["price"]) if variant["price"] else 0.0
+                compare_at = float(variant["compareAtPrice"]) if variant["compareAtPrice"] else 0.0
+                cogs = 0.0
+                if variant.get("inventoryItem") and variant["inventoryItem"].get("unitCost"):
+                    cogs = float(variant["inventoryItem"]["unitCost"]["amount"])
+
+                # Build search query
+                search_query = f"{product_title} {variant_title}"
+                if sku:
+                    search_query += f" {sku}"
+
+                task["current_item"] = f"{product_title} - {variant_title}"
+
+                # Call SerpAPI
+                serp_params = {
+                    "engine": "google_shopping",
+                    "q": search_query,
+                    "gl": "us",
+                    "hl": "en",
+                    "num": 100,
+                    "api_key": SERPAPI_KEY
+                }
+
+                serp_response = requests.get("https://serpapi.com/search.json", params=serp_params, timeout=60)
+                serp_response.raise_for_status()
+                serp_data = serp_response.json()
+
+                # Extract prices
+                competitor_prices = []
+                seller_counts = {}
+
+                for item in serp_data.get("shopping_results", []):
+                    price_str = item.get("extracted_price")
+                    seller = item.get("source", "Unknown")
+                    if price_str:
+                        competitor_prices.append({
+                            "price": float(price_str),
+                            "seller": seller,
+                            "title": item.get("title", ""),
+                            "link": item.get("link", ""),
+                        })
+                        seller_counts[seller] = seller_counts.get(seller, 0) + 1
+
+                # Apply smart filtering
+                analysis = analyze_competitor_prices(competitor_prices)
+                top_sellers = sorted(seller_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+
+                # Calculate competitive price
+                competitive_price = 0.0
+                comp_note = "N/A"
+                if analysis["comp_avg"] and analysis["comp_avg"] > 0:
+                    min_margin = 0.25
+                    min_price = cogs * (1 + min_margin) if cogs > 0 else 0
+                    target_competitive = analysis["comp_avg"] * 0.97
+
+                    if target_competitive >= min_price:
+                        competitive_price = round(target_competitive, 2)
+                        comp_note = "3% below avg"
+                    elif min_price > 0:
+                        competitive_price = round(min_price, 2)
+                        comp_note = "Floor (25% margin)"
+
+                # Store competitor data
+                scan_data = {
+                    "comp_low": analysis["comp_low"],
+                    "comp_avg": analysis["comp_avg"],
+                    "comp_high": analysis["comp_high"],
+                    "raw_count": analysis["raw_count"],
+                    "trusted_count": analysis["trusted_count"],
+                    "filtered_count": analysis["filtered_count"],
+                    "competitive_price": competitive_price,
+                    "top_sellers": top_sellers,
+                }
+                update_competitor_data(variant_id, scan_data)
+
+                # Log scan to history
+                item_name = f"{product_title} - {variant_title}"
+                log_competitor_scan(variant_id, item_name, scan_data)
+
+                results.append({
+                    "variant_id": variant_id,
+                    "product_name": item_name,
+                    "sku": sku,
+                    "current_price": current_price,
+                    "comp_avg": analysis["comp_avg"],
+                    "competitive_price": competitive_price,
+                    "status": "success"
+                })
+
+                time.sleep(0.6)  # Rate limiting
+
+            except Exception as e:
+                results.append({
+                    "variant_id": variant_id,
+                    "status": "failed",
+                    "error": str(e)
+                })
+
+        task["status"] = "completed"
+        task["progress"] = total
+        task["results"] = results
+        task["completed_at"] = datetime.utcnow().isoformat() + "Z"
+        task["message"] = f"Scanned {len([r for r in results if r.get('status') == 'success'])} of {total} variants"
+
+    except Exception as e:
+        task["status"] = "failed"
+        task["error"] = str(e)
+        task["completed_at"] = datetime.utcnow().isoformat() + "Z"
 
 # CORS - read allowed origins from environment
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
@@ -271,21 +453,109 @@ async def execute_price_updates(req: ExecuteUpdatesRequest):
 @app.post("/pricing/check-competitor-prices")
 async def check_competitor_prices(req: CompetitorPriceCheckRequest):
     """
-    Check competitor prices via SerpAPI
+    Check competitor prices via SerpAPI (synchronous - for small batches only)
+    For large batches, use /pricing/start-competitor-scan instead
     """
-    try:
-        from pricing_execution import check_competitor_prices as check_prices
-        result = check_prices(req.variant_ids)
-        return {
-            "success": True,
-            "scanned_count": result["scanned_count"],
-            "results": result["results"],
-            "message": result["message"]
-        }
-    except ImportError as e:
-        raise HTTPException(status_code=500, detail=f"Could not import pricing_execution module: {e}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to check competitor prices: {str(e)}")
+    # For small batches (<=5), run synchronously
+    if len(req.variant_ids) <= 5:
+        try:
+            from pricing_execution import check_competitor_prices as check_prices
+            result = check_prices(req.variant_ids)
+            return {
+                "success": True,
+                "scanned_count": result["scanned_count"],
+                "results": result["results"],
+                "message": result["message"]
+            }
+        except ImportError as e:
+            raise HTTPException(status_code=500, detail=f"Could not import pricing_execution module: {e}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to check competitor prices: {str(e)}")
+
+    # For larger batches, redirect to background task
+    task_id = str(uuid.uuid4())
+    _BACKGROUND_TASKS[task_id] = {
+        "task_id": task_id,
+        "type": "competitor_scan",
+        "status": "pending",
+        "total": len(req.variant_ids),
+        "progress": 0,
+        "current_item": "",
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "results": [],
+        "message": ""
+    }
+
+    # Start background thread
+    thread = threading.Thread(target=_run_competitor_scan_background, args=(task_id, req.variant_ids))
+    thread.daemon = True
+    thread.start()
+
+    return {
+        "success": True,
+        "background": True,
+        "task_id": task_id,
+        "message": f"Started background scan for {len(req.variant_ids)} variants. Poll /pricing/scan-status/{task_id} for progress."
+    }
+
+
+@app.post("/pricing/start-competitor-scan")
+async def start_competitor_scan(req: CompetitorPriceCheckRequest):
+    """
+    Start a background competitor price scan (non-blocking)
+    Returns task_id to poll for progress
+    """
+    if not req.variant_ids:
+        raise HTTPException(status_code=400, detail="No variant IDs provided")
+
+    task_id = str(uuid.uuid4())
+    _BACKGROUND_TASKS[task_id] = {
+        "task_id": task_id,
+        "type": "competitor_scan",
+        "status": "pending",
+        "total": len(req.variant_ids),
+        "progress": 0,
+        "current_item": "",
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "results": [],
+        "message": ""
+    }
+
+    # Start background thread
+    thread = threading.Thread(target=_run_competitor_scan_background, args=(task_id, req.variant_ids))
+    thread.daemon = True
+    thread.start()
+
+    return {
+        "success": True,
+        "task_id": task_id,
+        "total": len(req.variant_ids),
+        "message": f"Started background scan for {len(req.variant_ids)} variants"
+    }
+
+
+@app.get("/pricing/scan-status/{task_id}")
+async def get_scan_status(task_id: str):
+    """
+    Get status of a background competitor scan
+    """
+    if task_id not in _BACKGROUND_TASKS:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task = _BACKGROUND_TASKS[task_id]
+    return {
+        "task_id": task_id,
+        "status": task["status"],
+        "total": task["total"],
+        "progress": task["progress"],
+        "current_item": task.get("current_item", ""),
+        "results": task.get("results", []) if task["status"] == "completed" else [],
+        "message": task.get("message", ""),
+        "error": task.get("error"),
+        "created_at": task.get("created_at"),
+        "started_at": task.get("started_at"),
+        "completed_at": task.get("completed_at")
+    }
 
 
 @app.get("/pricing/korealy-reconciliation")

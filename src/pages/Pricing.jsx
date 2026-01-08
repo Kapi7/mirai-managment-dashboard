@@ -56,6 +56,7 @@ export default function Pricing() {
   const [scanHistory, setScanHistory] = useState([]);
   const [scanHistorySortColumn, setScanHistorySortColumn] = useState('timestamp');
   const [scanHistorySortDirection, setScanHistorySortDirection] = useState('desc');
+  const [backgroundScan, setBackgroundScan] = useState(null); // { taskId, status, progress, total, currentItem }
 
   // Product Management tab state
   const [productManagementActions, setProductManagementActions] = useState([]);
@@ -1818,12 +1819,9 @@ export default function Pricing() {
                               return;
                             }
 
-                            if (!confirm(`Scan competitor prices for ${ids.length} variant IDs?\n\n⏱️ This will take approximately ${Math.ceil(ids.length * 0.6 / 60)} minutes (SerpAPI rate limit: 1 request per 0.6s)\n\n🧠 Smart filtering will be applied:\n- Trusted sellers only\n- Outlier removal\n- Low/Avg/High pricing`)) {
+                            if (!confirm(`Scan competitor prices for ${ids.length} variant IDs?\n\n⏱️ Estimated time: ~${Math.ceil(ids.length * 0.8 / 60)} minutes\n\n${ids.length > 5 ? '📊 Large batch: Will run in background with live progress updates!' : '⚡ Small batch: Running synchronously'}\n\n🧠 Smart filtering will be applied:\n- Trusted sellers only\n- Outlier removal\n- Low/Avg/High pricing`)) {
                               return;
                             }
-
-                            setLoading(true);
-                            setLoadingMessage(`Scanning ${ids.length} variant IDs... (${Math.ceil(ids.length * 0.6 / 60)} min)`);
 
                             try {
                               const response = await fetch(`${API_URL}/pricing/check-competitor-prices`, {
@@ -1839,26 +1837,66 @@ export default function Pricing() {
 
                               const result = await response.json();
 
-                              if (result.success) {
-                                alert(`✅ Scan Complete!\n\nScanned: ${result.scanned_count} variants\n\n${result.message}\n\nResults have been merged into Target Prices tab with competitor data (comp_low, comp_avg, comp_high).`);
+                              // Check if this is a background task
+                              if (result.background && result.task_id) {
+                                // Start polling for progress
+                                setBackgroundScan({
+                                  taskId: result.task_id,
+                                  status: 'running',
+                                  progress: 0,
+                                  total: ids.length,
+                                  currentItem: 'Starting...'
+                                });
 
-                                // Refresh target prices to show updated competitor data
+                                // Poll for status
+                                const pollInterval = setInterval(async () => {
+                                  try {
+                                    const statusResponse = await fetch(`${API_URL}/pricing/scan-status/${result.task_id}`);
+                                    const status = await statusResponse.json();
+
+                                    setBackgroundScan({
+                                      taskId: result.task_id,
+                                      status: status.status,
+                                      progress: status.progress,
+                                      total: status.total,
+                                      currentItem: status.current_item || ''
+                                    });
+
+                                    if (status.status === 'completed' || status.status === 'failed') {
+                                      clearInterval(pollInterval);
+
+                                      if (status.status === 'completed') {
+                                        alert(`✅ Scan Complete!\n\n${status.message}\n\nResults have been merged into Target Prices tab.`);
+                                        fetchTargetPrices();
+                                        fetchScanHistory();
+                                      } else {
+                                        alert(`❌ Scan failed: ${status.error || 'Unknown error'}`);
+                                      }
+
+                                      // Clear background scan state after a delay
+                                      setTimeout(() => setBackgroundScan(null), 3000);
+                                    }
+                                  } catch (pollErr) {
+                                    console.error('Poll error:', pollErr);
+                                  }
+                                }, 2000); // Poll every 2 seconds
+
+                              } else if (result.success) {
+                                // Synchronous result (small batch)
+                                alert(`✅ Scan Complete!\n\nScanned: ${result.scanned_count} variants\n\n${result.message}\n\nResults have been merged into Target Prices tab.`);
                                 fetchTargetPrices();
-                                setActiveTab('target-prices');
+                                fetchScanHistory();
                               } else {
                                 alert(`❌ Scan failed: ${result.message || 'Unknown error'}`);
                               }
                             } catch (err) {
                               console.error('Competitor price scan error:', err);
                               alert(`❌ Failed to scan prices: ${err.message}`);
-                            } finally {
-                              setLoading(false);
-                              setLoadingMessage('');
                             }
                           }}
-                          disabled={loading}
+                          disabled={loading || backgroundScan?.status === 'running'}
                         >
-                          🚀 Scan Prices
+                          {backgroundScan?.status === 'running' ? '⏳ Scanning...' : '🚀 Scan Prices'}
                         </Button>
                         <Button
                           variant="outline"
@@ -1873,6 +1911,34 @@ export default function Pricing() {
                         </Button>
                       </div>
                     </div>
+
+                    {/* Background Scan Progress */}
+                    {backgroundScan && (
+                      <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm font-semibold text-yellow-800">
+                            {backgroundScan.status === 'running' ? '⏳ Scanning in background...' :
+                             backgroundScan.status === 'completed' ? '✅ Scan complete!' :
+                             backgroundScan.status === 'failed' ? '❌ Scan failed' : '⏳ Starting...'}
+                          </span>
+                          <span className="text-sm text-yellow-700">
+                            {backgroundScan.progress} / {backgroundScan.total}
+                          </span>
+                        </div>
+                        <div className="w-full bg-yellow-200 rounded-full h-2.5 mb-2">
+                          <div
+                            className="bg-yellow-500 h-2.5 rounded-full transition-all duration-300"
+                            style={{ width: `${backgroundScan.total > 0 ? (backgroundScan.progress / backgroundScan.total) * 100 : 0}%` }}
+                          ></div>
+                        </div>
+                        {backgroundScan.currentItem && (
+                          <p className="text-xs text-yellow-700 truncate">
+                            Current: {backgroundScan.currentItem}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
                     <div className="mt-3 text-xs text-blue-700 bg-blue-100 p-2 rounded">
                       <p className="font-semibold mb-1">🧠 Smart Analysis Features:</p>
                       <ul className="list-disc list-inside ml-2 space-y-1">
