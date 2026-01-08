@@ -230,7 +230,7 @@ export default function Pricing() {
       const overpriced = withCompetitors.filter(p => {
         const current = p[`current_${countryKey}`];
         const compAvg = p[`comp_avg_${countryKey}`];
-        return current > compAvg * 1.15;
+        return current > compAvg * 1.35; // 35% above competitor average
       });
 
       const underpriced = withCompetitors.filter(p => {
@@ -499,19 +499,26 @@ export default function Pricing() {
                           // Add selected items to price updates
                           const selectedItemsData = items.filter(item => selectedItems.has(item.variant_id));
                           console.log('Selected items data:', selectedItemsData);
-                          const newUpdates = selectedItemsData.map(item => ({
-                            variant_id: item.variant_id,
-                            item: item.item,
-                            current_price: item.retail_base,
-                            current_compare_at: item.compare_at_base,
-                            new_price: item.retail_base,
-                            new_compare_at: null,
-                            compare_at_policy: 'D',
-                            new_cogs: null,
-                            notes: ''
-                          }));
+                          const newUpdates = selectedItemsData.map(item => {
+                            // Try to find suggested price and breakeven from target prices
+                            const targetPrice = targetPrices.find(p => p.variant_id === item.variant_id);
+                            return {
+                              variant_id: item.variant_id,
+                              item: item.item,
+                              current_price: item.retail_base,
+                              current_compare_at: item.compare_at_base,
+                              new_price: item.retail_base,
+                              new_compare_at: null,
+                              compare_at_policy: 'D',
+                              new_cogs: null,
+                              notes: '',
+                              suggested_price: targetPrice ? targetPrice[`final_suggested_${selectedCountry}`] : null,
+                              breakeven_price: targetPrice ? targetPrice[`breakeven_${selectedCountry}`] : null
+                            };
+                          });
                           console.log('New updates:', newUpdates);
                           setPriceUpdates([...priceUpdates, ...newUpdates]);
+                          setPriceUpdatesLoadedFromBackend(true); // Mark as loaded to prevent fetch overwrite
                           setSelectedItems(new Set()); // Clear selection
                           setActiveTab('price-updates'); // Switch to Price Updates tab
                         }}
@@ -742,7 +749,9 @@ export default function Pricing() {
                           new_compare_at: null,
                           compare_at_policy: 'D',
                           new_cogs: null,
-                          notes: ''
+                          notes: '',
+                          suggested_price: null,
+                          breakeven_price: null
                         }]);
                       }}
                     >
@@ -754,6 +763,62 @@ export default function Pricing() {
                       onClick={() => setShowPasteDialog(!showPasteDialog)}
                     >
                       📋 Paste Data
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={priceUpdates.length === 0}
+                      onClick={() => {
+                        // Apply suggested prices to all items that have them
+                        const newUpdates = priceUpdates.map(update => {
+                          if (update.suggested_price && update.suggested_price > 0) {
+                            return { ...update, new_price: update.suggested_price };
+                          }
+                          return update;
+                        });
+                        setPriceUpdates(newUpdates);
+                      }}
+                      title="Set all prices to suggested prices"
+                    >
+                      📊 Apply Suggested
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={priceUpdates.length === 0}
+                      onClick={() => {
+                        // Apply breakeven prices to all items that have them
+                        const newUpdates = priceUpdates.map(update => {
+                          if (update.breakeven_price && update.breakeven_price > 0) {
+                            return { ...update, new_price: update.breakeven_price };
+                          }
+                          return update;
+                        });
+                        setPriceUpdates(newUpdates);
+                      }}
+                      title="Set all prices to breakeven prices"
+                    >
+                      ⚖️ Apply Breakeven
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={priceUpdates.length === 0}
+                      onClick={() => {
+                        // Apply mid-point between breakeven and suggested
+                        const newUpdates = priceUpdates.map(update => {
+                          if (update.breakeven_price && update.suggested_price &&
+                              update.breakeven_price > 0 && update.suggested_price > 0) {
+                            const midPrice = (update.breakeven_price + update.suggested_price) / 2;
+                            return { ...update, new_price: parseFloat(midPrice.toFixed(2)) };
+                          }
+                          return update;
+                        });
+                        setPriceUpdates(newUpdates);
+                      }}
+                      title="Set all prices to mid-point between breakeven and suggested"
+                    >
+                      🎯 Apply Mid-Point
                     </Button>
                     <Button
                       variant="default"
@@ -775,7 +840,7 @@ export default function Pricing() {
                     <li>Select items from Items or Target Prices tabs, then click "Add to Price Updates"</li>
                     <li>Click "+ Add Row" to manually add items</li>
                     <li>Edit prices inline - Use policy to control compare_at pricing</li>
-                    <li><strong>Policy A:</strong> No compare at, <strong>Policy B:</strong> GMC-compliant (compare_at = price), <strong>Manual:</strong> Set compare_at manually</li>
+                    <li><strong>Policy B:</strong> GMC-compliant (compare_at = price), <strong>Policy D:</strong> Keep discount %, <strong>Manual:</strong> Set compare_at manually</li>
                     <li>Paste data from Excel/Sheets (variant_id, new_price format)</li>
                     <li>Click "Execute Updates" when ready to push base price changes to Shopify</li>
                   </ul>
@@ -862,12 +927,13 @@ export default function Pricing() {
                         <TableHead className="w-[40px] text-center"></TableHead>
                         <TableHead className="text-center">Variant ID</TableHead>
                         <TableHead className="text-center">Item</TableHead>
-                        <TableHead className="text-center">Current Price</TableHead>
-                        <TableHead className="text-center">Current Compare At</TableHead>
+                        <TableHead className="text-center">Current</TableHead>
+                        <TableHead className="text-center">Breakeven</TableHead>
+                        <TableHead className="text-center">Suggested</TableHead>
                         <TableHead className="text-center">New Price</TableHead>
-                        <TableHead className="text-center">New Compare At</TableHead>
-                        <TableHead className="text-center">Compare At Policy</TableHead>
-                        <TableHead className="text-center">New COGS</TableHead>
+                        <TableHead className="text-center">Smart Update</TableHead>
+                        <TableHead className="text-center">Compare At</TableHead>
+                        <TableHead className="text-center">Policy</TableHead>
                         <TableHead className="text-center">Change %</TableHead>
                         <TableHead className="text-center">Notes</TableHead>
                       </TableRow>
@@ -902,13 +968,20 @@ export default function Pricing() {
 
                                   // Auto-lookup item details when variant ID is entered
                                   if (enteredId.trim()) {
-                                    const itemData = items.find(i => i.variant_id === enteredId) ||
-                                                   targetPrices.find(p => p.variant_id === enteredId);
+                                    const itemData = items.find(i => i.variant_id === enteredId);
+                                    const targetPrice = targetPrices.find(p => p.variant_id === enteredId);
 
-                                    if (itemData) {
-                                      newUpdates[idx].item = itemData.item;
-                                      newUpdates[idx].current_price = itemData.retail_base || itemData[`current_US`] || 0;
-                                      newUpdates[idx].current_compare_at = itemData.compare_at_base || 0;
+                                    if (itemData || targetPrice) {
+                                      newUpdates[idx].item = (itemData?.item || targetPrice?.item || '');
+                                      newUpdates[idx].current_price = itemData?.retail_base || targetPrice?.[`current_${selectedCountry}`] || 0;
+                                      newUpdates[idx].current_compare_at = itemData?.compare_at_base || 0;
+
+                                      // Add suggested and breakeven from target prices
+                                      if (targetPrice) {
+                                        newUpdates[idx].suggested_price = targetPrice[`final_suggested_${selectedCountry}`] || null;
+                                        newUpdates[idx].breakeven_price = targetPrice[`breakeven_${selectedCountry}`] || null;
+                                      }
+
                                       // Set new_price to current if not already set
                                       if (newUpdates[idx].new_price === 0) {
                                         newUpdates[idx].new_price = newUpdates[idx].current_price;
@@ -923,7 +996,12 @@ export default function Pricing() {
                             </TableCell>
                             <TableCell className="font-medium text-sm max-w-[200px] truncate text-center">{update.item || '-'}</TableCell>
                             <TableCell className="text-center text-sm">{formatCurrency(update.current_price)}</TableCell>
-                            <TableCell className="text-center text-sm">{formatCurrency(update.current_compare_at || 0)}</TableCell>
+                            <TableCell className="text-center text-sm text-orange-600 font-semibold">
+                              {update.breakeven_price ? formatCurrency(update.breakeven_price) : '-'}
+                            </TableCell>
+                            <TableCell className="text-center text-sm text-blue-600 font-semibold">
+                              {update.suggested_price ? formatCurrency(update.suggested_price) : '-'}
+                            </TableCell>
                             <TableCell className="text-center">
                               <div className="flex justify-center">
                                 <Input
@@ -937,6 +1015,56 @@ export default function Pricing() {
                                     setPriceUpdates(newUpdates);
                                   }}
                                 />
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-center">
+                              <div className="flex gap-1 justify-center">
+                                {update.suggested_price && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 px-2 text-xs"
+                                    onClick={() => {
+                                      const newUpdates = [...priceUpdates];
+                                      newUpdates[idx].new_price = update.suggested_price;
+                                      setPriceUpdates(newUpdates);
+                                    }}
+                                    title="Use suggested price"
+                                  >
+                                    📊
+                                  </Button>
+                                )}
+                                {update.breakeven_price && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 px-2 text-xs"
+                                    onClick={() => {
+                                      const newUpdates = [...priceUpdates];
+                                      newUpdates[idx].new_price = update.breakeven_price;
+                                      setPriceUpdates(newUpdates);
+                                    }}
+                                    title="Use breakeven price"
+                                  >
+                                    ⚖️
+                                  </Button>
+                                )}
+                                {update.breakeven_price && update.suggested_price && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 px-2 text-xs"
+                                    onClick={() => {
+                                      const newUpdates = [...priceUpdates];
+                                      const midPrice = (update.breakeven_price + update.suggested_price) / 2;
+                                      newUpdates[idx].new_price = parseFloat(midPrice.toFixed(2));
+                                      setPriceUpdates(newUpdates);
+                                    }}
+                                    title="Use mid-point"
+                                  >
+                                    🎯
+                                  </Button>
+                                )}
                               </div>
                             </TableCell>
                             <TableCell className="text-center">
@@ -974,31 +1102,15 @@ export default function Pricing() {
                                     setPriceUpdates(newUpdates);
                                   }}
                                 >
-                                  <SelectTrigger className="h-8 w-[90px]">
+                                  <SelectTrigger className="h-8 w-[110px]">
                                     <SelectValue />
                                   </SelectTrigger>
                                   <SelectContent>
-                                    <SelectItem value="A">A</SelectItem>
-                                    <SelectItem value="B">B</SelectItem>
+                                    <SelectItem value="B">B (GMC)</SelectItem>
+                                    <SelectItem value="D">D (Keep Discount)</SelectItem>
                                     <SelectItem value="Manual">Manual</SelectItem>
                                   </SelectContent>
                                 </Select>
-                              </div>
-                            </TableCell>
-                            <TableCell className="text-center">
-                              <div className="flex justify-center">
-                                <Input
-                                  type="number"
-                                  step="0.01"
-                                  className="text-center h-8 w-[100px]"
-                                  value={update.new_cogs ?? ''}
-                                  onChange={(e) => {
-                                    const newUpdates = [...priceUpdates];
-                                    newUpdates[idx].new_cogs = e.target.value ? parseFloat(e.target.value) : null;
-                                    setPriceUpdates(newUpdates);
-                                  }}
-                                  placeholder="Optional"
-                                />
                               </div>
                             </TableCell>
                             <TableCell className="text-center">
@@ -1168,10 +1280,13 @@ export default function Pricing() {
                             new_compare_at: null,
                             compare_at_policy: 'D',
                             new_cogs: null,
-                            notes: `Priority: ${price[`priority_${countryKey}`]}, Loss: ${formatCurrency(price[`loss_amount_${countryKey}`])}`
+                            notes: `Priority: ${price[`priority_${countryKey}`]}, Loss: ${formatCurrency(price[`loss_amount_${countryKey}`])}`,
+                            suggested_price: price[`final_suggested_${countryKey}`],
+                            breakeven_price: price[`breakeven_${countryKey}`]
                           }));
                           console.log('New updates:', newUpdates);
                           setPriceUpdates([...priceUpdates, ...newUpdates]);
+                          setPriceUpdatesLoadedFromBackend(true); // Mark as loaded to prevent fetch overwrite
                           setSelectedTargetPrices(new Set()); // Clear selection
                           setActiveTab('price-updates'); // Switch to Price Updates tab
                         }}
@@ -1527,7 +1642,7 @@ export default function Pricing() {
                     <Card>
                       <CardContent className="pt-6">
                         <div className="text-2xl font-bold text-red-600">{competitorAnalysis.overpriced.length}</div>
-                        <p className="text-xs text-slate-500 mt-1">Overpriced (&gt;15%)</p>
+                        <p className="text-xs text-slate-500 mt-1">Overpriced (&gt;35%)</p>
                       </CardContent>
                     </Card>
                     <Card>
@@ -1542,7 +1657,7 @@ export default function Pricing() {
                   {competitorAnalysis.overpriced.length > 0 && (
                     <div>
                       <h3 className="text-lg font-semibold mb-3 text-red-700">🚨 Overpriced Products ({competitorAnalysis.overpriced.length})</h3>
-                      <p className="text-sm text-slate-600 mb-4">Your prices are &gt;15% higher than competitor average - you may be losing sales</p>
+                      <p className="text-sm text-slate-600 mb-4">Your prices are &gt;35% higher than competitor average - you may be losing sales</p>
                       <div className="overflow-x-auto">
                         <Table>
                           <TableHeader>
