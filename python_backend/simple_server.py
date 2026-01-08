@@ -217,6 +217,11 @@ async def execute_price_updates(req: ExecuteUpdatesRequest):
         print(f"📝 Executing {len(req.updates)} price updates...")
         result = execute_updates(req.updates)
 
+        # Invalidate cache after updates
+        if result["updated_count"] > 0:
+            from pricing_logic import invalidate_cache
+            invalidate_cache()
+
         # Log the result
         print(f"✅ Price updates complete: {result['updated_count']} updated, {result['failed_count']} failed")
         if result.get("details"):
@@ -281,6 +286,24 @@ async def get_korealy_reconciliation():
         raise HTTPException(status_code=500, detail=f"Could not import korealy_reconciliation module: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to run Korealy reconciliation: {str(e)}")
+
+
+@app.post("/pricing/refresh-cache")
+async def refresh_cache():
+    """
+    Invalidate all caches to force fresh data fetch
+    Call this after price updates, competitor scans, etc.
+    """
+    try:
+        from pricing_logic import invalidate_cache
+        result = invalidate_cache()
+        return {
+            "success": True,
+            "message": f"Cleared {result['cleared']} cache entries",
+            "cleared": result["cleared"]
+        }
+    except Exception as e:
+        return {"success": False, "message": str(e)}
 
 
 @app.post("/pricing/korealy-sync")

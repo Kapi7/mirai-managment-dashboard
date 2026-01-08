@@ -154,6 +154,20 @@ def execute_updates(updates: List[Any]) -> Dict[str, Any]:
                 error_msg = "; ".join([e["message"] for e in user_errors])
                 raise RuntimeError(error_msg)
 
+            # Log the successful update
+            from pricing_logic import log_price_update
+            old_price = float(update.current_price) if update.current_price else 0.0
+            log_price_update(
+                variant_id=variant_id,
+                item=item_name,
+                old_price=old_price,
+                new_price=new_price,
+                old_compare_at=0.0,  # Could fetch this if needed
+                new_compare_at=new_compare_at or 0.0,
+                status="success",
+                notes=update.notes if hasattr(update, 'notes') else ""
+            )
+
             # Update COGS if provided
             if update.new_cogs is not None and update.new_cogs > 0:
                 # Get inventory item ID
@@ -418,20 +432,66 @@ def check_competitor_prices(variant_ids: List[str]) -> Dict[str, Any]:
             response.raise_for_status()
             serp_data = response.json()
 
-            # Extract prices
+            # Extract prices with seller details
             competitor_prices = []
+            seller_counts = {}
 
             for item in serp_data.get("shopping_results", []):
                 price_str = item.get("extracted_price")
+                seller = item.get("source", "Unknown")
                 if price_str:
                     competitor_prices.append({
                         "price": float(price_str),
-                        "seller": item.get("source", ""),
+                        "seller": seller,
+                        "title": item.get("title", ""),
+                        "link": item.get("link", ""),
                         "domain": item.get("link", "").split("/")[2] if item.get("link") else ""
                     })
+                    # Count sellers
+                    seller_counts[seller] = seller_counts.get(seller, 0) + 1
 
             # Apply smart filtering
             analysis = analyze_competitor_prices(competitor_prices)
+
+            # Get top sellers
+            top_sellers = sorted(seller_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+
+            # Get current price from Shopify
+            price_query = """
+            query($id: ID!) {
+                productVariant(id: $id) {
+                    price
+                    compareAtPrice
+                    inventoryItem {
+                        unitCost {
+                            amount
+                        }
+                    }
+                }
+            }
+            """
+            price_result = _shopify_graphql(price_query, {"id": variant_gid})
+            variant_data = price_result["data"]["productVariant"]
+            current_price = float(variant_data["price"]) if variant_data["price"] else 0.0
+            compare_at = float(variant_data["compareAtPrice"]) if variant_data["compareAtPrice"] else 0.0
+            cogs = 0.0
+            if variant_data.get("inventoryItem") and variant_data["inventoryItem"].get("unitCost"):
+                cogs = float(variant_data["inventoryItem"]["unitCost"]["amount"])
+
+            # Calculate competitive price (3% below avg, min 25% margin)
+            competitive_price = 0.0
+            comp_note = "N/A"
+            if analysis["comp_avg"] and analysis["comp_avg"] > 0:
+                min_margin = 0.25
+                min_price = cogs * (1 + min_margin) if cogs > 0 else 0
+                target_competitive = analysis["comp_avg"] * 0.97
+
+                if target_competitive >= min_price:
+                    competitive_price = round(target_competitive, 2)
+                    comp_note = "3% below avg"
+                elif min_price > 0:
+                    competitive_price = round(min_price, 2)
+                    comp_note = "Floor (25% margin)"
 
             # Store competitor data for use in target prices
             update_competitor_data(variant_id, {
@@ -441,17 +501,27 @@ def check_competitor_prices(variant_ids: List[str]) -> Dict[str, Any]:
                 "raw_count": analysis["raw_count"],
                 "trusted_count": analysis["trusted_count"],
                 "filtered_count": analysis["filtered_count"],
+                "competitive_price": competitive_price,
+                "top_sellers": top_sellers,
             })
 
             results.append({
                 "variant_id": variant_id,
                 "product_name": f"{product_title} - {variant_title}",
+                "sku": sku,
+                "current_price": current_price,
+                "compare_at_price": compare_at,
+                "cogs": cogs,
                 "raw_count": analysis["raw_count"],
                 "trusted_count": analysis["trusted_count"],
                 "filtered_count": analysis["filtered_count"],
                 "comp_low": analysis["comp_low"],
                 "comp_avg": analysis["comp_avg"],
-                "comp_high": analysis["comp_high"]
+                "comp_high": analysis["comp_high"],
+                "competitive_price": competitive_price,
+                "comp_note": comp_note,
+                "top_sellers": [{"seller": s, "count": c} for s, c in top_sellers],
+                "price_diff_pct": round(((current_price - analysis["comp_avg"]) / analysis["comp_avg"] * 100), 1) if analysis["comp_avg"] else 0
             })
 
             scanned_count += 1

@@ -370,23 +370,52 @@ def build_name_maps(shopify_variants: Dict[str, Dict]) -> Tuple[Dict[str, str], 
 def map_korealy_to_shopify(
     korealy_title: str,
     exact_map: Dict[str, str],
-    loose_map: Dict[str, str]
+    loose_map: Dict[str, str],
+    shop_pid: Optional[str] = None,
+    shopify_variants: Optional[Dict[str, Dict]] = None
 ) -> Optional[str]:
     """
     Map Korealy title to Shopify variant GID
 
+    Args:
+        korealy_title: Product title from Korealy
+        exact_map: Exact name -> GID mapping
+        loose_map: Loose name -> GID mapping
+        shop_pid: Shopify variant ID from Korealy (direct match)
+        shopify_variants: Dict of all Shopify variants for fallback matching
+
     Returns:
         variant_gid or None if no match
     """
+    # 1. Try direct match via shop_pid (most reliable)
+    if shop_pid:
+        gid = f"gid://shopify/ProductVariant/{shop_pid}"
+        if shopify_variants and gid in shopify_variants:
+            return gid
+
     normalized = normalize_name(korealy_title)
 
-    # Try exact match first
+    # 2. Try exact match
     if normalized in exact_map:
         return exact_map[normalized]
 
-    # Try loose match
+    # 3. Try loose match (without "default title")
     if normalized in loose_map:
         return loose_map[normalized]
+
+    # 4. Try partial matching - remove common suffixes and try again
+    # Remove size info like "(100ml)", "[50g]", etc.
+    partial = re.sub(r'\s*[\(\[][^)]*[\)\]]\s*', ' ', normalized)
+    partial = re.sub(r'\s+', ' ', partial).strip()
+    if partial and partial in loose_map:
+        return loose_map[partial]
+
+    # 5. Try matching without brand prefix (first word)
+    words = normalized.split()
+    if len(words) > 2:
+        without_brand = ' '.join(words[1:])
+        if without_brand in loose_map:
+            return loose_map[without_brand]
 
     return None
 
@@ -404,14 +433,20 @@ def reconcile(
         List of reconciliation records with status, delta, pct_diff
     """
     results = []
+    match_methods = {"pid": 0, "exact": 0, "loose": 0, "partial": 0, "none": 0}
 
     for record in korealy_records:
         k_title = record.get("title", "")
+        shop_pid = record.get("shop_pid")
         k_cogs = record.get("cogs")
         k_currency = record.get("currency", "USD")
 
-        # Try to map to Shopify
-        variant_gid = map_korealy_to_shopify(k_title, exact_map, loose_map)
+        # Try to map to Shopify using multiple strategies
+        variant_gid = map_korealy_to_shopify(
+            k_title, exact_map, loose_map,
+            shop_pid=shop_pid,
+            shopify_variants=shopify_variants
+        )
 
         if not variant_gid:
             results.append({

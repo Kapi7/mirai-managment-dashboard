@@ -24,6 +24,9 @@ _CACHE_TTL = 300  # seconds
 # Persistent competitor data storage (survives cache clears)
 _COMPETITOR_DATA = {}  # variant_id -> {comp_low, comp_avg, comp_high, ...}
 
+# In-memory update log (fallback when Google Sheets not configured)
+_UPDATE_LOG = []  # List of update records
+
 def _get_cache(key: str):
     """Get cached value if not expired"""
     if key in _CACHE:
@@ -376,13 +379,108 @@ def fetch_update_log(limit: Optional[int] = None) -> List[Dict[str, Any]]:
         return result
 
     except ImportError:
-        print("⚠️ gspread not installed. Install with: pip install gspread google-auth")
-        return []
+        print("⚠️ gspread not installed, using in-memory log")
+        return _get_inmemory_update_log(limit)
     except Exception as e:
-        print(f"❌ Error fetching update log from Google Sheets: {e}")
-        import traceback
-        traceback.print_exc()
-        return []
+        print(f"⚠️ Google Sheets error, using in-memory log: {e}")
+        return _get_inmemory_update_log(limit)
+
+
+def _get_inmemory_update_log(limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Get update log from in-memory storage"""
+    result = sorted(_UPDATE_LOG, key=lambda x: x.get("timestamp", ""), reverse=True)
+    if limit and limit > 0:
+        result = result[:limit]
+    return result
+
+
+def log_price_update(
+    variant_id: str,
+    item: str,
+    old_price: float,
+    new_price: float,
+    old_compare_at: float = 0.0,
+    new_compare_at: float = 0.0,
+    status: str = "success",
+    notes: str = ""
+) -> None:
+    """
+    Log a price update to the update log
+
+    Args:
+        variant_id: The variant ID
+        item: Product name
+        old_price: Previous price
+        new_price: New price
+        old_compare_at: Previous compare at price
+        new_compare_at: New compare at price
+        status: Update status (success/failed)
+        notes: Optional notes
+    """
+    timestamp = datetime.utcnow().isoformat() + "Z"
+
+    # Calculate change percentage
+    change_pct = 0.0
+    if old_price > 0:
+        change_pct = round(((new_price - old_price) / old_price) * 100, 2)
+
+    record = {
+        "timestamp": timestamp,
+        "variant_id": str(variant_id),
+        "item": item,
+        "currency": "USD",
+        "old_price": old_price,
+        "new_price": new_price,
+        "old_compare_at": old_compare_at,
+        "new_compare_at": new_compare_at,
+        "change_pct": change_pct,
+        "status": status,
+        "notes": notes
+    }
+
+    # Add to in-memory log
+    _UPDATE_LOG.append(record)
+
+    # Keep only last 1000 records in memory
+    if len(_UPDATE_LOG) > 1000:
+        _UPDATE_LOG.pop(0)
+
+    print(f"📝 Logged update: {variant_id} ${old_price} -> ${new_price} ({status})")
+
+
+def clear_update_log() -> None:
+    """Clear the in-memory update log"""
+    _UPDATE_LOG.clear()
+
+
+def invalidate_cache(keys: Optional[List[str]] = None) -> Dict[str, Any]:
+    """
+    Invalidate cache entries to force fresh data fetch
+
+    Args:
+        keys: Optional list of specific keys to clear.
+              If None, clears all cache.
+
+    Returns:
+        Dict with cleared key count
+    """
+    global _CACHE
+
+    if keys is None:
+        # Clear all cache
+        count = len(_CACHE)
+        _CACHE.clear()
+        print(f"🔄 Cleared all {count} cache entries")
+        return {"cleared": count, "keys": "all"}
+    else:
+        # Clear specific keys
+        cleared = []
+        for key in keys:
+            if key in _CACHE:
+                del _CACHE[key]
+                cleared.append(key)
+        print(f"🔄 Cleared {len(cleared)} cache entries: {cleared}")
+        return {"cleared": len(cleared), "keys": cleared}
 
 
 # ================== TARGET PRICES TAB ==================
