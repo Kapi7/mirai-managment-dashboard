@@ -6,7 +6,11 @@ services:
     buildCommand: |
       npm install
       npm run build
-      cd python_backend && pip install -r requirements.txt
+      cd python_backend
+      python3 -m pip install --upgrade pip
+      pip install --no-cache-dir -r requirements.txt
+      echo "✅ Installed Python packages:"
+      pip list | grep -E "gspread|facebook-business|fastapi|uvicorn"
     startCommand: bash start.sh
     envVars:
       - key: NODE_VERSION
