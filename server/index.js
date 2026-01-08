@@ -24,18 +24,21 @@ app.post('/reports-api/daily-report', async (req, res) => {
     const { start_date, end_date } = req.body;
     console.log(`📊 Fetching report: ${start_date} to ${end_date}`);
 
-    // Proxy to Python backend
+    // Proxy to Python backend with 2 minute timeout (reports can be slow)
     const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
     const response = await fetch(`${pythonBackendUrl}/daily-report`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ start_date, end_date })
+      body: JSON.stringify({ start_date, end_date }),
+      signal: AbortSignal.timeout(120000) // 2 minute timeout
     });
 
     if (!response.ok) {
-      throw new Error(`Python backend error: ${response.status}`);
+      const errorText = await response.text();
+      console.error(`❌ Python backend error (${response.status}):`, errorText);
+      throw new Error(`Python backend error: ${response.status} - ${errorText}`);
     }
 
     const result = await response.json();
@@ -43,6 +46,21 @@ app.post('/reports-api/daily-report', async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('❌ Report API error:', error);
+
+    // Better error messages
+    if (error.cause?.code === 'ECONNREFUSED') {
+      return res.status(503).json({
+        error: 'Python backend unavailable. Please wait a moment and try again.',
+        data: []
+      });
+    }
+    if (error.name === 'TimeoutError') {
+      return res.status(504).json({
+        error: 'Report generation timed out. Try a shorter date range.',
+        data: []
+      });
+    }
+
     res.status(500).json({ error: error.message, data: [] });
   }
 });
@@ -56,8 +74,12 @@ app.get('/reports-api/pricing/*', async (req, res) => {
 
     console.log(`📊 Proxying GET pricing request: ${path}`);
 
+    // Use longer timeout for slow endpoints (korealy, items)
+    const isSlowEndpoint = path.includes('korealy') || path.includes('items') || path.includes('target-prices');
+    const timeoutMs = isSlowEndpoint ? 120000 : 30000; // 2 min for slow, 30s for others
+
     const response = await fetch(url, {
-      signal: AbortSignal.timeout(30000) // 30 second timeout
+      signal: AbortSignal.timeout(timeoutMs)
     });
 
     if (!response.ok) {
@@ -100,13 +122,17 @@ app.post('/reports-api/pricing/*', async (req, res) => {
     console.log(`📊 Proxying POST pricing request: ${path}`);
     console.log(`📦 Request body:`, JSON.stringify(req.body));
 
+    // Use longer timeout for competitor scans and sync operations
+    const isSlowEndpoint = path.includes('competitor') || path.includes('sync') || path.includes('execute');
+    const timeoutMs = isSlowEndpoint ? 180000 : 60000; // 3 min for slow, 1 min for others
+
     const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
       body: JSON.stringify(req.body),
-      signal: AbortSignal.timeout(30000) // 30 second timeout
+      signal: AbortSignal.timeout(timeoutMs)
     });
 
     if (!response.ok) {
