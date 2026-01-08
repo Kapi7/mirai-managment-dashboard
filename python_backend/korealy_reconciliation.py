@@ -1,6 +1,6 @@
 """
 Korealy Reconciliation Module
-Compares Korealy supplier prices (from Google Sheets) with Shopify COGS
+Compares Korealy supplier prices (from local CSV) with Shopify COGS
 Identifies mismatches and enables syncing updates back to Shopify
 """
 
@@ -8,6 +8,7 @@ import os
 import re
 import time
 import requests
+import csv
 from typing import List, Dict, Any, Optional, Tuple
 from dotenv import load_dotenv
 
@@ -18,9 +19,8 @@ SHOPIFY_STORE = os.getenv("SHOPIFY_STORE")
 SHOPIFY_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN") or os.getenv("SHOPIFY_TOKEN")
 SHOPIFY_API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2025-07")
 
-# Google Sheets config for Korealy source
-KOREALY_SHEET_ID = os.getenv("KOREALY_SHEET_ID")
-KOREALY_SHEET_NAME = os.getenv("KOREALY_SHEET_NAME", "Korealy Products - Prices")
+# Local CSV file for Korealy source
+KOREALY_CSV_PATH = os.path.join(os.path.dirname(__file__), "Korealy Products - Prices.csv")
 
 # Regex patterns for parsing Korealy data
 PRICE_RE = re.compile(r"(?:US?\$|USD|€|£)\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)")
@@ -139,60 +139,30 @@ def fetch_shopify_variants_with_cogs() -> Dict[str, Dict[str, Any]]:
     return variants
 
 
-def fetch_korealy_data_from_sheets() -> List[List[str]]:
+def fetch_korealy_data_from_csv() -> List[List[str]]:
     """
-    Fetch raw Korealy data from Google Sheets
+    Read raw Korealy data from local CSV file
 
     Returns:
-        2D list of cell values
+        2D list of cell values (each row contains one cell with the line content)
     """
     try:
-        import gspread
-        from google.oauth2.service_account import Credentials
+        if not os.path.exists(KOREALY_CSV_PATH):
+            raise RuntimeError(f"Korealy CSV file not found at: {KOREALY_CSV_PATH}")
 
-        if not KOREALY_SHEET_ID:
-            raise RuntimeError("KOREALY_SHEET_ID not configured in environment")
+        values = []
+        with open(KOREALY_CSV_PATH, 'r', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            for row in reader:
+                # CSV has one value per line, convert to list format parser expects
+                if row:  # Skip empty rows
+                    values.append([row[0]] if row else [''])
 
-        # Authenticate (OAuth mode)
-        GOOGLE_AUTH_MODE = os.getenv("GOOGLE_AUTH_MODE", "oauth").lower()
-
-        if GOOGLE_AUTH_MODE == "service_account":
-            SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
-            if not SERVICE_ACCOUNT_JSON or not os.path.exists(SERVICE_ACCOUNT_JSON):
-                raise RuntimeError("Service account JSON not found")
-
-            SCOPES = [
-                "https://www.googleapis.com/auth/spreadsheets",
-                "https://www.googleapis.com/auth/drive"
-            ]
-            creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_JSON, scopes=SCOPES)
-            gc = gspread.authorize(creds)
-        else:  # oauth mode
-            OAUTH_DIR = os.getenv("GOOGLE_OAUTH_DIR", ".google_oauth")
-            token_path = os.path.join(OAUTH_DIR, "token.json")
-
-            if not os.path.exists(token_path):
-                raise RuntimeError("OAuth token not found. Run auth_google.py first.")
-
-            gc = gspread.oauth(
-                credentials_filename=os.path.join(OAUTH_DIR, "credentials.json"),
-                authorized_user_filename=token_path
-            )
-
-        # Open sheet
-        sh = gc.open_by_key(KOREALY_SHEET_ID)
-        ws = sh.worksheet(KOREALY_SHEET_NAME)
-
-        # Get all values
-        values = ws.get_all_values()
-
-        print(f"✅ Fetched {len(values)} rows from Korealy sheet")
+        print(f"✅ Fetched {len(values)} rows from Korealy CSV")
         return values
 
-    except ImportError:
-        raise RuntimeError("gspread not installed. Install with: pip install gspread google-auth")
     except Exception as e:
-        raise RuntimeError(f"Failed to fetch Korealy data: {e}")
+        raise RuntimeError(f"Failed to read Korealy CSV: {e}")
 
 
 def parse_korealy_sheet(values_2d: List[List[str]]) -> List[Dict[str, Any]]:
@@ -449,8 +419,8 @@ def run_reconciliation() -> Dict[str, Any]:
         shopify_variants = fetch_shopify_variants_with_cogs()
 
         # Step 2: Fetch Korealy data
-        print("📊 Fetching Korealy data from Google Sheets...")
-        raw_data = fetch_korealy_data_from_sheets()
+        print("📊 Fetching Korealy data from CSV...")
+        raw_data = fetch_korealy_data_from_csv()
 
         # Step 3: Parse Korealy data
         print("📊 Parsing Korealy data...")
