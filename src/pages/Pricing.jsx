@@ -688,50 +688,107 @@ export default function Pricing() {
               ) : targetPrices.length === 0 ? (
                 <div className="text-center py-8 text-slate-500">No target prices available</div>
               ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Variant ID</TableHead>
-                        <TableHead>Item</TableHead>
-                        <TableHead className="text-right">Weight (g)</TableHead>
-                        <TableHead className="text-right">COGS</TableHead>
-                        <TableHead className="text-right">Current</TableHead>
-                        <TableHead className="text-right">Ship</TableHead>
-                        <TableHead className="text-right">Breakeven</TableHead>
-                        <TableHead className="text-right">Target</TableHead>
-                        <TableHead className="text-right">Suggested</TableHead>
-                        <TableHead className="text-right">Comp Low</TableHead>
-                        <TableHead className="text-right">Comp Avg</TableHead>
-                        <TableHead className="text-right">Comp High</TableHead>
-                        <TableHead className="text-right">Competitive</TableHead>
-                        <TableHead className="text-right">Final</TableHead>
-                        <TableHead className="text-right">Loss $</TableHead>
-                        <TableHead>Priority</TableHead>
-                        <TableHead className="text-right">Inc %</TableHead>
-                      </TableRow>
-                    </TableHeader>
+                <>
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-[50px]">
+                            <Checkbox
+                              checked={selectedTargetPrices.size === sortedFilteredAndPaginatedTargetPrices.length && sortedFilteredAndPaginatedTargetPrices.length > 0}
+                              onCheckedChange={(checked) => {
+                                if (checked) {
+                                  setSelectedTargetPrices(new Set(sortedFilteredAndPaginatedTargetPrices.map(p => p.variant_id)));
+                                } else {
+                                  setSelectedTargetPrices(new Set());
+                                }
+                              }}
+                            />
+                          </TableHead>
+                          <TableHead
+                            className="cursor-pointer hover:bg-slate-50"
+                            onClick={() => handleTargetPricesSort('variant_id')}
+                          >
+                            Variant ID{getTargetPricesSortIcon('variant_id')}
+                          </TableHead>
+                          <TableHead
+                            className="cursor-pointer hover:bg-slate-50"
+                            onClick={() => handleTargetPricesSort('item')}
+                          >
+                            Item{getTargetPricesSortIcon('item')}
+                          </TableHead>
+                          <TableHead
+                            className="text-right cursor-pointer hover:bg-slate-50"
+                            onClick={() => handleTargetPricesSort('weight_g')}
+                          >
+                            Weight{getTargetPricesSortIcon('weight_g')}
+                          </TableHead>
+                          <TableHead
+                            className="text-right cursor-pointer hover:bg-slate-50"
+                            onClick={() => handleTargetPricesSort('cogs')}
+                          >
+                            COGS{getTargetPricesSortIcon('cogs')}
+                          </TableHead>
+                          <TableHead
+                            className="text-right cursor-pointer hover:bg-slate-50"
+                            onClick={() => handleTargetPricesSort('current')}
+                          >
+                            Current{getTargetPricesSortIcon('current')}
+                          </TableHead>
+                          <TableHead
+                            className="text-right cursor-pointer hover:bg-slate-50"
+                            onClick={() => handleTargetPricesSort('final_suggested')}
+                          >
+                            Final{getTargetPricesSortIcon('final_suggested')}
+                          </TableHead>
+                          <TableHead
+                            className="text-right cursor-pointer hover:bg-slate-50"
+                            onClick={() => handleTargetPricesSort('loss_amount')}
+                          >
+                            Loss ${getTargetPricesSortIcon('loss_amount')}
+                          </TableHead>
+                          <TableHead
+                            className="cursor-pointer hover:bg-slate-50"
+                            onClick={() => handleTargetPricesSort('priority')}
+                          >
+                            Priority{getTargetPricesSortIcon('priority')}
+                          </TableHead>
+                          <TableHead
+                            className="text-right cursor-pointer hover:bg-slate-50"
+                            onClick={() => handleTargetPricesSort('inc_pct')}
+                          >
+                            Inc %{getTargetPricesSortIcon('inc_pct')}
+                          </TableHead>
+                        </TableRow>
+                      </TableHeader>
                     <TableBody>
-                      {targetPrices.map((price) => {
+                      {sortedFilteredAndPaginatedTargetPrices.map((price) => {
                         const countryKey = selectedCountry;
+                        const isSelected = selectedTargetPrices.has(price.variant_id);
                         return (
-                          <TableRow key={price.variant_id}>
+                          <TableRow key={price.variant_id} className={isSelected ? 'bg-indigo-50' : ''}>
+                            <TableCell>
+                              <Checkbox
+                                checked={isSelected}
+                                onCheckedChange={(checked) => {
+                                  const newSet = new Set(selectedTargetPrices);
+                                  if (checked) {
+                                    newSet.add(price.variant_id);
+                                  } else {
+                                    newSet.delete(price.variant_id);
+                                  }
+                                  setSelectedTargetPrices(newSet);
+                                }}
+                              />
+                            </TableCell>
                             <TableCell className="font-mono text-sm">{price.variant_id}</TableCell>
-                            <TableCell className="font-medium max-w-[200px] truncate">{price.item}</TableCell>
+                            <TableCell className="font-medium max-w-[250px] truncate">{price.item}</TableCell>
                             <TableCell className="text-right">{(price.weight_g || 0).toFixed(0)}</TableCell>
                             <TableCell className="text-right">{formatCurrency(price.cogs)}</TableCell>
                             <TableCell className="text-right">{formatCurrency(price[`current_${countryKey}`])}</TableCell>
-                            <TableCell className="text-right">{formatCurrency(price[`ship_${countryKey}`])}</TableCell>
-                            <TableCell className="text-right">{formatCurrency(price[`breakeven_${countryKey}`])}</TableCell>
-                            <TableCell className="text-right">{formatCurrency(price[`target_${countryKey}`])}</TableCell>
-                            <TableCell className="text-right">{formatCurrency(price[`suggested_${countryKey}`])}</TableCell>
-                            <TableCell className="text-right">{formatCurrency(price[`comp_low_${countryKey}`])}</TableCell>
-                            <TableCell className="text-right">{formatCurrency(price[`comp_avg_${countryKey}`])}</TableCell>
-                            <TableCell className="text-right">{formatCurrency(price[`comp_high_${countryKey}`])}</TableCell>
-                            <TableCell className="text-right">{formatCurrency(price[`competitive_price_${countryKey}`])}</TableCell>
                             <TableCell className="text-right font-semibold">{formatCurrency(price[`final_suggested_${countryKey}`])}</TableCell>
                             <TableCell className="text-right">
-                              <span className={(price[`loss_amount_${countryKey}`] || 0) < 0 ? 'text-red-600' : 'text-green-600'}>
+                              <span className={(price[`loss_amount_${countryKey}`] || 0) < 0 ? 'text-red-600 font-semibold' : 'text-green-600'}>
                                 {formatCurrency(price[`loss_amount_${countryKey}`])}
                               </span>
                             </TableCell>
@@ -750,6 +807,52 @@ export default function Pricing() {
                     </TableBody>
                   </Table>
                 </div>
+
+                {/* Pagination Controls */}
+                <div className="flex items-center justify-between mt-4 pt-4 border-t">
+                  <div className="text-sm text-slate-600">
+                    Showing {targetPricesPage * targetPricesPageSize + 1} to {Math.min((targetPricesPage + 1) * targetPricesPageSize, targetPrices.length)} of {targetPrices.length} items
+                    {(targetPricesPriorityFilter !== 'all' || targetPricesSearchFilter) && ` (filtered)`}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setTargetPricesPage(0)}
+                      disabled={targetPricesPage === 0}
+                    >
+                      <ChevronsLeft className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setTargetPricesPage(targetPricesPage - 1)}
+                      disabled={targetPricesPage === 0}
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <span className="text-sm text-slate-600">
+                      Page {targetPricesPage + 1} of {targetPricesTotalPages || 1}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setTargetPricesPage(targetPricesPage + 1)}
+                      disabled={targetPricesPage >= targetPricesTotalPages - 1}
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setTargetPricesPage(targetPricesTotalPages - 1)}
+                      disabled={targetPricesPage >= targetPricesTotalPages - 1}
+                    >
+                      <ChevronsRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              </>
               )}
             </CardContent>
           </Card>
