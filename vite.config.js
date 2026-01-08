@@ -8,7 +8,14 @@ export default defineConfig({
   server: {
     allowedHosts: true,
     host: true,
-    port: 3000
+    port: 3000,
+    proxy: {
+      '/reports-api': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/reports-api/, '')
+      }
+    }
   },
   preview: {
     host: '0.0.0.0',
