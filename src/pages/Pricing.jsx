@@ -203,8 +203,16 @@ export default function Pricing() {
     // Apply sorting
     if (itemsSortColumn) {
       sorted.sort((a, b) => {
-        let aVal = a[itemsSortColumn];
-        let bVal = b[itemsSortColumn];
+        let aVal, bVal;
+
+        // Special handling for margin
+        if (itemsSortColumn === 'margin') {
+          aVal = a.cogs > 0 ? ((a.retail_base - a.cogs) / a.cogs * 100) : 0;
+          bVal = b.cogs > 0 ? ((b.retail_base - b.cogs) / b.cogs * 100) : 0;
+        } else {
+          aVal = a[itemsSortColumn];
+          bVal = b[itemsSortColumn];
+        }
 
         // Handle numeric values
         if (typeof aVal === 'number' && typeof bVal === 'number') {
@@ -475,11 +483,18 @@ export default function Pricing() {
                           >
                             Compare At Base{getSortIcon('compare_at_base')}
                           </TableHead>
+                          <TableHead
+                            className="text-right cursor-pointer hover:bg-slate-50"
+                            onClick={() => handleItemsSort('margin')}
+                          >
+                            Margin{getSortIcon('margin')}
+                          </TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {sortedAndPaginatedItems.map((item) => {
                           const isSelected = selectedItems.has(item.variant_id);
+                          const margin = item.cogs > 0 ? ((item.retail_base - item.cogs) / item.cogs * 100) : 0;
                           return (
                             <TableRow key={item.variant_id} className={isSelected ? 'bg-indigo-50' : ''}>
                               <TableCell>
@@ -502,6 +517,11 @@ export default function Pricing() {
                               <TableCell className="text-right">{formatCurrency(item.cogs)}</TableCell>
                               <TableCell className="text-right">{formatCurrency(item.retail_base)}</TableCell>
                               <TableCell className="text-right">{formatCurrency(item.compare_at_base)}</TableCell>
+                              <TableCell className="text-right">
+                                <span className={margin < 30 ? 'text-red-600 font-semibold' : margin < 50 ? 'text-yellow-600' : 'text-green-600'}>
+                                  {margin.toFixed(1)}%
+                                </span>
+                              </TableCell>
                             </TableRow>
                           );
                         })}
@@ -938,6 +958,30 @@ export default function Pricing() {
                           </TableHead>
                           <TableHead
                             className="text-right cursor-pointer hover:bg-slate-50"
+                            onClick={() => handleTargetPricesSort('ship')}
+                          >
+                            Ship{getTargetPricesSortIcon('ship')}
+                          </TableHead>
+                          <TableHead
+                            className="text-right cursor-pointer hover:bg-slate-50"
+                            onClick={() => handleTargetPricesSort('breakeven')}
+                          >
+                            Breakeven{getTargetPricesSortIcon('breakeven')}
+                          </TableHead>
+                          <TableHead
+                            className="text-right cursor-pointer hover:bg-slate-50"
+                            onClick={() => handleTargetPricesSort('target')}
+                          >
+                            Target{getTargetPricesSortIcon('target')}
+                          </TableHead>
+                          <TableHead
+                            className="text-right cursor-pointer hover:bg-slate-50"
+                            onClick={() => handleTargetPricesSort('suggested')}
+                          >
+                            Suggested{getTargetPricesSortIcon('suggested')}
+                          </TableHead>
+                          <TableHead
+                            className="text-right cursor-pointer hover:bg-slate-50"
                             onClick={() => handleTargetPricesSort('final_suggested')}
                           >
                             Final{getTargetPricesSortIcon('final_suggested')}
@@ -987,6 +1031,10 @@ export default function Pricing() {
                             <TableCell className="text-right">{(price.weight_g || 0).toFixed(0)}</TableCell>
                             <TableCell className="text-right">{formatCurrency(price.cogs)}</TableCell>
                             <TableCell className="text-right">{formatCurrency(price[`current_${countryKey}`])}</TableCell>
+                            <TableCell className="text-right">{formatCurrency(price[`ship_${countryKey}`])}</TableCell>
+                            <TableCell className="text-right">{formatCurrency(price[`breakeven_${countryKey}`])}</TableCell>
+                            <TableCell className="text-right">{formatCurrency(price[`target_${countryKey}`])}</TableCell>
+                            <TableCell className="text-right">{formatCurrency(price[`suggested_${countryKey}`])}</TableCell>
                             <TableCell className="text-right font-semibold">{formatCurrency(price[`final_suggested_${countryKey}`])}</TableCell>
                             <TableCell className="text-right">
                               <span className={(price[`loss_amount_${countryKey}`] || 0) < 0 ? 'text-red-600 font-semibold' : 'text-green-600'}>

@@ -272,18 +272,18 @@ def fetch_update_log(limit: Optional[int] = None) -> List[Dict[str, Any]]:
         import gspread
         from google.oauth2.service_account import Credentials
 
-        # Google Sheets config
-        SHEET_NAME = os.getenv("GOOGLE_SHEET_NAME", "mirai price bot")
-        SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
-        GOOGLE_AUTH_MODE = os.getenv("GOOGLE_AUTH_MODE", "oauth").lower()
+        # Google Sheets config (using _1 suffix to avoid conflict with reports)
+        SHEET_NAME = os.getenv("GOOGLE_SHEET_NAME_1", "mirai price bot")
+        SHEET_ID = os.getenv("GOOGLE_SHEET_ID_1")
+        GOOGLE_AUTH_MODE = os.getenv("GOOGLE_AUTH_MODE_1", "oauth").lower()
 
         if not SHEET_ID:
-            print("⚠️ GOOGLE_SHEET_ID not configured")
+            print("⚠️ GOOGLE_SHEET_ID_1 not configured")
             return []
 
         # Authenticate
         if GOOGLE_AUTH_MODE == "service_account":
-            SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+            SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON_1")
             if not SERVICE_ACCOUNT_JSON or not os.path.exists(SERVICE_ACCOUNT_JSON):
                 print("⚠️ Service account JSON not found")
                 return []
@@ -295,7 +295,7 @@ def fetch_update_log(limit: Optional[int] = None) -> List[Dict[str, Any]]:
             creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_JSON, scopes=SCOPES)
             gc = gspread.authorize(creds)
         else:  # oauth mode
-            OAUTH_DIR = os.getenv("GOOGLE_OAUTH_DIR", ".google_oauth")
+            OAUTH_DIR = os.getenv("GOOGLE_OAUTH_DIR_1", ".google_oauth_1")
             token_path = os.path.join(OAUTH_DIR, "token.json")
 
             if not os.path.exists(token_path):
