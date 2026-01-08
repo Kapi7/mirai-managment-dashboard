@@ -17,8 +17,8 @@ SHOPIFY_STORE = os.getenv("SHOPIFY_STORE")
 SHOPIFY_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN") or os.getenv("SHOPIFY_TOKEN")
 SHOPIFY_API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2025-07")
 
-# SerpAPI config
-SERPAPI_KEY = os.getenv("SERPAPI_KEY")
+# SerpAPI config (try both possible variable names)
+SERPAPI_KEY = os.getenv("SERPAPI_KEY") or os.getenv("SERPAPI_API_KEY")
 
 
 def _shopify_graphql(query: str, variables: Dict = None):
@@ -108,7 +108,7 @@ def execute_updates(updates: List[Any]) -> Dict[str, Any]:
 
             # Update via GraphQL
             mutation = """
-            mutation productVariantUpdate($input: ProductVariantInput!) {
+            mutation($input: ProductVariantInput!) {
                 productVariantUpdate(input: $input) {
                     productVariant {
                         id

@@ -20,7 +20,16 @@ SHOPIFY_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN") or os.getenv("SHOPIFY_TOKEN")
 SHOPIFY_API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2025-07")
 
 # Local CSV file for Korealy source
-KOREALY_CSV_PATH = os.path.join(os.path.dirname(__file__), "Korealy Products - Prices.csv")
+# Check environment variable first, then try price-bot folder, then fall back to local
+KOREALY_CSV_PATH = os.getenv("KOREALY_CSV_PATH")
+if not KOREALY_CSV_PATH:
+    # Try price-bot location
+    price_bot_path = os.path.expanduser("~/price-bot/Korealy Products - Prices.csv")
+    if os.path.exists(price_bot_path):
+        KOREALY_CSV_PATH = price_bot_path
+    else:
+        # Fall back to local python_backend folder
+        KOREALY_CSV_PATH = os.path.join(os.path.dirname(__file__), "Korealy Products - Prices.csv")
 
 # Regex patterns for parsing Korealy data
 PRICE_RE = re.compile(r"(?:US?\$|USD|€|£)\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)")
