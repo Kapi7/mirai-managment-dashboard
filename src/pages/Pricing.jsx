@@ -6,7 +6,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
-import { DollarSign, TrendingUp, Clock, Target, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
+import { DollarSign, TrendingUp, Clock, Target, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ArrowUpDown, ArrowUp, ArrowDown, Search, Filter } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_REPORT_API_URL ||
   (import.meta.env.DEV ? 'http://localhost:8080' : '/reports-api');
@@ -35,6 +37,13 @@ export default function Pricing() {
   const [targetPrices, setTargetPrices] = useState([]);
   const [selectedCountry, setSelectedCountry] = useState('US');
   const [countries, setCountries] = useState(['US', 'UK', 'AU', 'CA']);
+  const [targetPricesPage, setTargetPricesPage] = useState(0);
+  const [targetPricesPageSize] = useState(50);
+  const [targetPricesSortColumn, setTargetPricesSortColumn] = useState(null);
+  const [targetPricesSortDirection, setTargetPricesSortDirection] = useState('asc');
+  const [targetPricesPriorityFilter, setTargetPricesPriorityFilter] = useState('all');
+  const [targetPricesSearchFilter, setTargetPricesSearchFilter] = useState('');
+  const [selectedTargetPrices, setSelectedTargetPrices] = useState(new Set());
 
   // Fetch markets on mount
   useEffect(() => {
@@ -234,6 +243,81 @@ export default function Pricing() {
       return <ArrowUpDown className="h-4 w-4 ml-2 inline" />;
     }
     return itemsSortDirection === 'asc' ?
+      <ArrowUp className="h-4 w-4 ml-2 inline" /> :
+      <ArrowDown className="h-4 w-4 ml-2 inline" />;
+  };
+
+  // Sorting, filtering, and pagination for Target Prices tab
+  const sortedFilteredAndPaginatedTargetPrices = useMemo(() => {
+    let filtered = [...targetPrices];
+    const countryKey = selectedCountry;
+
+    // Apply priority filter
+    if (targetPricesPriorityFilter !== 'all') {
+      filtered = filtered.filter(item => item[`priority_${countryKey}`] === targetPricesPriorityFilter);
+    }
+
+    // Apply search filter
+    if (targetPricesSearchFilter) {
+      const search = targetPricesSearchFilter.toLowerCase();
+      filtered = filtered.filter(item =>
+        item.item.toLowerCase().includes(search) ||
+        item.variant_id.toLowerCase().includes(search)
+      );
+    }
+
+    // Apply sorting
+    if (targetPricesSortColumn) {
+      filtered.sort((a, b) => {
+        let aVal, bVal;
+
+        // Handle country-specific columns
+        if (targetPricesSortColumn.includes('_')) {
+          aVal = a[`${targetPricesSortColumn}_${countryKey}`];
+          bVal = b[`${targetPricesSortColumn}_${countryKey}`];
+        } else {
+          aVal = a[targetPricesSortColumn];
+          bVal = b[targetPricesSortColumn];
+        }
+
+        // Handle numeric values
+        if (typeof aVal === 'number' && typeof bVal === 'number') {
+          return targetPricesSortDirection === 'asc' ? aVal - bVal : bVal - aVal;
+        }
+
+        // Handle strings
+        aVal = String(aVal || '').toLowerCase();
+        bVal = String(bVal || '').toLowerCase();
+
+        if (aVal < bVal) return targetPricesSortDirection === 'asc' ? -1 : 1;
+        if (aVal > bVal) return targetPricesSortDirection === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+
+    // Apply pagination
+    const start = targetPricesPage * targetPricesPageSize;
+    const end = start + targetPricesPageSize;
+    return filtered.slice(start, end);
+  }, [targetPrices, targetPricesSortColumn, targetPricesSortDirection, targetPricesPage, targetPricesPageSize, targetPricesPriorityFilter, targetPricesSearchFilter, selectedCountry]);
+
+  const targetPricesTotalPages = Math.ceil(targetPrices.length / targetPricesPageSize);
+
+  const handleTargetPricesSort = (column) => {
+    if (targetPricesSortColumn === column) {
+      setTargetPricesSortDirection(targetPricesSortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setTargetPricesSortColumn(column);
+      setTargetPricesSortDirection('asc');
+    }
+    setTargetPricesPage(0); // Reset to first page when sorting
+  };
+
+  const getTargetPricesSortIcon = (column) => {
+    if (targetPricesSortColumn !== column) {
+      return <ArrowUpDown className="h-4 w-4 ml-2 inline" />;
+    }
+    return targetPricesSortDirection === 'asc' ?
       <ArrowUp className="h-4 w-4 ml-2 inline" /> :
       <ArrowDown className="h-4 w-4 ml-2 inline" />;
   };
@@ -545,23 +629,55 @@ export default function Pricing() {
         <TabsContent value="target-prices">
           <Card>
             <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle>Target Prices</CardTitle>
-                  <CardDescription>Calculated target prices with competitive analysis</CardDescription>
+              <div className="flex flex-col gap-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>Target Prices</CardTitle>
+                    <CardDescription>Calculated target prices with competitive analysis</CardDescription>
+                  </div>
+                  <Select value={selectedCountry} onValueChange={setSelectedCountry}>
+                    <SelectTrigger className="w-[180px]">
+                      <SelectValue placeholder="Select country" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {countries.map((country) => (
+                        <SelectItem key={country} value={country}>
+                          {country}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-                <Select value={selectedCountry} onValueChange={setSelectedCountry}>
-                  <SelectTrigger className="w-[180px]">
-                    <SelectValue placeholder="Select country" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {countries.map((country) => (
-                      <SelectItem key={country} value={country}>
-                        {country}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+
+                {/* Filters */}
+                <div className="flex items-center gap-4">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
+                    <Input
+                      placeholder="Search by item name or variant ID..."
+                      value={targetPricesSearchFilter}
+                      onChange={(e) => setTargetPricesSearchFilter(e.target.value)}
+                      className="pl-10"
+                    />
+                  </div>
+                  <Select value={targetPricesPriorityFilter} onValueChange={setTargetPricesPriorityFilter}>
+                    <SelectTrigger className="w-[180px]">
+                      <Filter className="h-4 w-4 mr-2" />
+                      <SelectValue placeholder="Priority" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Priorities</SelectItem>
+                      <SelectItem value="HIGH">HIGH</SelectItem>
+                      <SelectItem value="MEDIUM">MEDIUM</SelectItem>
+                      <SelectItem value="LOW">LOW</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {selectedTargetPrices.size > 0 && (
+                    <Button variant="default" size="sm">
+                      Add {selectedTargetPrices.size} to Price Updates
+                    </Button>
+                  )}
+                </div>
               </div>
             </CardHeader>
             <CardContent>
