@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, date
 from calendar import monthrange
 import os
+from typing import List, Optional
 
 import pytz
 from fastapi import FastAPI, HTTPException
@@ -41,6 +42,44 @@ class DateRangeRequest(BaseModel):
     @property
     def end(self) -> date:
         return datetime.strptime(self.end_date, "%Y-%m-%d").date()
+
+
+# Pricing-specific models
+class PriceUpdate(BaseModel):
+    """Single price update"""
+    variant_id: str
+    new_price: float
+    new_compare_at: Optional[float] = None
+    compare_at_policy: str = "D"  # B, D, or Manual
+    new_cogs: Optional[float] = None
+    notes: str = ""
+    item: str = ""
+    current_price: float = 0.0
+
+
+class ExecuteUpdatesRequest(BaseModel):
+    """Request body for executing price updates"""
+    updates: List[PriceUpdate]
+
+
+class ProductAction(BaseModel):
+    """Single product action (add or delete)"""
+    action: str  # "add" or "delete"
+    variant_id: str = ""
+    title: str = ""
+    price: float = 0.0
+    sku: str = ""
+    inventory: int = 0
+
+
+class ProductActionsRequest(BaseModel):
+    """Request body for product actions"""
+    actions: List[ProductAction]
+
+
+class CompetitorPriceCheckRequest(BaseModel):
+    """Request body for competitor price check"""
+    variant_ids: List[str]
 
 
 # ---------- FastAPI app ----------
@@ -352,6 +391,111 @@ async def debug_cache_status():
         "cache_ttl_minutes": int(os.getenv("GOOGLE_ADS_CACHE_TTL_MINUTES", "30")),
         "entries": cache_info,
     }
+
+
+# ---------- Pricing Endpoints ----------
+
+@app.post("/pricing/execute-updates")
+async def execute_price_updates(req: ExecuteUpdatesRequest):
+    """
+    Execute price updates to Shopify
+
+    Updates product variant prices based on the provided updates.
+    Logs all changes to Google Sheets UpdatesLog.
+    """
+    try:
+        # Import here to avoid circular dependencies
+        from pricing_execution import execute_updates
+
+        result = execute_updates(req.updates)
+
+        return {
+            "success": True,
+            "updated_count": result["updated_count"],
+            "failed_count": result["failed_count"],
+            "message": result["message"],
+            "details": result.get("details", [])
+        }
+
+    except ImportError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not import pricing_execution module: {e}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to execute price updates: {str(e)}"
+        )
+
+
+@app.post("/pricing/product-actions")
+async def execute_product_actions(req: ProductActionsRequest):
+    """
+    Add or delete products from Shopify
+
+    Executes batch product operations (add new products or delete existing ones).
+    """
+    try:
+        # Import here to avoid circular dependencies
+        from pricing_execution import execute_product_actions
+
+        result = execute_product_actions(req.actions)
+
+        return {
+            "success": True,
+            "added_count": result["added_count"],
+            "deleted_count": result["deleted_count"],
+            "failed_count": result["failed_count"],
+            "message": result["message"],
+            "details": result.get("details", [])
+        }
+
+    except ImportError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not import pricing_execution module: {e}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to execute product actions: {str(e)}"
+        )
+
+
+@app.post("/pricing/check-competitor-prices")
+async def check_competitor_prices(req: CompetitorPriceCheckRequest):
+    """
+    Check competitor prices for specified variant IDs via SerpAPI
+
+    This endpoint triggers a price scan using the smart filtering logic:
+    - Trusted sellers only (excludes P2P marketplaces)
+    - Outlier removal (median-based filtering)
+    - Returns low/avg/high prices
+    """
+    try:
+        # Import here to avoid circular dependencies
+        from pricing_execution import check_competitor_prices
+
+        result = check_competitor_prices(req.variant_ids)
+
+        return {
+            "success": True,
+            "scanned_count": result["scanned_count"],
+            "results": result["results"],
+            "message": result["message"]
+        }
+
+    except ImportError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not import pricing_execution module: {e}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to check competitor prices: {str(e)}"
+        )
 
 
 # ---------- Local dev entrypoint ----------
