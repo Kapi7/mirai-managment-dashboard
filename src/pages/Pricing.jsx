@@ -28,6 +28,7 @@ export default function Pricing() {
   const [itemsSortColumn, setItemsSortColumn] = useState(null);
   const [itemsSortDirection, setItemsSortDirection] = useState('asc');
   const [selectedItems, setSelectedItems] = useState(new Set());
+  const [itemsSearchFilter, setItemsSearchFilter] = useState('');
 
   // Price Updates tab state
   const [priceUpdates, setPriceUpdates] = useState([]);
@@ -280,13 +281,22 @@ export default function Pricing() {
     return `${(value || 0).toFixed(2)}%`;
   };
 
-  // Sorting and pagination for Items tab
-  const sortedAndPaginatedItems = useMemo(() => {
-    let sorted = [...items];
+  // Sorting, filtering, and pagination for Items tab
+  const sortedFilteredAndPaginatedItems = useMemo(() => {
+    let filtered = [...items];
+
+    // Apply search filter
+    if (itemsSearchFilter) {
+      const search = itemsSearchFilter.toLowerCase();
+      filtered = filtered.filter(item =>
+        item.item.toLowerCase().includes(search) ||
+        item.variant_id.toLowerCase().includes(search)
+      );
+    }
 
     // Apply sorting
     if (itemsSortColumn) {
-      sorted.sort((a, b) => {
+      filtered.sort((a, b) => {
         let aVal, bVal;
 
         // Special handling for margin
@@ -316,10 +326,19 @@ export default function Pricing() {
     // Apply pagination
     const start = itemsPage * itemsPageSize;
     const end = start + itemsPageSize;
-    return sorted.slice(start, end);
-  }, [items, itemsSortColumn, itemsSortDirection, itemsPage, itemsPageSize]);
+    return filtered.slice(start, end);
+  }, [items, itemsSortColumn, itemsSortDirection, itemsPage, itemsPageSize, itemsSearchFilter]);
 
-  const itemsTotalPages = Math.ceil(items.length / itemsPageSize);
+  const itemsTotalFiltered = useMemo(() => {
+    if (!itemsSearchFilter) return items.length;
+    const search = itemsSearchFilter.toLowerCase();
+    return items.filter(item =>
+      item.item.toLowerCase().includes(search) ||
+      item.variant_id.toLowerCase().includes(search)
+    ).length;
+  }, [items, itemsSearchFilter]);
+
+  const itemsTotalPages = Math.ceil(itemsTotalFiltered / itemsPageSize);
 
   const handleItemsSort = (column) => {
     if (itemsSortColumn === column) {
@@ -374,8 +393,9 @@ export default function Pricing() {
         }
 
         // Special handling for priority (HIGH > MEDIUM > LOW)
-        if (targetPricesSortColumn === 'priority') {
+        if (targetPricesSortColumn === 'priority' || targetPricesSortColumn.startsWith('priority_')) {
           const priorityMap = { 'HIGH': 3, 'MEDIUM': 2, 'LOW': 1 };
+          // aVal and bVal are already set above with country key
           aVal = priorityMap[aVal] || 0;
           bVal = priorityMap[bVal] || 0;
           return targetPricesSortDirection === 'asc' ? aVal - bVal : bVal - aVal;
@@ -473,11 +493,25 @@ export default function Pricing() {
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
-                <div>
+                <div className="flex-1">
                   <CardTitle>Product Items</CardTitle>
                   <CardDescription>View product inventory with pricing</CardDescription>
+                  <div className="mt-2">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
+                      <Input
+                        placeholder="Search by item name or variant ID..."
+                        value={itemsSearchFilter}
+                        onChange={(e) => {
+                          setItemsSearchFilter(e.target.value);
+                          setItemsPage(0); // Reset to first page on search
+                        }}
+                        className="pl-10 h-9"
+                      />
+                    </div>
+                  </div>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 pt-8">
                   {selectedItems.size > 0 && (
                     <>
                       <Button
@@ -568,10 +602,10 @@ export default function Pricing() {
                         <TableRow>
                           <TableHead className="w-[50px]">
                             <Checkbox
-                              checked={selectedItems.size === sortedAndPaginatedItems.length && sortedAndPaginatedItems.length > 0}
+                              checked={selectedItems.size === sortedFilteredAndPaginatedItems.length && sortedFilteredAndPaginatedItems.length > 0}
                               onCheckedChange={(checked) => {
                                 if (checked) {
-                                  setSelectedItems(new Set(sortedAndPaginatedItems.map(i => i.variant_id)));
+                                  setSelectedItems(new Set(sortedFilteredAndPaginatedItems.map(i => i.variant_id)));
                                 } else {
                                   setSelectedItems(new Set());
                                 }
@@ -623,7 +657,7 @@ export default function Pricing() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {sortedAndPaginatedItems.map((item) => {
+                        {sortedFilteredAndPaginatedItems.map((item) => {
                           const isSelected = selectedItems.has(item.variant_id);
                           const margin = item.cogs > 0 ? ((item.retail_base - item.cogs) / item.cogs * 100) : 0;
                           return (
@@ -664,7 +698,8 @@ export default function Pricing() {
                   <div className="flex items-center justify-between mt-4 pt-4 border-t">
                     <div className="flex items-center gap-3">
                       <div className="text-sm text-slate-600">
-                        Showing {itemsPage * itemsPageSize + 1} to {Math.min((itemsPage + 1) * itemsPageSize, items.length)} of {items.length} items
+                        Showing {itemsPage * itemsPageSize + 1} to {Math.min((itemsPage + 1) * itemsPageSize, itemsTotalFiltered)} of {itemsTotalFiltered} items
+                        {itemsSearchFilter && ` (filtered from ${items.length})`}
                       </div>
                       <Select value={itemsPageSize.toString()} onValueChange={(val) => {
                         setItemsPageSize(parseInt(val));
@@ -1074,14 +1109,14 @@ export default function Pricing() {
                                   <Input
                                     type="number"
                                     step="0.01"
-                                    className="text-center h-8 w-[100px]"
+                                    className="text-center h-8 w-[80px]"
                                     value={update.new_compare_at ?? ''}
                                     onChange={(e) => {
                                       const newUpdates = [...priceUpdates];
                                       newUpdates[idx].new_compare_at = e.target.value ? parseFloat(e.target.value) : null;
                                       setPriceUpdates(newUpdates);
                                     }}
-                                    placeholder="Enter value"
+                                    placeholder="Enter"
                                   />
                                 ) : (
                                   <span className="text-sm text-slate-500">Auto</span>
@@ -1103,12 +1138,12 @@ export default function Pricing() {
                                     setPriceUpdates(newUpdates);
                                   }}
                                 >
-                                  <SelectTrigger className="h-8 w-[110px]">
+                                  <SelectTrigger className="h-8 w-[80px]">
                                     <SelectValue />
                                   </SelectTrigger>
                                   <SelectContent>
-                                    <SelectItem value="B">B (GMC)</SelectItem>
-                                    <SelectItem value="D">D (Keep Discount)</SelectItem>
+                                    <SelectItem value="B">B</SelectItem>
+                                    <SelectItem value="D">D</SelectItem>
                                     <SelectItem value="Manual">Manual</SelectItem>
                                   </SelectContent>
                                 </Select>
