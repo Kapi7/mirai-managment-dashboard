@@ -7,10 +7,14 @@ try:
     import gspread
     from requests import exceptions as req_exc
     HAS_GSPREAD = True
+    # Store WorksheetNotFound for use in except clauses
+    WorksheetNotFound = gspread.WorksheetNotFound
 except ImportError:
     gspread = None
     req_exc = None
     HAS_GSPREAD = False
+    # Fallback exception class that will never match (since HAS_GSPREAD is False)
+    WorksheetNotFound = type('WorksheetNotFound', (Exception,), {})
     print("⚠️ gspread not installed - Google Sheets integration disabled")
 
 try:
@@ -103,7 +107,7 @@ def ensure_month_tab(month_label: str) -> Tuple[Any, Any]:
     sh = _open_sheet()
     try:
         ws = _with_retries(sh.worksheet, month_label)
-    except gspread.WorksheetNotFound:
+    except WorksheetNotFound:
         ws = _with_retries(sh.add_worksheet, title=month_label, rows=2000, cols=30)
     return sh, ws
 
