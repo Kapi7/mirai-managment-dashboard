@@ -8,6 +8,7 @@ import requests
 from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
 from datetime import datetime
+from functools import lru_cache
 
 load_dotenv()
 
@@ -15,6 +16,22 @@ load_dotenv()
 SHOPIFY_STORE = os.getenv("SHOPIFY_STORE")
 SHOPIFY_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN") or os.getenv("SHOPIFY_TOKEN")
 SHOPIFY_API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2025-07")
+
+# Cache for 5 minutes
+_CACHE = {}
+_CACHE_TTL = 300  # seconds
+
+def _get_cache(key: str):
+    """Get cached value if not expired"""
+    if key in _CACHE:
+        value, timestamp = _CACHE[key]
+        if time.time() - timestamp < _CACHE_TTL:
+            return value
+    return None
+
+def _set_cache(key: str, value):
+    """Set cache with timestamp"""
+    _CACHE[key] = (value, time.time())
 
 def _shopify_graphql(query: str, variables: Optional[Dict] = None):
     """Execute Shopify GraphQL query"""
@@ -96,11 +113,19 @@ def _collect_sellable_variant_ids() -> set:
     return sellable
 
 
-def fetch_items(market_filter: Optional[str] = None) -> List[Dict[str, Any]]:
+def fetch_items(market_filter: Optional[str] = None, use_cache: bool = True) -> List[Dict[str, Any]]:
     """
     Fetch product variants from Shopify (only sellable variants from active products)
     Returns: variant_id, item, weight, cogs, retail_base, compare_at_base
     """
+    # Check cache first
+    cache_key = f"items_{market_filter or 'all'}"
+    if use_cache:
+        cached = _get_cache(cache_key)
+        if cached is not None:
+            print(f"✅ Using cached items data ({len(cached)} items)")
+            return cached
+
     # First, get the list of sellable variant IDs
     sellable = _collect_sellable_variant_ids()
 
@@ -221,6 +246,10 @@ def fetch_items(market_filter: Optional[str] = None) -> List[Dict[str, Any]]:
             break
 
     print(f"ℹ️ Filtered to {kept} sellable variants from ACTIVE products out of {total_admin} admin variants total.")
+
+    # Cache the results
+    _set_cache(cache_key, items)
+
     return items
 
 
@@ -354,7 +383,7 @@ def fetch_update_log(limit: Optional[int] = None) -> List[Dict[str, Any]]:
 
 
 # ================== TARGET PRICES TAB ==================
-def fetch_target_prices(country_filter: Optional[str] = "US") -> List[Dict[str, Any]]:
+def fetch_target_prices(country_filter: Optional[str] = "US", use_cache: bool = True) -> List[Dict[str, Any]]:
     """
     Calculate target prices based on Shopify data
     Returns calculated metrics for each variant
@@ -362,8 +391,16 @@ def fetch_target_prices(country_filter: Optional[str] = "US") -> List[Dict[str, 
     # Define country at the start
     country = (country_filter or "US").upper()
 
-    # Get base items data
-    items = fetch_items()
+    # Check cache first
+    cache_key = f"target_prices_{country}"
+    if use_cache:
+        cached = _get_cache(cache_key)
+        if cached is not None:
+            print(f"✅ Using cached target prices data ({len(cached)} items)")
+            return cached
+
+    # Get base items data (will also use cache)
+    items = fetch_items(use_cache=use_cache)
 
     target_prices = []
 
@@ -448,6 +485,10 @@ def fetch_target_prices(country_filter: Optional[str] = "US") -> List[Dict[str, 
         target_prices.append(result)
 
     print(f"✅ Calculated {len(target_prices)} target prices for {country}")
+
+    # Cache the results
+    _set_cache(cache_key, target_prices)
+
     return target_prices
 
 
