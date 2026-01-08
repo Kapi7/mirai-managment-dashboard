@@ -16,6 +16,7 @@ const API_URL = import.meta.env.VITE_REPORT_API_URL ||
 export default function Pricing() {
   const [activeTab, setActiveTab] = useState('items');
   const [loading, setLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState('');
   const [error, setError] = useState(null);
 
   // Items tab state
@@ -48,10 +49,14 @@ export default function Pricing() {
   const [targetPricesSearchFilter, setTargetPricesSearchFilter] = useState('');
   const [selectedTargetPrices, setSelectedTargetPrices] = useState(new Set());
 
-  // Fetch markets on mount
+  // Pre-fetch items on mount for faster initial load
   useEffect(() => {
     fetchMarkets();
     fetchCountries();
+    // Pre-load items data since that's the default tab
+    if (items.length === 0) {
+      fetchItems();
+    }
   }, []);
 
   // Fetch data when tab changes
@@ -100,22 +105,29 @@ export default function Pricing() {
 
   const fetchItems = async () => {
     setLoading(true);
+    setLoadingMessage('Loading items from Shopify... This may take 10-20 seconds on first load.');
     setError(null);
     try {
       const url = selectedMarket === 'all'
         ? `${API_URL}/pricing/items`
         : `${API_URL}/pricing/items?market=${selectedMarket}`;
 
+      const startTime = Date.now();
       const response = await fetch(url);
       const result = await response.json();
+      const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+
+      console.log(`Items loaded in ${duration}s`);
 
       if (result.error) {
         setError(result.error);
       } else {
         setItems(result.data || []);
+        setLoadingMessage('');
       }
     } catch (err) {
       setError(`Failed to fetch items: ${err.message}`);
+      setLoadingMessage('');
     } finally {
       setLoading(false);
     }
@@ -161,14 +173,18 @@ export default function Pricing() {
 
   const fetchTargetPrices = async () => {
     setLoading(true);
+    setLoadingMessage('Calculating target prices... This may take 10-20 seconds on first load.');
     setError(null);
     try {
+      const startTime = Date.now();
       const response = await fetch(`${API_URL}/pricing/target-prices?country=${selectedCountry}`);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       const result = await response.json();
+      const duration = ((Date.now() - startTime) / 1000).toFixed(1);
 
+      console.log(`Target prices loaded in ${duration}s`);
       console.log('Target Prices API response:', result);
       console.log('Data length:', result.data?.length);
 
@@ -176,11 +192,13 @@ export default function Pricing() {
         setError(result.error);
       } else {
         setTargetPrices(result.data || []);
+        setLoadingMessage('');
         console.log('Set target prices state:', result.data?.length || 0);
       }
     } catch (err) {
       console.error('Target prices fetch error:', err);
       setError(`Failed to fetch target prices: ${err.message}`);
+      setLoadingMessage('');
     } finally {
       setLoading(false);
     }
@@ -430,8 +448,15 @@ export default function Pricing() {
             </CardHeader>
             <CardContent>
               {loading ? (
-                <div className="space-y-2">
-                  {[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-12 w-full" />)}
+                <div className="space-y-4">
+                  {loadingMessage && (
+                    <div className="text-center py-4 text-blue-600 font-medium">
+                      {loadingMessage}
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    {[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-12 w-full" />)}
+                  </div>
                 </div>
               ) : items.length === 0 ? (
                 <div className="text-center py-8 text-slate-500">No items found</div>
@@ -985,8 +1010,15 @@ export default function Pricing() {
             </CardHeader>
             <CardContent>
               {loading ? (
-                <div className="space-y-2">
-                  {[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-12 w-full" />)}
+                <div className="space-y-4">
+                  {loadingMessage && (
+                    <div className="text-center py-4 text-blue-600 font-medium">
+                      {loadingMessage}
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    {[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-12 w-full" />)}
+                  </div>
                 </div>
               ) : targetPrices.length === 0 ? (
                 <div className="text-center py-8 text-slate-500">No target prices available</div>
