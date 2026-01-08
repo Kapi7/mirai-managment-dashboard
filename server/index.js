@@ -54,18 +54,51 @@ app.get('/reports-api/pricing/*', async (req, res) => {
     const queryString = req.url.split('?')[1] || '';
     const url = `${process.env.PYTHON_BACKEND_URL || 'http://localhost:8080'}${path}${queryString ? '?' + queryString : ''}`;
 
-    console.log(`📊 Proxying pricing request: ${path}`);
+    console.log(`📊 Proxying GET pricing request: ${path}`);
 
     const response = await fetch(url);
 
     if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ Python backend error (${response.status}):`, errorText);
       throw new Error(`Python backend error: ${response.status}`);
     }
 
     const result = await response.json();
     res.json(result);
   } catch (error) {
-    console.error('❌ Pricing API error:', error);
+    console.error('❌ Pricing API GET error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST requests for pricing API endpoints
+app.post('/reports-api/pricing/*', async (req, res) => {
+  try {
+    const path = req.path.replace('/reports-api', '');
+    const url = `${process.env.PYTHON_BACKEND_URL || 'http://localhost:8080'}${path}`;
+
+    console.log(`📊 Proxying POST pricing request: ${path}`);
+    console.log(`📦 Request body:`, JSON.stringify(req.body));
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(req.body)
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ Python backend error (${response.status}):`, errorText);
+      throw new Error(`Python backend error: ${response.status}`);
+    }
+
+    const result = await response.json();
+    res.json(result);
+  } catch (error) {
+    console.error('❌ Pricing API POST error:', error);
     res.status(500).json({ error: error.message });
   }
 });
