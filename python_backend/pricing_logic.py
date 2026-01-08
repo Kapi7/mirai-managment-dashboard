@@ -21,7 +21,8 @@ SHOPIFY_API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2025-07")
 _CACHE = {}
 _CACHE_TTL = 300  # seconds
 
-# Persistent competitor data storage (survives cache clears)
+# Persistent competitor data storage (survives cache clears AND server restarts)
+_COMPETITOR_DATA_FILE = os.path.join(os.path.dirname(__file__), "competitor_data.json")
 _COMPETITOR_DATA = {}  # variant_id -> {comp_low, comp_avg, comp_high, ...}
 
 # Persistent update log file
@@ -55,8 +56,35 @@ def _save_update_log() -> None:
         print(f"⚠️ Could not save update log: {e}")
 
 
-# Load existing updates on module import
+def _load_competitor_data() -> Dict[str, Dict[str, Any]]:
+    """Load competitor data from file"""
+    global _COMPETITOR_DATA
+    try:
+        if os.path.exists(_COMPETITOR_DATA_FILE):
+            with open(_COMPETITOR_DATA_FILE, 'r') as f:
+                import json
+                _COMPETITOR_DATA = json.load(f)
+                print(f"📂 Loaded competitor data for {len(_COMPETITOR_DATA)} variants from {_COMPETITOR_DATA_FILE}")
+        return _COMPETITOR_DATA
+    except Exception as e:
+        print(f"⚠️ Could not load competitor data: {e}")
+        return {}
+
+
+def _save_competitor_data() -> None:
+    """Save competitor data to file"""
+    try:
+        import json
+        with open(_COMPETITOR_DATA_FILE, 'w') as f:
+            json.dump(_COMPETITOR_DATA, f, indent=2)
+        print(f"💾 Saved competitor data for {len(_COMPETITOR_DATA)} variants to {_COMPETITOR_DATA_FILE}")
+    except Exception as e:
+        print(f"⚠️ Could not save competitor data: {e}")
+
+
+# Load existing data on module import
 _load_update_log()
+_load_competitor_data()
 
 def _get_cache(key: str):
     """Get cached value if not expired"""
@@ -670,7 +698,7 @@ def get_available_countries() -> List[str]:
 # ================== COMPETITOR DATA STORAGE ==================
 def update_competitor_data(variant_id: str, data: Dict[str, Any]) -> None:
     """
-    Store competitor data for a variant
+    Store competitor data for a variant (persisted to file)
 
     Args:
         variant_id: The variant ID
@@ -681,6 +709,8 @@ def update_competitor_data(variant_id: str, data: Dict[str, Any]) -> None:
     keys_to_clear = [k for k in _CACHE.keys() if k.startswith("target_prices_")]
     for k in keys_to_clear:
         del _CACHE[k]
+    # Save to file for persistence across restarts
+    _save_competitor_data()
 
 
 def get_competitor_data(variant_id: str) -> Optional[Dict[str, Any]]:
@@ -707,5 +737,6 @@ def get_all_competitor_data() -> Dict[str, Dict[str, Any]]:
 
 
 def clear_competitor_data() -> None:
-    """Clear all stored competitor data"""
+    """Clear all stored competitor data (and delete the file)"""
     _COMPETITOR_DATA.clear()
+    _save_competitor_data()

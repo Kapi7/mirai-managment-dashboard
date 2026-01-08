@@ -343,18 +343,21 @@ def normalize_name(name: str) -> str:
     return normalized.strip()
 
 
-def build_name_maps(shopify_variants: Dict[str, Dict]) -> Tuple[Dict[str, str], Dict[str, str]]:
+def build_name_maps(shopify_variants: Dict[str, Dict]) -> Tuple[Dict[str, str], Dict[str, str], Dict[str, str], Dict[str, str]]:
     """
-    Build exact and loose name mapping tables
+    Build exact, loose, product-only, and SKU mapping tables
 
     Returns:
-        (exact_map, loose_map) - both map normalized_name -> variant_gid
+        (exact_map, loose_map, product_map, sku_map) - all map normalized_name/sku -> variant_gid
     """
     exact_map = {}
     loose_map = {}
+    product_map = {}  # Product title only (without variant)
+    sku_map = {}  # SKU -> GID mapping
 
     for gid, info in shopify_variants.items():
         item_name = info["item"]
+        sku = info.get("sku", "")
 
         # Exact match
         exact_key = normalize_name(item_name)
@@ -364,7 +367,19 @@ def build_name_maps(shopify_variants: Dict[str, Dict]) -> Tuple[Dict[str, str], 
         loose_key = re.sub(r'\s+default title$', '', exact_key)
         loose_map[loose_key] = gid
 
-    return exact_map, loose_map
+        # Product-only map (split on " — " and take first part)
+        parts = item_name.split(" — ")
+        if parts:
+            product_only = normalize_name(parts[0])
+            if product_only not in product_map:  # Keep first match
+                product_map[product_only] = gid
+
+        # SKU map (if SKU exists)
+        if sku and sku.strip():
+            sku_lower = sku.strip().lower()
+            sku_map[sku_lower] = gid
+
+    return exact_map, loose_map, product_map, sku_map
 
 
 def map_korealy_to_shopify(
@@ -372,10 +387,12 @@ def map_korealy_to_shopify(
     exact_map: Dict[str, str],
     loose_map: Dict[str, str],
     shop_pid: Optional[str] = None,
-    shopify_variants: Optional[Dict[str, Dict]] = None
+    shopify_variants: Optional[Dict[str, Dict]] = None,
+    product_map: Optional[Dict[str, str]] = None,
+    sku_map: Optional[Dict[str, str]] = None
 ) -> Optional[str]:
     """
-    Map Korealy title to Shopify variant GID
+    Map Korealy title to Shopify variant GID using multiple strategies
 
     Args:
         korealy_title: Product title from Korealy
@@ -383,6 +400,8 @@ def map_korealy_to_shopify(
         loose_map: Loose name -> GID mapping
         shop_pid: Shopify variant ID from Korealy (direct match)
         shopify_variants: Dict of all Shopify variants for fallback matching
+        product_map: Product-only name -> GID mapping
+        sku_map: SKU -> GID mapping
 
     Returns:
         variant_gid or None if no match
@@ -392,6 +411,9 @@ def map_korealy_to_shopify(
         gid = f"gid://shopify/ProductVariant/{shop_pid}"
         if shopify_variants and gid in shopify_variants:
             return gid
+
+    if not korealy_title:
+        return None
 
     normalized = normalize_name(korealy_title)
 
@@ -403,19 +425,62 @@ def map_korealy_to_shopify(
     if normalized in loose_map:
         return loose_map[normalized]
 
-    # 4. Try partial matching - remove common suffixes and try again
+    # 4. Try product-only match (product title without variant)
+    if product_map and normalized in product_map:
+        return product_map[normalized]
+
+    # 5. Try partial matching - remove common suffixes and try again
     # Remove size info like "(100ml)", "[50g]", etc.
     partial = re.sub(r'\s*[\(\[][^)]*[\)\]]\s*', ' ', normalized)
     partial = re.sub(r'\s+', ' ', partial).strip()
-    if partial and partial in loose_map:
-        return loose_map[partial]
+    if partial:
+        if partial in loose_map:
+            return loose_map[partial]
+        if product_map and partial in product_map:
+            return product_map[partial]
 
-    # 5. Try matching without brand prefix (first word)
+    # 6. Try matching without brand prefix (first word)
     words = normalized.split()
     if len(words) > 2:
         without_brand = ' '.join(words[1:])
         if without_brand in loose_map:
             return loose_map[without_brand]
+        if product_map and without_brand in product_map:
+            return product_map[without_brand]
+
+    # 7. Try substring containment - see if Korealy title is contained in any Shopify name
+    if shopify_variants and len(normalized) >= 10:
+        for gid, info in shopify_variants.items():
+            shopify_name = normalize_name(info["item"])
+            # Check if Korealy title is a substantial substring
+            if normalized in shopify_name or shopify_name in normalized:
+                return gid
+
+    # 8. Token-based fuzzy match (>75% of words match)
+    if shopify_variants and len(words) >= 3:
+        korealy_tokens = set(words)
+        best_match = None
+        best_score = 0.75  # Minimum threshold
+
+        for gid, info in shopify_variants.items():
+            shopify_name = normalize_name(info["item"])
+            shopify_tokens = set(shopify_name.split())
+
+            if not shopify_tokens:
+                continue
+
+            # Calculate Jaccard-like score
+            common = len(korealy_tokens & shopify_tokens)
+            total = min(len(korealy_tokens), len(shopify_tokens))  # Use smaller set
+
+            if total > 0:
+                score = common / total
+                if score > best_score:
+                    best_score = score
+                    best_match = gid
+
+        if best_match:
+            return best_match
 
     return None
 
@@ -424,7 +489,9 @@ def reconcile(
     korealy_records: List[Dict],
     shopify_variants: Dict[str, Dict],
     exact_map: Dict[str, str],
-    loose_map: Dict[str, str]
+    loose_map: Dict[str, str],
+    product_map: Optional[Dict[str, str]] = None,
+    sku_map: Optional[Dict[str, str]] = None
 ) -> List[Dict[str, Any]]:
     """
     Reconcile Korealy prices with Shopify COGS
@@ -433,7 +500,7 @@ def reconcile(
         List of reconciliation records with status, delta, pct_diff
     """
     results = []
-    match_methods = {"pid": 0, "exact": 0, "loose": 0, "partial": 0, "none": 0}
+    match_methods = {"pid": 0, "exact": 0, "loose": 0, "partial": 0, "fuzzy": 0, "none": 0}
 
     for record in korealy_records:
         k_title = record.get("title", "")
@@ -445,7 +512,9 @@ def reconcile(
         variant_gid = map_korealy_to_shopify(
             k_title, exact_map, loose_map,
             shop_pid=shop_pid,
-            shopify_variants=shopify_variants
+            shopify_variants=shopify_variants,
+            product_map=product_map,
+            sku_map=sku_map
         )
 
         if not variant_gid:
@@ -537,11 +606,11 @@ def run_reconciliation() -> Dict[str, Any]:
 
         # Step 4: Build name maps
         print("📊 Building name maps...")
-        exact_map, loose_map = build_name_maps(shopify_variants)
+        exact_map, loose_map, product_map, sku_map = build_name_maps(shopify_variants)
 
         # Step 5: Reconcile
         print("📊 Reconciling prices...")
-        results = reconcile(korealy_records, shopify_variants, exact_map, loose_map)
+        results = reconcile(korealy_records, shopify_variants, exact_map, loose_map, product_map, sku_map)
 
         # Step 6: Calculate summary stats
         stats = {
@@ -604,18 +673,35 @@ def sync_korealy_to_shopify(variant_ids: List[str], korealy_cogs_map: Dict[str, 
             variant_gid = f"gid://shopify/ProductVariant/{variant_id}"
             new_cogs = float(korealy_cogs_map[variant_id])
 
-            # Get inventory item ID
+            # Get inventory item ID and current COGS for logging
             inv_query = """
             query($id: ID!) {
                 productVariant(id: $id) {
+                    title
+                    product {
+                        title
+                    }
                     inventoryItem {
                         id
+                        unitCost {
+                            amount
+                        }
                     }
                 }
             }
             """
             inv_result = _shopify_graphql(inv_query, {"id": variant_gid})
-            inv_item_id = inv_result["data"]["productVariant"]["inventoryItem"]["id"]
+            variant_data = inv_result["data"]["productVariant"]
+            inv_item_id = variant_data["inventoryItem"]["id"]
+
+            # Get current COGS and item name for logging
+            old_cogs = 0.0
+            if variant_data["inventoryItem"].get("unitCost"):
+                old_cogs = float(variant_data["inventoryItem"]["unitCost"]["amount"] or 0)
+
+            product_title = variant_data["product"]["title"]
+            variant_title = variant_data["title"]
+            item_name = f"{product_title} — {variant_title}".strip(" — ")
 
             # Update unit cost
             cost_mutation = """
@@ -643,11 +729,24 @@ def sync_korealy_to_shopify(variant_ids: List[str], korealy_cogs_map: Dict[str, 
             if cost_errors:
                 raise RuntimeError("; ".join([e["message"] for e in cost_errors]))
 
+            # Log to update log
+            from pricing_logic import log_price_update
+            log_price_update(
+                variant_id=variant_id,
+                item=item_name,
+                old_price=old_cogs,  # Using COGS as "price" for logging
+                new_price=new_cogs,
+                old_compare_at=0.0,
+                new_compare_at=0.0,
+                status="success",
+                notes=f"Korealy COGS sync: ${old_cogs:.2f} → ${new_cogs:.2f}"
+            )
+
             updated_count += 1
             details.append({
                 "variant_id": variant_id,
                 "status": "success",
-                "message": f"Updated COGS to ${new_cogs:.2f}"
+                "message": f"Updated COGS from ${old_cogs:.2f} to ${new_cogs:.2f}"
             })
 
             time.sleep(0.1)  # Rate limiting
