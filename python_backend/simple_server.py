@@ -4,6 +4,7 @@ Just: fetch data from APIs → calculate metrics → return JSON
 """
 import os
 from datetime import datetime, date, timedelta
+from typing import List, Optional, Dict, Any
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -200,6 +201,131 @@ async def get_countries():
         return {"countries": countries}
     except Exception as e:
         return {"error": str(e), "countries": ["US", "UK", "AU", "CA"]}
+
+
+# Pydantic models for POST endpoints
+class PriceUpdate(BaseModel):
+    """Single price update"""
+    variant_id: str
+    new_price: float
+    new_compare_at: Optional[float] = None
+    compare_at_policy: str = "D"
+    new_cogs: Optional[float] = None
+    notes: str = ""
+    item: str = ""
+    current_price: float = 0.0
+
+
+class ExecuteUpdatesRequest(BaseModel):
+    """Request body for executing price updates"""
+    updates: List[PriceUpdate]
+
+
+class CompetitorPriceCheckRequest(BaseModel):
+    """Request body for competitor price check"""
+    variant_ids: List[str]
+
+
+class KorealySyncRequest(BaseModel):
+    """Request body for syncing Korealy COGS to Shopify"""
+    updates: List[Dict[str, Any]]
+
+
+# POST endpoints for pricing actions
+@app.post("/pricing/execute-updates")
+async def execute_price_updates(req: ExecuteUpdatesRequest):
+    """
+    Execute price updates to Shopify
+    """
+    try:
+        from pricing_execution import execute_updates
+        result = execute_updates(req.updates)
+        return {
+            "success": True,
+            "updated_count": result["updated_count"],
+            "failed_count": result["failed_count"],
+            "message": result["message"],
+            "details": result.get("details", [])
+        }
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"Could not import pricing_execution module: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to execute price updates: {str(e)}")
+
+
+@app.post("/pricing/check-competitor-prices")
+async def check_competitor_prices(req: CompetitorPriceCheckRequest):
+    """
+    Check competitor prices via SerpAPI
+    """
+    try:
+        from pricing_execution import check_competitor_prices as check_prices
+        result = check_prices(req.variant_ids)
+        return {
+            "success": True,
+            "scanned_count": result["scanned_count"],
+            "results": result["results"],
+            "message": result["message"]
+        }
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"Could not import pricing_execution module: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to check competitor prices: {str(e)}")
+
+
+@app.get("/pricing/korealy-reconciliation")
+async def get_korealy_reconciliation():
+    """
+    Run Korealy reconciliation
+    """
+    try:
+        from korealy_reconciliation import run_reconciliation
+        result = run_reconciliation()
+        return {
+            "success": result["success"],
+            "results": result["results"],
+            "stats": result["stats"],
+            "message": result["message"]
+        }
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"Could not import korealy_reconciliation module: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to run Korealy reconciliation: {str(e)}")
+
+
+@app.post("/pricing/korealy-sync")
+async def sync_korealy_to_shopify(req: KorealySyncRequest):
+    """
+    Sync selected Korealy COGS to Shopify
+    """
+    try:
+        from korealy_reconciliation import sync_korealy_to_shopify as sync_cogs
+
+        # Build variant_ids list and cogs_map from updates
+        variant_ids = []
+        korealy_cogs_map = {}
+
+        for update in req.updates:
+            variant_id = update.get("variant_id")
+            new_cogs = update.get("new_cogs")
+
+            if variant_id and new_cogs is not None:
+                variant_ids.append(str(variant_id))
+                korealy_cogs_map[str(variant_id)] = float(new_cogs)
+
+        result = sync_cogs(variant_ids, korealy_cogs_map)
+
+        return {
+            "success": True,
+            "updated_count": result["updated_count"],
+            "failed_count": result["failed_count"],
+            "message": result["message"],
+            "details": result.get("details", [])
+        }
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"Could not import korealy_reconciliation module: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to sync Korealy COGS: {str(e)}")
 
 
 if __name__ == "__main__":
