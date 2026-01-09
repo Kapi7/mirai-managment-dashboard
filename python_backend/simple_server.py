@@ -1,6 +1,8 @@
 """
 Simple FastAPI server for dashboard reports - NO automation, NO Telegram, NO complexity
 Just: fetch data from APIs → calculate metrics → return JSON
+
+Supports PostgreSQL database with fallback to real-time API calls
 """
 import os
 import uuid
@@ -12,6 +14,14 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import pytz
+
+# Database service import (with graceful fallback)
+try:
+    from database.service import db_service
+    DB_SERVICE_AVAILABLE = True
+except ImportError:
+    DB_SERVICE_AVAILABLE = False
+    db_service = None
 
 app = FastAPI(title="Mirai Reports API - Simple", version="2.0.0")
 
@@ -323,6 +333,160 @@ def _run_competitor_scan_background(task_id: str, variant_ids: List[str]):
         task["error"] = str(e)
         task["completed_at"] = datetime.utcnow().isoformat() + "Z"
 
+
+def _run_korealy_sync_background(task_id: str, variant_ids: List[str], korealy_cogs_map: Dict[str, float]):
+    """Run Korealy COGS sync in background thread with progress tracking"""
+    import time
+
+    task = _BACKGROUND_TASKS[task_id]
+    task["status"] = "running"
+    task["started_at"] = datetime.utcnow().isoformat() + "Z"
+
+    try:
+        from korealy_reconciliation import _shopify_graphql
+        from pricing_logic import log_price_update
+
+        results = []
+        total = len(variant_ids)
+        updated_count = 0
+        failed_count = 0
+        skipped_count = 0
+
+        for idx, variant_id in enumerate(variant_ids):
+            task["progress"] = idx
+            task["current_item"] = f"Variant {variant_id}"
+
+            if variant_id not in korealy_cogs_map:
+                failed_count += 1
+                results.append({
+                    "variant_id": variant_id,
+                    "status": "failed",
+                    "message": "No Korealy COGS provided"
+                })
+                continue
+
+            try:
+                variant_gid = f"gid://shopify/ProductVariant/{variant_id}"
+                new_cogs = float(korealy_cogs_map[variant_id])
+
+                # Get inventory item ID and current COGS
+                inv_query = """
+                query($id: ID!) {
+                    productVariant(id: $id) {
+                        title
+                        product { title }
+                        inventoryItem {
+                            id
+                            unitCost {
+                                amount
+                                currencyCode
+                            }
+                        }
+                    }
+                }
+                """
+                inv_result = _shopify_graphql(inv_query, {"id": variant_gid})
+
+                if not inv_result.get("data", {}).get("productVariant"):
+                    raise RuntimeError(f"Variant not found")
+
+                variant_data = inv_result["data"]["productVariant"]
+                if not variant_data.get("inventoryItem"):
+                    raise RuntimeError(f"No inventory item found")
+
+                inv_item_id = variant_data["inventoryItem"]["id"]
+
+                # Get current COGS
+                old_cogs = 0.0
+                if variant_data["inventoryItem"].get("unitCost"):
+                    old_cogs = float(variant_data["inventoryItem"]["unitCost"]["amount"] or 0)
+
+                product_title = variant_data["product"]["title"]
+                variant_title = variant_data["title"]
+                item_name = f"{product_title} — {variant_title}".strip(" — ")
+
+                task["current_item"] = item_name
+
+                # Skip if COGS already matches
+                if abs(old_cogs - new_cogs) < 0.01:
+                    skipped_count += 1
+                    results.append({
+                        "variant_id": variant_id,
+                        "item": item_name,
+                        "status": "skipped",
+                        "message": f"COGS already ${new_cogs:.2f}"
+                    })
+                    continue
+
+                # Update unit cost
+                cost_mutation = """
+                mutation inventoryItemUpdate($id: ID!, $input: InventoryItemInput!) {
+                    inventoryItemUpdate(id: $id, input: $input) {
+                        inventoryItem {
+                            id
+                            unitCost { amount currencyCode }
+                        }
+                        userErrors { field message }
+                    }
+                }
+                """
+                cost_result = _shopify_graphql(cost_mutation, {
+                    "id": inv_item_id,
+                    "input": {"cost": new_cogs}
+                })
+
+                cost_errors = cost_result.get("data", {}).get("inventoryItemUpdate", {}).get("userErrors", [])
+                if cost_errors:
+                    error_msgs = "; ".join([e.get("message", str(e)) for e in cost_errors])
+                    raise RuntimeError(f"Shopify errors: {error_msgs}")
+
+                # Log the update
+                log_price_update(
+                    variant_id=variant_id,
+                    item=item_name,
+                    old_price=old_cogs,
+                    new_price=new_cogs,
+                    old_compare_at=0.0,
+                    new_compare_at=0.0,
+                    status="success",
+                    notes=f"KOREALY_COGS|{old_cogs:.2f}|{new_cogs:.2f}"
+                )
+
+                updated_count += 1
+                results.append({
+                    "variant_id": variant_id,
+                    "item": item_name,
+                    "status": "success",
+                    "old_cogs": old_cogs,
+                    "new_cogs": new_cogs,
+                    "message": f"Updated ${old_cogs:.2f} → ${new_cogs:.2f}"
+                })
+
+                time.sleep(0.15)  # Rate limiting
+
+            except Exception as e:
+                failed_count += 1
+                results.append({
+                    "variant_id": variant_id,
+                    "status": "failed",
+                    "message": str(e)
+                })
+
+        task["status"] = "completed"
+        task["progress"] = total
+        task["results"] = results
+        task["updated_count"] = updated_count
+        task["failed_count"] = failed_count
+        task["skipped_count"] = skipped_count
+        task["completed_at"] = datetime.utcnow().isoformat() + "Z"
+        task["message"] = f"Updated {updated_count}, skipped {skipped_count}, failed {failed_count}"
+
+    except Exception as e:
+        task["status"] = "failed"
+        task["error"] = str(e)
+        task["completed_at"] = datetime.utcnow().isoformat() + "Z"
+
+
 # CORS - read allowed origins from environment
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
 if CORS_ORIGINS == "*":
@@ -379,6 +543,19 @@ async def startup_event():
     except Exception as e:
         print(f"  ⚠️ Could not check pricing data: {e}")
 
+    # Database status
+    print("\n🗄️ Database Status:")
+    if DB_SERVICE_AVAILABLE:
+        if db_service.is_available():
+            print("  ✅ Database configured and available")
+            print("  📊 Data will be served from database (with API fallback)")
+        else:
+            print("  ⚠️ Database service loaded but DATABASE_URL not configured")
+            print("  📊 Data will be served from real-time API calls")
+    else:
+        print("  ⚠️ Database service not available (import error)")
+        print("  📊 Data will be served from real-time API calls")
+
     print("\n" + "=" * 60)
     print()
 
@@ -393,11 +570,47 @@ async def health():
     return {"status": "ok", "message": "Simple FastAPI is running"}
 
 
+@app.get("/db-status")
+async def db_status():
+    """
+    Check database connection status
+    """
+    if not DB_SERVICE_AVAILABLE:
+        return {
+            "available": False,
+            "configured": False,
+            "message": "Database service not installed"
+        }
+
+    if not db_service.is_available():
+        return {
+            "available": False,
+            "configured": False,
+            "message": "DATABASE_URL not configured"
+        }
+
+    # Try to check connection
+    try:
+        from database.connection import check_db_connection
+        is_connected = await check_db_connection()
+        return {
+            "available": is_connected,
+            "configured": True,
+            "message": "Database connected" if is_connected else "Database connection failed"
+        }
+    except Exception as e:
+        return {
+            "available": False,
+            "configured": True,
+            "message": f"Connection check failed: {e}"
+        }
+
+
 @app.post("/daily-report")
 async def daily_report(req: DateRangeRequest):
     """
     Return daily metrics for the date range.
-    Uses real data from Shopify, Google Ads, Meta, etc.
+    Tries database first, falls back to real-time API calls.
     """
     try:
         # Parse dates
@@ -407,12 +620,20 @@ async def daily_report(req: DateRangeRequest):
         if start_date > end_date:
             raise HTTPException(status_code=400, detail="start_date must be <= end_date")
 
-        # Import the actual data fetching logic
-        from report_logic import fetch_daily_reports
+        # Try database first
+        if DB_SERVICE_AVAILABLE and db_service.is_available():
+            try:
+                db_data = await db_service.get_daily_kpis(start_date, end_date)
+                if db_data is not None:
+                    return {"data": db_data, "source": "database"}
+            except Exception as db_err:
+                print(f"⚠️ Database query failed, falling back to API: {db_err}")
 
+        # Fallback to API-based logic
+        from report_logic import fetch_daily_reports
         data = fetch_daily_reports(start_date, end_date)
 
-        return {"data": data}
+        return {"data": data, "source": "api"}
 
     except ImportError as e:
         # Log import error and return error response
@@ -431,12 +652,24 @@ async def daily_report(req: DateRangeRequest):
 async def get_items(market: str = None):
     """
     Get items list with optional market filter
+    Tries database first, falls back to real-time API calls.
     Query param: ?market=US
     """
     try:
+        # Try database first
+        if DB_SERVICE_AVAILABLE and db_service.is_available():
+            try:
+                db_data = await db_service.get_items()
+                if db_data is not None:
+                    # Apply market filter if needed (stored data doesn't have market)
+                    return {"data": db_data, "source": "database"}
+            except Exception as db_err:
+                print(f"⚠️ Database query failed, falling back to API: {db_err}")
+
+        # Fallback to API-based logic
         from pricing_logic import fetch_items
         data = fetch_items(market_filter=market)
-        return {"data": data}
+        return {"data": data, "source": "api"}
     except Exception as e:
         return {"error": str(e), "data": []}
 
@@ -809,13 +1042,12 @@ async def refresh_cache():
 
 
 @app.post("/pricing/korealy-sync")
-async def sync_korealy_to_shopify(req: KorealySyncRequest):
+async def sync_korealy_to_shopify_endpoint(req: KorealySyncRequest):
     """
     Sync selected Korealy COGS to Shopify
+    For batches > 3, runs in background with progress tracking
     """
     try:
-        from korealy_reconciliation import sync_korealy_to_shopify as sync_cogs
-
         # Build variant_ids list and cogs_map from updates
         variant_ids = []
         korealy_cogs_map = {}
@@ -853,22 +1085,83 @@ async def sync_korealy_to_shopify(req: KorealySyncRequest):
                 "details": skipped
             }
 
-        result = sync_cogs(variant_ids, korealy_cogs_map)
+        num_updates = len(variant_ids)
+
+        # For small batches (<=3), run synchronously
+        if num_updates <= 3:
+            from korealy_reconciliation import sync_korealy_to_shopify as sync_cogs
+            result = sync_cogs(variant_ids, korealy_cogs_map)
+
+            return {
+                "success": True,
+                "updated_count": result["updated_count"],
+                "failed_count": result["failed_count"],
+                "skipped_count": len(skipped),
+                "message": result["message"] + (f" ({len(skipped)} pre-skipped)" if skipped else ""),
+                "details": result.get("details", [])
+            }
+
+        # For larger batches, run in background
+        task_id = str(uuid.uuid4())
+        _BACKGROUND_TASKS[task_id] = {
+            "task_id": task_id,
+            "type": "korealy_sync",
+            "status": "pending",
+            "total": num_updates,
+            "progress": 0,
+            "current_item": "",
+            "created_at": datetime.utcnow().isoformat() + "Z",
+            "results": [],
+            "updated_count": 0,
+            "failed_count": 0,
+            "skipped_count": len(skipped),
+            "message": ""
+        }
+
+        thread = threading.Thread(target=_run_korealy_sync_background, args=(task_id, variant_ids, korealy_cogs_map))
+        thread.daemon = True
+        thread.start()
 
         return {
             "success": True,
-            "updated_count": result["updated_count"],
-            "failed_count": result["failed_count"],
-            "skipped_count": len(skipped),
-            "message": result["message"] + (f" ({len(skipped)} skipped)" if skipped else ""),
-            "details": result.get("details", [])
+            "background": True,
+            "task_id": task_id,
+            "message": f"Started background sync for {num_updates} variants. Poll /pricing/korealy-sync-status/{task_id} for progress."
         }
+
     except ImportError as e:
         raise HTTPException(status_code=500, detail=f"Could not import korealy_reconciliation module: {e}")
     except Exception as e:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to sync Korealy COGS: {str(e)}")
+
+
+@app.get("/pricing/korealy-sync-status/{task_id}")
+async def get_korealy_sync_status(task_id: str):
+    """
+    Get status of a background Korealy sync
+    """
+    if task_id not in _BACKGROUND_TASKS:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task = _BACKGROUND_TASKS[task_id]
+    return {
+        "task_id": task_id,
+        "status": task["status"],
+        "total": task["total"],
+        "progress": task["progress"],
+        "current_item": task.get("current_item", ""),
+        "updated_count": task.get("updated_count", 0),
+        "failed_count": task.get("failed_count", 0),
+        "skipped_count": task.get("skipped_count", 0),
+        "results": task.get("results", []) if task["status"] == "completed" else [],
+        "message": task.get("message", ""),
+        "error": task.get("error"),
+        "created_at": task.get("created_at"),
+        "started_at": task.get("started_at"),
+        "completed_at": task.get("completed_at")
+    }
 
 
 # ==================== ORDER REPORT ENDPOINT ====================
@@ -882,6 +1175,7 @@ class OrderReportRequest(BaseModel):
 async def order_report(req: OrderReportRequest):
     """
     Return order-level breakdown with analytics for the date range.
+    Tries database first, falls back to real-time API calls.
     """
     try:
         start_date = datetime.strptime(req.start_date, "%Y-%m-%d").date()
@@ -890,10 +1184,20 @@ async def order_report(req: OrderReportRequest):
         if start_date > end_date:
             raise HTTPException(status_code=400, detail="start_date must be <= end_date")
 
+        # Try database first
+        if DB_SERVICE_AVAILABLE and db_service.is_available():
+            try:
+                db_data = await db_service.get_orders(start_date, end_date)
+                if db_data is not None:
+                    return {"data": db_data, "source": "database"}
+            except Exception as db_err:
+                print(f"⚠️ Database query failed, falling back to API: {db_err}")
+
+        # Fallback to API-based logic
         from order_report_logic import fetch_order_report
         data = fetch_order_report(start_date, end_date)
 
-        return {"data": data}
+        return {"data": data, "source": "api"}
 
     except ImportError as e:
         print(f"❌ Import error in order_report: {e}")
@@ -911,15 +1215,26 @@ async def order_report(req: OrderReportRequest):
 async def get_bestsellers(days: int = 30):
     """
     Get best selling products for the specified number of days.
+    Tries database first, falls back to real-time API calls.
     Supported values: 7, 30, 60
     """
     if days not in [7, 30, 60]:
         raise HTTPException(status_code=400, detail="Days must be 7, 30, or 60")
 
     try:
+        # Try database first
+        if DB_SERVICE_AVAILABLE and db_service.is_available():
+            try:
+                db_data = await db_service.get_bestsellers(days=days)
+                if db_data is not None:
+                    return {"success": True, "data": db_data, "source": "database"}
+            except Exception as db_err:
+                print(f"⚠️ Database query failed, falling back to API: {db_err}")
+
+        # Fallback to API-based logic
         from bestsellers_logic import fetch_bestsellers
         data = fetch_bestsellers(days)
-        return {"success": True, "data": data}
+        return {"success": True, "data": data, "source": "api"}
     except ImportError as e:
         print(f"❌ Import error in get_bestsellers: {e}")
         raise HTTPException(status_code=500, detail=f"Module import error: {e}")

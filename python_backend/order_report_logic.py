@@ -51,8 +51,9 @@ def _shopify_channel(order: dict) -> str:
 def _line_nodes(order: dict) -> list:
     """Get line items from order"""
     li = order.get("lineItems") or {}
-    edges = li.get("edges") or []
-    return [e.get("node") or {} for e in edges]
+    # GraphQL returns lineItems with "nodes" structure (not "edges")
+    nodes = li.get("nodes") or []
+    return nodes
 
 
 def fetch_order_report(start_date: date, end_date: date) -> Dict[str, Any]:
@@ -152,9 +153,17 @@ def fetch_order_report(start_date: date, end_date: date) -> Dict[str, Any]:
                 if qty > 0 and unit_cost:
                     cogs += unit_cost * qty
 
+                # Extract title from variant structure
+                variant = li.get("variant") or {}
+                product = variant.get("product") or {}
+                product_title = product.get("title", "")
+                variant_title = variant.get("title", "")
+                sku = li.get("sku") or variant.get("sku") or ""
+
                 items.append({
-                    "title": li.get("title", ""),
-                    "variant": li.get("variantTitle", ""),
+                    "title": product_title,
+                    "variant": variant_title,
+                    "sku": sku,
                     "quantity": qty,
                     "price": line_gross,
                     "unit_cost": unit_cost

@@ -38,8 +38,9 @@ def _money_at(obj: dict, path: list) -> float:
 def _line_nodes(order: dict) -> list:
     """Get line items from order"""
     li = order.get("lineItems") or {}
-    edges = li.get("edges") or []
-    return [e.get("node") or {} for e in edges]
+    # GraphQL returns lineItems with "nodes" structure (not "edges")
+    nodes = li.get("nodes") or []
+    return nodes
 
 
 def fetch_bestsellers(days: int = 30) -> Dict[str, Any]:
@@ -128,9 +129,11 @@ def fetch_bestsellers(days: int = 30) -> Dict[str, Any]:
                 if not variant_id:
                     continue
 
-                product_title = li.get("title", "") or (li.get("product") or {}).get("title", "")
-                variant_title = li.get("variantTitle", "") or variant.get("title", "")
-                sku = variant.get("sku", "") or li.get("sku", "")
+                # Extract titles from variant/product structure
+                product = variant.get("product") or {}
+                product_title = product.get("title", "")
+                variant_title = variant.get("title", "")
+                sku = li.get("sku", "") or variant.get("sku", "")
 
                 # Calculate line financials
                 line_gross = _money_at(li, ["originalTotalSet", "shopMoney", "amount"])

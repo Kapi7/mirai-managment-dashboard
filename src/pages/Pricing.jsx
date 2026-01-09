@@ -1094,33 +1094,6 @@ export default function Pricing() {
                   </div>
                 </div>
 
-                {/* Background Update Progress */}
-                {backgroundUpdate && (
-                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-semibold text-blue-800">
-                        {backgroundUpdate.status === 'running' ? '⏳ Updating prices in background...' :
-                         backgroundUpdate.status === 'completed' ? '✅ Update complete!' :
-                         backgroundUpdate.status === 'failed' ? '❌ Update failed' : '⏳ Starting...'}
-                      </span>
-                      <span className="text-sm text-blue-700">
-                        {backgroundUpdate.progress} / {backgroundUpdate.total}
-                      </span>
-                    </div>
-                    <div className="w-full bg-blue-200 rounded-full h-2.5 mb-2">
-                      <div
-                        className="bg-blue-500 h-2.5 rounded-full transition-all duration-300"
-                        style={{ width: `${backgroundUpdate.total > 0 ? (backgroundUpdate.progress / backgroundUpdate.total) * 100 : 0}%` }}
-                      ></div>
-                    </div>
-                    {backgroundUpdate.currentItem && (
-                      <p className="text-xs text-blue-700 truncate">
-                        Current: {backgroundUpdate.currentItem}
-                      </p>
-                    )}
-                  </div>
-                )}
-
                 {/* Instructions */}
                 <div className="bg-slate-50 p-4 rounded-lg text-sm text-slate-600">
                   <p className="font-semibold mb-2">How to use:</p>
@@ -2103,33 +2076,6 @@ export default function Pricing() {
                       </div>
                     </div>
 
-                    {/* Background Scan Progress */}
-                    {backgroundScan && (
-                      <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-sm font-semibold text-yellow-800">
-                            {backgroundScan.status === 'running' ? '⏳ Scanning in background...' :
-                             backgroundScan.status === 'completed' ? '✅ Scan complete!' :
-                             backgroundScan.status === 'failed' ? '❌ Scan failed' : '⏳ Starting...'}
-                          </span>
-                          <span className="text-sm text-yellow-700">
-                            {backgroundScan.progress} / {backgroundScan.total}
-                          </span>
-                        </div>
-                        <div className="w-full bg-yellow-200 rounded-full h-2.5 mb-2">
-                          <div
-                            className="bg-yellow-500 h-2.5 rounded-full transition-all duration-300"
-                            style={{ width: `${backgroundScan.total > 0 ? (backgroundScan.progress / backgroundScan.total) * 100 : 0}%` }}
-                          ></div>
-                        </div>
-                        {backgroundScan.currentItem && (
-                          <p className="text-xs text-yellow-700 truncate">
-                            Current: {backgroundScan.currentItem}
-                          </p>
-                        )}
-                      </div>
-                    )}
-
                     <div className="mt-3 text-xs text-blue-700 bg-blue-100 p-2 rounded">
                       <p className="font-semibold mb-1">🧠 Smart Analysis Features:</p>
                       <ul className="list-disc list-inside ml-2 space-y-1">
@@ -2481,6 +2427,46 @@ export default function Pricing() {
 
                         const result = await response.json();
 
+                        // Handle background task
+                        if (result.background && result.task_id) {
+                          setCurrentScanTask({ taskId: result.task_id, type: 'korealy_sync' });
+                          setScanProgress({ current: 0, total: updates.length, status: 'running', currentItem: '' });
+
+                          // Poll for status
+                          const pollInterval = setInterval(async () => {
+                            try {
+                              const statusRes = await fetch(`${API_URL}/pricing/korealy-sync-status/${result.task_id}`);
+                              const status = await statusRes.json();
+
+                              setScanProgress({
+                                current: status.progress,
+                                total: status.total,
+                                status: status.status,
+                                currentItem: status.current_item
+                              });
+
+                              if (status.status === 'completed' || status.status === 'failed') {
+                                clearInterval(pollInterval);
+                                setCurrentScanTask(null);
+                                setScanProgress(null);
+                                setLoading(false);
+
+                                if (status.status === 'completed') {
+                                  alert(`✅ Synced ${status.updated_count} items to Shopify (${status.skipped_count} skipped, ${status.failed_count} failed)`);
+                                  setKorealySelectedRows(new Set());
+                                  fetchKorealyReconciliation(); // Refresh
+                                } else {
+                                  alert(`❌ Sync failed: ${status.error || status.message}`);
+                                }
+                              }
+                            } catch (pollErr) {
+                              console.error('Poll error:', pollErr);
+                            }
+                          }, 1000);
+                          return; // Don't setLoading(false) - let the polling handle it
+                        }
+
+                        // Synchronous result
                         if (result.success) {
                           alert(`✅ Synced ${result.updated_count} items to Shopify`);
                           setKorealySelectedRows(new Set());
@@ -2491,10 +2477,10 @@ export default function Pricing() {
                       } catch (err) {
                         alert(`❌ Sync failed: ${err.message}`);
                       } finally {
-                        setLoading(false);
+                        if (!currentScanTask) setLoading(false);
                       }
                     }}
-                    disabled={korealySelectedRows.size === 0}
+                    disabled={korealySelectedRows.size === 0 || loading}
                   >
                     💾 Sync {korealySelectedRows.size > 0 ? korealySelectedRows.size : ''} to Shopify
                   </Button>
