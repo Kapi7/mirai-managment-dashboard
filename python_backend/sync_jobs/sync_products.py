@@ -132,8 +132,15 @@ class SyncProducts(BaseSyncJob):
                     token=token
                 )
 
+                # Debug: Check for errors
+                if result.get("errors"):
+                    print(f"  ⚠️ GraphQL errors: {result['errors']}")
+
                 products_data = result.get("data", {}).get("products", {})
                 edges = products_data.get("edges", [])
+
+                if cursor is None:  # First page
+                    print(f"  Found {len(edges)} products on first page")
 
                 async with get_db() as db:
                     for edge in edges:
