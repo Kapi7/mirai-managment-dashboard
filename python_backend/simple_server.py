@@ -20,6 +20,135 @@ app = FastAPI(title="Mirai Reports API - Simple", version="2.0.0")
 _BACKGROUND_TASKS: Dict[str, Dict[str, Any]] = {}
 
 
+def _run_price_update_background(task_id: str, updates: List[Dict[str, Any]]):
+    """Run price updates in background thread with progress tracking"""
+    import time
+    import requests
+
+    task = _BACKGROUND_TASKS[task_id]
+    task["status"] = "running"
+    task["started_at"] = datetime.utcnow().isoformat() + "Z"
+
+    try:
+        SHOPIFY_STORE = os.getenv("SHOPIFY_STORE")
+        SHOPIFY_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN") or os.getenv("SHOPIFY_TOKEN")
+        SHOPIFY_API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2025-07")
+
+        results = []
+        total = len(updates)
+        updated_count = 0
+        failed_count = 0
+
+        for idx, update in enumerate(updates):
+            task["progress"] = idx
+            task["current_item"] = update.get("item", f"Variant {update.get('variant_id', '?')}")
+
+            try:
+                variant_id = update.get("variant_id")
+                new_price = float(update.get("new_price", 0))
+                policy = update.get("compare_at_policy", "D")
+                item_name = update.get("item", "")
+
+                variant_gid = f"gid://shopify/ProductVariant/{variant_id}"
+                url = f"https://{SHOPIFY_STORE}/admin/api/{SHOPIFY_API_VERSION}/graphql.json"
+                headers = {
+                    "Content-Type": "application/json",
+                    "X-Shopify-Access-Token": SHOPIFY_TOKEN
+                }
+
+                # Get product ID and current prices
+                query = """
+                query($id: ID!) {
+                    productVariant(id: $id) {
+                        price
+                        compareAtPrice
+                        product { id }
+                    }
+                }
+                """
+                response = requests.post(url, json={"query": query, "variables": {"id": variant_gid}}, headers=headers, timeout=30)
+                data = response.json()
+                variant = data["data"]["productVariant"]
+                product_id = variant["product"]["id"]
+                current_price = float(variant["price"]) if variant["price"] else 0.0
+                current_compare_at = float(variant["compareAtPrice"]) if variant["compareAtPrice"] else 0.0
+
+                # Calculate compare_at based on policy
+                if policy == "B":
+                    new_compare_at = new_price
+                elif policy == "D" and current_compare_at > 0 and current_price > 0:
+                    discount_pct = (current_compare_at - current_price) / current_compare_at
+                    new_compare_at = new_price / (1 - discount_pct) if discount_pct < 1 else new_price
+                else:
+                    new_compare_at = None
+
+                # Update price
+                mutation = """
+                mutation productVariantsBulkUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+                    productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+                        productVariants { id price compareAtPrice }
+                        userErrors { field message }
+                    }
+                }
+                """
+                variant_input = {"id": variant_gid, "price": str(new_price)}
+                if new_compare_at is not None:
+                    variant_input["compareAtPrice"] = str(new_compare_at)
+
+                result = requests.post(url, json={
+                    "query": mutation,
+                    "variables": {"productId": product_id, "variants": [variant_input]}
+                }, headers=headers, timeout=30)
+                result_data = result.json()
+
+                user_errors = result_data.get("data", {}).get("productVariantsBulkUpdate", {}).get("userErrors", [])
+                if user_errors:
+                    raise RuntimeError("; ".join([e["message"] for e in user_errors]))
+
+                # Log the update
+                from pricing_logic import log_price_update
+                log_price_update(
+                    variant_id=variant_id,
+                    item=item_name,
+                    old_price=current_price,
+                    new_price=new_price,
+                    old_compare_at=current_compare_at,
+                    new_compare_at=new_compare_at or 0.0,
+                    status="success",
+                    notes=update.get("notes", "")
+                )
+
+                updated_count += 1
+                results.append({
+                    "variant_id": variant_id,
+                    "status": "success",
+                    "message": f"Updated to ${new_price:.2f}"
+                })
+
+                time.sleep(0.1)
+
+            except Exception as e:
+                failed_count += 1
+                results.append({
+                    "variant_id": update.get("variant_id"),
+                    "status": "failed",
+                    "message": str(e)
+                })
+
+        task["status"] = "completed"
+        task["progress"] = total
+        task["results"] = results
+        task["updated_count"] = updated_count
+        task["failed_count"] = failed_count
+        task["completed_at"] = datetime.utcnow().isoformat() + "Z"
+        task["message"] = f"Updated {updated_count} of {total} variants"
+
+    except Exception as e:
+        task["status"] = "failed"
+        task["error"] = str(e)
+        task["completed_at"] = datetime.utcnow().isoformat() + "Z"
+
+
 def _run_competitor_scan_background(task_id: str, variant_ids: List[str]):
     """Run competitor price scan in background thread with progress tracking"""
     import time
@@ -412,42 +541,111 @@ class KorealySyncRequest(BaseModel):
 async def execute_price_updates(req: ExecuteUpdatesRequest):
     """
     Execute price updates to Shopify
+    For large batches (>5), runs in background with progress tracking
     """
-    try:
-        from pricing_execution import execute_updates
+    num_updates = len(req.updates)
 
-        print(f"📝 Executing {len(req.updates)} price updates...")
-        result = execute_updates(req.updates)
+    # For small batches, run synchronously
+    if num_updates <= 5:
+        try:
+            from pricing_execution import execute_updates
 
-        # Invalidate cache after updates
-        if result["updated_count"] > 0:
+            print(f"📝 Executing {num_updates} price updates...")
+            result = execute_updates(req.updates)
+
+            if result["updated_count"] > 0:
+                from pricing_logic import invalidate_cache
+                invalidate_cache()
+
+            print(f"✅ Price updates complete: {result['updated_count']} updated, {result['failed_count']} failed")
+
+            return {
+                "success": True,
+                "updated_count": result["updated_count"],
+                "failed_count": result["failed_count"],
+                "message": result["message"],
+                "details": result.get("details", [])
+            }
+        except Exception as e:
+            print(f"❌ Error in execute_price_updates: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to execute price updates: {str(e)}")
+
+    # For larger batches, run in background
+    task_id = str(uuid.uuid4())
+
+    # Convert Pydantic models to dicts for background thread
+    updates_data = [
+        {
+            "variant_id": u.variant_id,
+            "new_price": u.new_price,
+            "new_compare_at": u.new_compare_at,
+            "compare_at_policy": u.compare_at_policy,
+            "new_cogs": u.new_cogs,
+            "notes": u.notes,
+            "item": u.item,
+            "current_price": u.current_price
+        }
+        for u in req.updates
+    ]
+
+    _BACKGROUND_TASKS[task_id] = {
+        "task_id": task_id,
+        "type": "price_update",
+        "status": "pending",
+        "total": num_updates,
+        "progress": 0,
+        "current_item": "",
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "results": [],
+        "updated_count": 0,
+        "failed_count": 0,
+        "message": ""
+    }
+
+    thread = threading.Thread(target=_run_price_update_background, args=(task_id, updates_data))
+    thread.daemon = True
+    thread.start()
+
+    return {
+        "success": True,
+        "background": True,
+        "task_id": task_id,
+        "message": f"Started background update for {num_updates} variants. Poll /pricing/update-status/{task_id} for progress."
+    }
+
+
+@app.get("/pricing/update-status/{task_id}")
+async def get_update_status(task_id: str):
+    """
+    Get status of a background price update
+    """
+    if task_id not in _BACKGROUND_TASKS:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task = _BACKGROUND_TASKS[task_id]
+
+    # Invalidate cache when completed
+    if task["status"] == "completed" and task.get("updated_count", 0) > 0:
+        try:
             from pricing_logic import invalidate_cache
             invalidate_cache()
+        except:
+            pass
 
-        # Log the result
-        print(f"✅ Price updates complete: {result['updated_count']} updated, {result['failed_count']} failed")
-        if result.get("details"):
-            for detail in result["details"]:
-                status = detail.get("status", "unknown")
-                vid = detail.get("variant_id", "?")
-                msg = detail.get("message", "")
-                print(f"   - {vid}: {status} - {msg}")
-
-        return {
-            "success": True,
-            "updated_count": result["updated_count"],
-            "failed_count": result["failed_count"],
-            "message": result["message"],
-            "details": result.get("details", [])
-        }
-    except ImportError as e:
-        print(f"❌ Import error in execute_price_updates: {e}")
-        raise HTTPException(status_code=500, detail=f"Could not import pricing_execution module: {e}")
-    except Exception as e:
-        print(f"❌ Error in execute_price_updates: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to execute price updates: {str(e)}")
+    return {
+        "task_id": task_id,
+        "status": task["status"],
+        "total": task["total"],
+        "progress": task["progress"],
+        "current_item": task.get("current_item", ""),
+        "updated_count": task.get("updated_count", 0),
+        "failed_count": task.get("failed_count", 0),
+        "results": task.get("results", []) if task["status"] == "completed" else [],
+        "message": task.get("message", ""),
+        "error": task.get("error"),
+        "created_at": task.get("created_at"),
+        "completed_at": task.get("completed_at")
+    }
 
 
 @app.post("/pricing/check-competitor-prices")
@@ -621,14 +819,39 @@ async def sync_korealy_to_shopify(req: KorealySyncRequest):
         # Build variant_ids list and cogs_map from updates
         variant_ids = []
         korealy_cogs_map = {}
+        skipped = []
 
         for update in req.updates:
             variant_id = update.get("variant_id")
             new_cogs = update.get("new_cogs")
 
-            if variant_id and new_cogs is not None:
-                variant_ids.append(str(variant_id))
-                korealy_cogs_map[str(variant_id)] = float(new_cogs)
+            # Skip records without valid variant_id or cogs
+            if not variant_id or variant_id == "null" or variant_id == "None":
+                skipped.append({
+                    "reason": "No Shopify mapping",
+                    "korealy_title": update.get("korealy_title", "Unknown")
+                })
+                continue
+
+            if new_cogs is None:
+                skipped.append({
+                    "reason": "No Korealy COGS value",
+                    "variant_id": variant_id
+                })
+                continue
+
+            variant_ids.append(str(variant_id))
+            korealy_cogs_map[str(variant_id)] = float(new_cogs)
+
+        if not variant_ids:
+            return {
+                "success": False,
+                "updated_count": 0,
+                "failed_count": 0,
+                "skipped_count": len(skipped),
+                "message": f"No valid items to sync. {len(skipped)} items skipped (no Shopify mapping or missing COGS).",
+                "details": skipped
+            }
 
         result = sync_cogs(variant_ids, korealy_cogs_map)
 
@@ -636,13 +859,50 @@ async def sync_korealy_to_shopify(req: KorealySyncRequest):
             "success": True,
             "updated_count": result["updated_count"],
             "failed_count": result["failed_count"],
-            "message": result["message"],
+            "skipped_count": len(skipped),
+            "message": result["message"] + (f" ({len(skipped)} skipped)" if skipped else ""),
             "details": result.get("details", [])
         }
     except ImportError as e:
         raise HTTPException(status_code=500, detail=f"Could not import korealy_reconciliation module: {e}")
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to sync Korealy COGS: {str(e)}")
+
+
+# ==================== ORDER REPORT ENDPOINT ====================
+
+class OrderReportRequest(BaseModel):
+    start_date: str  # YYYY-MM-DD
+    end_date: str    # YYYY-MM-DD
+
+
+@app.post("/order-report")
+async def order_report(req: OrderReportRequest):
+    """
+    Return order-level breakdown with analytics for the date range.
+    """
+    try:
+        start_date = datetime.strptime(req.start_date, "%Y-%m-%d").date()
+        end_date = datetime.strptime(req.end_date, "%Y-%m-%d").date()
+
+        if start_date > end_date:
+            raise HTTPException(status_code=400, detail="start_date must be <= end_date")
+
+        from order_report_logic import fetch_order_report
+        data = fetch_order_report(start_date, end_date)
+
+        return {"data": data}
+
+    except ImportError as e:
+        print(f"❌ Import error in order_report: {e}")
+        raise HTTPException(status_code=500, detail=f"Module import error: {e}")
+    except Exception as e:
+        print(f"❌ Error in order_report: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e), "data": []}
 
 
 if __name__ == "__main__":

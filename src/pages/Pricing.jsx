@@ -57,6 +57,7 @@ export default function Pricing() {
   const [scanHistorySortColumn, setScanHistorySortColumn] = useState('timestamp');
   const [scanHistorySortDirection, setScanHistorySortDirection] = useState('desc');
   const [backgroundScan, setBackgroundScan] = useState(null); // { taskId, status, progress, total, currentItem }
+  const [backgroundUpdate, setBackgroundUpdate] = useState(null); // { taskId, status, progress, total, currentItem }
 
   // Product Management tab state
   const [productManagementActions, setProductManagementActions] = useState([]);
@@ -960,7 +961,6 @@ export default function Pricing() {
                           return;
                         }
 
-                        setLoading(true);
                         try {
                           const response = await fetch(`${API_URL}/pricing/execute-updates`, {
                             method: 'POST',
@@ -975,13 +975,55 @@ export default function Pricing() {
 
                           const result = await response.json();
 
-                          if (result.success) {
+                          // Check if this is a background task
+                          if (result.background && result.task_id) {
+                            setBackgroundUpdate({
+                              taskId: result.task_id,
+                              status: 'running',
+                              progress: 0,
+                              total: priceUpdates.length,
+                              currentItem: 'Starting...'
+                            });
+
+                            // Poll for status
+                            const pollInterval = setInterval(async () => {
+                              try {
+                                const statusResponse = await fetch(`${API_URL}/pricing/update-status/${result.task_id}`);
+                                const status = await statusResponse.json();
+
+                                setBackgroundUpdate({
+                                  taskId: result.task_id,
+                                  status: status.status,
+                                  progress: status.progress,
+                                  total: status.total,
+                                  currentItem: status.current_item || ''
+                                });
+
+                                if (status.status === 'completed' || status.status === 'failed') {
+                                  clearInterval(pollInterval);
+
+                                  if (status.status === 'completed') {
+                                    alert(`✅ Success!\n\nUpdated: ${status.updated_count}\nFailed: ${status.failed_count}\n\n${status.message}`);
+                                    setPriceUpdates([]);
+                                    setPriceUpdatesLoadedFromBackend(false);
+                                    setActiveTab('update-log');
+                                    fetchUpdateLog();
+                                  } else {
+                                    alert(`❌ Error: ${status.error || 'Unknown error'}`);
+                                  }
+
+                                  setTimeout(() => setBackgroundUpdate(null), 3000);
+                                }
+                              } catch (pollErr) {
+                                console.error('Poll error:', pollErr);
+                              }
+                            }, 1500);
+                          } else if (result.success) {
+                            // Synchronous result
                             alert(`✅ Success!\n\nUpdated: ${result.updated_count}\nFailed: ${result.failed_count}\n\n${result.message}`);
-                            // Clear price updates and switch to update log
                             setPriceUpdates([]);
                             setPriceUpdatesLoadedFromBackend(false);
                             setActiveTab('update-log');
-                            // Refresh update log
                             fetchUpdateLog();
                           } else {
                             alert(`❌ Error: ${result.message || 'Unknown error'}`);
@@ -989,8 +1031,6 @@ export default function Pricing() {
                         } catch (err) {
                           console.error('Execute updates error:', err);
                           alert(`Failed to execute updates: ${err.message}`);
-                        } finally {
-                          setLoading(false);
                         }
                       }}
                     >
@@ -998,6 +1038,33 @@ export default function Pricing() {
                     </Button>
                   </div>
                 </div>
+
+                {/* Background Update Progress */}
+                {backgroundUpdate && (
+                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-semibold text-blue-800">
+                        {backgroundUpdate.status === 'running' ? '⏳ Updating prices in background...' :
+                         backgroundUpdate.status === 'completed' ? '✅ Update complete!' :
+                         backgroundUpdate.status === 'failed' ? '❌ Update failed' : '⏳ Starting...'}
+                      </span>
+                      <span className="text-sm text-blue-700">
+                        {backgroundUpdate.progress} / {backgroundUpdate.total}
+                      </span>
+                    </div>
+                    <div className="w-full bg-blue-200 rounded-full h-2.5 mb-2">
+                      <div
+                        className="bg-blue-500 h-2.5 rounded-full transition-all duration-300"
+                        style={{ width: `${backgroundUpdate.total > 0 ? (backgroundUpdate.progress / backgroundUpdate.total) * 100 : 0}%` }}
+                      ></div>
+                    </div>
+                    {backgroundUpdate.currentItem && (
+                      <p className="text-xs text-blue-700 truncate">
+                        Current: {backgroundUpdate.currentItem}
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 {/* Instructions */}
                 <div className="bg-slate-50 p-4 rounded-lg text-sm text-slate-600">
