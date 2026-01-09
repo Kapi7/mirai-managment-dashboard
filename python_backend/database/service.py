@@ -237,11 +237,13 @@ class DatabaseService:
         try:
             async with get_db() as db:
                 # Aggregate directly from orders table with channel attribution
+                # Note: returning_customers counts UNIQUE customer_ids where is_returning=True
                 query = (
                     select(
                         func.date(Order.created_at).label('order_date'),
                         func.count(Order.id).label('orders'),
-                        func.sum(case((Order.is_returning == True, 1), else_=0)).label('returning_orders'),
+                        # Count unique returning customers (not total returning orders)
+                        func.count(func.distinct(case((Order.is_returning == True, Order.customer_id), else_=None))).label('returning_customers'),
                         func.sum(Order.gross).label('gross'),
                         func.sum(Order.discounts).label('discounts'),
                         func.sum(Order.refunds).label('refunds'),
@@ -277,6 +279,7 @@ class DatabaseService:
                     shipping_charged = _decimal_to_float(row.shipping_charged) or 0
                     google_pur = row.google_pur or 0
                     meta_pur = row.meta_pur or 0
+                    returning_customers = row.returning_customers or 0
 
                     # Calculate metrics matching original formula from master_report_mirai.py
                     aov = gross / orders_count if orders_count > 0 else 0
@@ -329,7 +332,7 @@ class DatabaseService:
                         "margin_pct": round((operational / revenue_base) if revenue_base > 0 else 0, 2),
                         "revenue_base": round(revenue_base, 2),
                         "aov": round(aov, 2),
-                        "returning_customers": row.returning_orders or 0,
+                        "returning_customers": returning_customers,
                         "general_cpa": None,
                         "google_pur": google_pur,
                         "meta_pur": meta_pur,
