@@ -14,7 +14,12 @@ from database.connection import get_db, init_db
 from database.models import Product, Variant, Store
 from sync_jobs.base_sync import BaseSyncJob, run_sync
 from config import SHOPIFY_STORES
-from shopify_client import _shopify_graphql
+from shopify_client import _gql_for
+
+
+def _shopify_graphql(query, variables, domain, token):
+    """Wrapper to match expected signature"""
+    return _gql_for(domain, token, query, variables)
 
 
 PRODUCTS_QUERY = """

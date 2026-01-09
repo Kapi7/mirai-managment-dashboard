@@ -169,12 +169,11 @@ class SyncOrders(BaseSyncJob):
                         shipping = order_data.get("shippingAddress") or {}
 
                         # Calculate financials from line items
-                        line_items = order_data.get("lineItems", {}).get("edges", [])
+                        line_items = order_data.get("lineItems", {}).get("nodes", [])
                         gross = 0.0
                         cogs = 0.0
 
-                        for edge in line_items:
-                            node = edge.get("node", {})
+                        for node in line_items:
                             qty = int(node.get("quantity") or 0)
                             line_total = float((node.get("originalTotalSet", {}).get("shopMoney", {}).get("amount") or 0))
                             gross += line_total
@@ -240,8 +239,7 @@ class SyncOrders(BaseSyncJob):
                         )
 
                         # Add new line items
-                        for edge in line_items:
-                            node = edge.get("node", {})
+                        for node in line_items:
                             variant_data = node.get("variant") or {}
                             variant_gid = variant_data.get("id")
                             variant_id_num = self._extract_variant_id(variant_gid)
