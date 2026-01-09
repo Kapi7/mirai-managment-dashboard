@@ -10,7 +10,7 @@ services:
       python3 -m pip install --upgrade pip
       pip install --no-cache-dir -r requirements.txt
       echo "✅ Installed Python packages:"
-      pip list | grep -E "gspread|facebook-business|fastapi|uvicorn"
+      pip list | grep -E "gspread|facebook-business|fastapi|uvicorn|sqlalchemy|asyncpg"
     startCommand: bash start.sh
     envVars:
       - key: NODE_VERSION
@@ -19,6 +19,10 @@ services:
         value: 3.11
       - key: PYTHON_BACKEND_URL
         value: http://localhost:8080
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mirai-db
+          property: connectionString
       # Add all your environment variables here
       - key: SHOPIFY_STORE
         sync: false
@@ -31,4 +35,47 @@ services:
       - key: GMAIL_REFRESH_TOKEN
         sync: false
       - key: GMAIL_USER_EMAIL
+        sync: false
+
+# Database
+databases:
+  - name: mirai-db
+    plan: free
+    databaseName: mirai_db
+    user: mirai_user
+
+# Cron Jobs for database sync
+cron:
+  # Sync orders every 3 minutes
+  - name: sync-orders
+    schedule: "*/3 * * * *"
+    buildCommand: |
+      cd python_backend
+      pip install --no-cache-dir -r requirements.txt
+    startCommand: cd python_backend && python sync_jobs/sync_orders.py
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mirai-db
+          property: connectionString
+      - key: SHOPIFY_STORE
+        sync: false
+      - key: SHOPIFY_ACCESS_TOKEN
+        sync: false
+
+  # Sync products every hour
+  - name: sync-products
+    schedule: "0 * * * *"
+    buildCommand: |
+      cd python_backend
+      pip install --no-cache-dir -r requirements.txt
+    startCommand: cd python_backend && python sync_jobs/sync_products.py
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mirai-db
+          property: connectionString
+      - key: SHOPIFY_STORE
+        sync: false
+      - key: SHOPIFY_ACCESS_TOKEN
         sync: false
