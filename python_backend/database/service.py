@@ -37,9 +37,10 @@ class DatabaseService:
     # ==================== PRODUCTS & VARIANTS ====================
 
     @staticmethod
-    async def get_items(store_key: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def get_items(store_key: Optional[str] = "skin") -> List[Dict[str, Any]]:
         """
         Get all product variants with pricing data
+        Default to 'skin' store (Mirai Skin) for pricing items
 
         Returns list of items with:
         - variant_id, item, weight, cogs, retail_base, compare_at_base
@@ -52,11 +53,13 @@ class DatabaseService:
                 query = (
                     select(Variant, Product)
                     .join(Product, Variant.product_id == Product.id)
+                    .join(Store, Variant.store_id == Store.id)
                     .where(Product.status == 'active')
                 )
 
+                # Filter by store (default to 'skin' for Mirai Skin)
                 if store_key:
-                    query = query.join(Store).where(Store.key == store_key)
+                    query = query.where(Store.key == store_key)
 
                 result = await db.execute(query)
                 rows = result.all()
@@ -156,7 +159,58 @@ class DatabaseService:
                         "store": ""
                     })
 
-                return orders_data
+                # Calculate analytics
+                total_orders = len(orders_data)
+                cancelled_count = sum(1 for o in orders_data if o.get("is_cancelled"))
+                active_orders = [o for o in orders_data if not o.get("is_cancelled")]
+
+                total_net = sum(o.get("net", 0) for o in active_orders)
+                total_profit = sum(o.get("profit", 0) for o in active_orders)
+                returning_count = sum(1 for o in active_orders if o.get("is_returning"))
+
+                # Channel counts
+                channels = {}
+                for o in active_orders:
+                    ch = o.get("channel", "organic")
+                    channels[ch] = channels.get(ch, 0) + 1
+
+                # Top countries
+                country_counts = {}
+                for o in active_orders:
+                    country = o.get("country", "Unknown")
+                    country_counts[country] = country_counts.get(country, 0) + 1
+                top_countries = sorted(
+                    [{"country": k, "count": v} for k, v in country_counts.items()],
+                    key=lambda x: x["count"], reverse=True
+                )[:10]
+
+                # Peak hours
+                hour_counts = {}
+                for o in active_orders:
+                    hour = o.get("hour", 0)
+                    hour_counts[hour] = hour_counts.get(hour, 0) + 1
+                peak_hours = sorted(
+                    [{"hour": k, "count": v} for k, v in hour_counts.items()],
+                    key=lambda x: x["count"], reverse=True
+                )[:5]
+
+                analytics = {
+                    "total_orders": total_orders,
+                    "cancelled_orders": cancelled_count,
+                    "total_net": round(total_net, 2),
+                    "avg_order_value": round(total_net / len(active_orders), 2) if active_orders else 0,
+                    "total_profit": round(total_profit, 2),
+                    "avg_margin_pct": round(sum(o.get("margin_pct", 0) for o in active_orders) / len(active_orders), 1) if active_orders else 0,
+                    "returning_customers": returning_count,
+                    "channels": channels,
+                    "top_countries": top_countries,
+                    "peak_hours": peak_hours
+                }
+
+                return {
+                    "orders": orders_data,
+                    "analytics": analytics
+                }
 
         except Exception as e:
             print(f"❌ Database error in get_orders: {e}")
@@ -226,11 +280,11 @@ class DatabaseService:
 
                     # Format date for display
                     date_str = row.order_date.isoformat() if hasattr(row.order_date, 'isoformat') else str(row.order_date)
-                    # Create label like "Mon Jan 9"
+                    # Create label in DD/MM/YYYY format
                     try:
                         from datetime import datetime as dt
                         d = dt.strptime(date_str, "%Y-%m-%d")
-                        label = d.strftime("%a %b %-d")  # Mon Jan 9
+                        label = d.strftime("%d/%m/%Y")  # DD/MM/YYYY
                     except:
                         label = date_str
 
@@ -246,7 +300,7 @@ class DatabaseService:
                         "shipping_charged": shipping_charged,
                         "shipping_cost": 0,  # Would need shipping rates calculation
                         "psp_usd": round(net * 0.029 + 0.30 * orders_count, 2),  # Estimate PSP fees
-                        "google_spend": 0,  # Would need ad_spend table
+                        "google_spend": 0,  # Will be filled from ad_spend table
                         "meta_spend": 0,
                         "total_spend": 0,
                         "operational_profit": round(net_margin, 2),
@@ -258,6 +312,41 @@ class DatabaseService:
                         "google_pur": 0,
                         "meta_pur": 0
                     })
+
+                # Fetch ad spend for these dates and merge
+                if kpis:
+                    dates = [datetime.strptime(k["date"], "%Y-%m-%d").date() for k in kpis]
+                    ad_query = select(AdSpend).where(
+                        and_(
+                            AdSpend.date >= min(dates),
+                            AdSpend.date <= max(dates)
+                        )
+                    )
+                    ad_result = await db.execute(ad_query)
+                    ad_rows = ad_result.scalars().all()
+
+                    # Build lookup: {date: {platform: spend}}
+                    ad_lookup = {}
+                    for ad in ad_rows:
+                        d_key = ad.date.isoformat()
+                        if d_key not in ad_lookup:
+                            ad_lookup[d_key] = {"google": 0, "meta": 0}
+                        if ad.platform == "google":
+                            ad_lookup[d_key]["google"] += _decimal_to_float(ad.spend_usd) or 0
+                        elif ad.platform == "meta":
+                            ad_lookup[d_key]["meta"] += _decimal_to_float(ad.spend_usd) or 0
+
+                    # Merge ad spend into KPIs
+                    for kpi in kpis:
+                        ad_data = ad_lookup.get(kpi["date"], {"google": 0, "meta": 0})
+                        kpi["google_spend"] = round(ad_data["google"], 2)
+                        kpi["meta_spend"] = round(ad_data["meta"], 2)
+                        kpi["total_spend"] = round(ad_data["google"] + ad_data["meta"], 2)
+                        # Recalculate operational profit with ad spend
+                        kpi["operational_profit"] = round(kpi["net_margin"] - kpi["total_spend"], 2)
+                        # Calculate CPA
+                        if kpi["orders"] > 0 and kpi["total_spend"] > 0:
+                            kpi["general_cpa"] = round(kpi["total_spend"] / kpi["orders"], 2)
 
                 return kpis
 

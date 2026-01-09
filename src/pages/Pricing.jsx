@@ -74,6 +74,9 @@ export default function Pricing() {
   const [currentScanTask, setCurrentScanTask] = useState(null);
   const [scanProgress, setScanProgress] = useState(null);
 
+  // Display settings
+  const [expandProductNames, setExpandProductNames] = useState(false);
+
   // Pre-fetch items on mount for faster initial load
   useEffect(() => {
     fetchMarkets();
@@ -666,6 +669,14 @@ export default function Pricing() {
                   </div>
                 </div>
                 <div className="flex items-center gap-3 pt-8">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setExpandProductNames(!expandProductNames)}
+                    title={expandProductNames ? "Compact view" : "Expand product names"}
+                  >
+                    {expandProductNames ? "Compact" : "Expand"}
+                  </Button>
                   {selectedItems.size > 0 && (
                     <>
                       <Button
@@ -1451,7 +1462,7 @@ export default function Pricing() {
                           <TableRow key={idx} className={isKorealyCogs ? 'bg-purple-50' : ''}>
                             <TableCell className="text-sm">{log.timestamp}</TableCell>
                             <TableCell className="font-mono text-sm">{log.variant_id}</TableCell>
-                            <TableCell className="font-medium max-w-[200px] truncate" title={log.item}>{log.item}</TableCell>
+                            <TableCell className={`font-medium ${expandProductNames ? '' : 'max-w-[200px] truncate'}`} title={log.item}>{log.item}</TableCell>
                             <TableCell>
                               <Badge variant={isKorealyCogs ? 'secondary' : 'outline'}>
                                 {isKorealyCogs ? 'Korealy COGS' : log.market || 'Price'}
@@ -1815,7 +1826,7 @@ export default function Pricing() {
                               />
                             </TableCell>
                             <TableCell className="font-mono text-sm">{price.variant_id}</TableCell>
-                            <TableCell className="font-medium max-w-[250px] truncate">{price.item}</TableCell>
+                            <TableCell className={`font-medium ${expandProductNames ? '' : 'max-w-[250px] truncate'}`}>{price.item}</TableCell>
                             <TableCell className="text-right">{(price.weight_g || 0).toFixed(0)}</TableCell>
                             <TableCell className="text-right">{formatCurrency(price.cogs)}</TableCell>
                             <TableCell className="text-right">
@@ -2149,7 +2160,7 @@ export default function Pricing() {
                               const diffPct = ((current - compAvg) / compAvg) * 100;
                               return (
                                 <TableRow key={product.variant_id}>
-                                  <TableCell className="font-medium max-w-[300px] truncate">{product.item}</TableCell>
+                                  <TableCell className={`font-medium ${expandProductNames ? '' : 'max-w-[300px] truncate'}`}>{product.item}</TableCell>
                                   <TableCell className="text-right font-semibold">{formatCurrency(current)}</TableCell>
                                   <TableCell className="text-right text-slate-600">{formatCurrency(compLow)}</TableCell>
                                   <TableCell className="text-right text-slate-600">{formatCurrency(compAvg)}</TableCell>
@@ -2212,7 +2223,7 @@ export default function Pricing() {
                               const diffPct = ((current - compAvg) / compAvg) * 100;
                               return (
                                 <TableRow key={product.variant_id}>
-                                  <TableCell className="font-medium max-w-[300px] truncate">{product.item}</TableCell>
+                                  <TableCell className={`font-medium ${expandProductNames ? '' : 'max-w-[300px] truncate'}`}>{product.item}</TableCell>
                                   <TableCell className="text-right font-semibold">{formatCurrency(current)}</TableCell>
                                   <TableCell className="text-right text-slate-600">{formatCurrency(compLow)}</TableCell>
                                   <TableCell className="text-right text-slate-600">{formatCurrency(compAvg)}</TableCell>
@@ -2312,7 +2323,7 @@ export default function Pricing() {
                                 <TableCell className="text-sm text-slate-600 whitespace-nowrap">
                                   {new Date(scan.timestamp).toLocaleString()}
                                 </TableCell>
-                                <TableCell className="font-medium max-w-[250px] truncate" title={scan.item}>
+                                <TableCell className={`font-medium ${expandProductNames ? '' : 'max-w-[250px] truncate'}`} title={scan.item}>
                                   {scan.item}
                                 </TableCell>
                                 <TableCell className="text-right text-slate-600">
@@ -2641,10 +2652,10 @@ export default function Pricing() {
                                     {record.status}
                                   </span>
                                 </TableCell>
-                                <TableCell className="max-w-xs truncate" title={record.korealy_title}>
+                                <TableCell className={expandProductNames ? '' : 'max-w-xs truncate'} title={record.korealy_title}>
                                   {record.korealy_title}
                                 </TableCell>
-                                <TableCell className="max-w-xs truncate" title={record.shopify_item || '-'}>
+                                <TableCell className={expandProductNames ? '' : 'max-w-xs truncate'} title={record.shopify_item || '-'}>
                                   {record.shopify_item || '-'}
                                 </TableCell>
                                 <TableCell className="text-right">
