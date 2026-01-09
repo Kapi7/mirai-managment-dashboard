@@ -597,7 +597,7 @@ export default function Pricing() {
         </TabsList>
 
         {/* GLOBAL PROGRESS INDICATOR - Always visible when background task is running */}
-        {(backgroundScan || backgroundUpdate) && (
+        {(backgroundScan || backgroundUpdate || scanProgress) && (
           <div className="mt-4 p-4 bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-lg shadow-sm">
             <div className="flex items-center gap-4">
               <div className="flex-shrink-0">
@@ -606,10 +606,12 @@ export default function Pricing() {
               <div className="flex-1">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-sm font-semibold text-blue-900">
-                    {backgroundScan ? '🔍 Scanning Competitor Prices' : '💰 Updating Prices'}
+                    {backgroundScan ? '🔍 Scanning Competitor Prices' : scanProgress ? '📦 Syncing Korealy COGS to Shopify' : '💰 Updating Prices'}
                   </span>
                   <span className="text-sm font-bold text-blue-700">
-                    {backgroundScan ? `${backgroundScan.progress} / ${backgroundScan.total}` : `${backgroundUpdate.progress} / ${backgroundUpdate.total}`}
+                    {backgroundScan ? `${backgroundScan.progress} / ${backgroundScan.total}` :
+                     scanProgress ? `${scanProgress.current} / ${scanProgress.total}` :
+                     `${backgroundUpdate.progress} / ${backgroundUpdate.total}`}
                   </span>
                 </div>
                 <div className="w-full bg-blue-200 rounded-full h-3">
@@ -617,23 +619,25 @@ export default function Pricing() {
                     className="bg-gradient-to-r from-blue-500 to-purple-500 h-3 rounded-full transition-all duration-500 ease-out"
                     style={{
                       width: `${(() => {
-                        const task = backgroundScan || backgroundUpdate;
-                        return task.total > 0 ? (task.progress / task.total) * 100 : 0;
+                        const task = backgroundScan || scanProgress || backgroundUpdate;
+                        const progress = task.progress ?? task.current ?? 0;
+                        return task.total > 0 ? (progress / task.total) * 100 : 0;
                       })()}%`
                     }}
                   ></div>
                 </div>
                 <div className="flex items-center justify-between mt-1">
                   <p className="text-xs text-blue-700 truncate max-w-md">
-                    {backgroundScan?.currentItem || backgroundUpdate?.currentItem || 'Processing...'}
+                    {backgroundScan?.currentItem || scanProgress?.currentItem || backgroundUpdate?.currentItem || 'Processing...'}
                   </p>
                   <span className="text-xs text-blue-600 font-medium">
                     {(() => {
-                      const task = backgroundScan || backgroundUpdate;
+                      const task = backgroundScan || scanProgress || backgroundUpdate;
+                      const progress = task.progress ?? task.current ?? 0;
                       if (task.status === 'completed') return '✅ Complete!';
                       if (task.status === 'failed') return '❌ Failed';
                       if (task.total > 0) {
-                        const pct = ((task.progress / task.total) * 100).toFixed(0);
+                        const pct = ((progress / task.total) * 100).toFixed(0);
                         return `${pct}% complete`;
                       }
                       return 'Starting...';
@@ -2622,7 +2626,8 @@ export default function Pricing() {
                           filtered.map((record, idx) => {
                             const originalIdx = korealyReconciliation.indexOf(record);
                             const isSelected = korealySelectedRows.has(originalIdx);
-                            const canSync = record.status === 'MISMATCH' && record.variant_id;
+                            // Allow sync for MISMATCH and NO_COGS_IN_SHOPIFY items that have korealy_cogs and variant_id
+                            const canSync = (record.status === 'MISMATCH' || record.status === 'NO_COGS_IN_SHOPIFY') && record.variant_id && record.korealy_cogs;
 
                             return (
                               <TableRow key={idx}>

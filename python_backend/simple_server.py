@@ -8,12 +8,26 @@ import os
 import uuid
 import asyncio
 import threading
+import jwt
+import httpx
 from datetime import datetime, date, timedelta
 from typing import List, Optional, Dict, Any
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 import pytz
+
+# JWT Settings
+JWT_SECRET = os.getenv("JWT_SECRET", "mirai-dashboard-secret-key-change-in-production")
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRATION_HOURS = 24 * 7  # 1 week
+
+# Google OAuth Settings
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+ALLOWED_EMAILS = os.getenv("ALLOWED_EMAILS", "").split(",")  # Comma-separated list of allowed emails
+
+security = HTTPBearer(auto_error=False)
 
 # Database service import (with graceful fallback)
 try:
@@ -1356,6 +1370,319 @@ async def get_variant_order_counts(req: VariantOrderCountRequest):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== AUTHENTICATION ====================
+
+class GoogleAuthRequest(BaseModel):
+    token: str  # Google ID token from frontend
+
+
+class AddUserRequest(BaseModel):
+    email: str
+    is_admin: bool = False
+
+
+async def verify_google_token(token: str) -> dict:
+    """Verify Google ID token and return user info"""
+    try:
+        # Verify with Google
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"https://oauth2.googleapis.com/tokeninfo?id_token={token}"
+            )
+            if response.status_code != 200:
+                raise HTTPException(status_code=401, detail="Invalid Google token")
+
+            data = response.json()
+
+            # Verify audience (client ID)
+            if GOOGLE_CLIENT_ID and data.get("aud") != GOOGLE_CLIENT_ID:
+                raise HTTPException(status_code=401, detail="Token not for this application")
+
+            return {
+                "email": data.get("email"),
+                "name": data.get("name"),
+                "picture": data.get("picture"),
+                "google_id": data.get("sub")
+            }
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to verify token: {e}")
+
+
+def create_jwt_token(user_data: dict) -> str:
+    """Create JWT token for authenticated user"""
+    payload = {
+        "sub": user_data["email"],
+        "name": user_data.get("name", ""),
+        "picture": user_data.get("picture", ""),
+        "is_admin": user_data.get("is_admin", False),
+        "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRATION_HOURS),
+        "iat": datetime.utcnow()
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Optional[dict]:
+    """Get current user from JWT token"""
+    if not credentials:
+        return None
+
+    try:
+        payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return {
+            "email": payload.get("sub"),
+            "name": payload.get("name"),
+            "picture": payload.get("picture"),
+            "is_admin": payload.get("is_admin", False)
+        }
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
+async def require_auth(user: dict = Depends(get_current_user)) -> dict:
+    """Require authentication"""
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return user
+
+
+async def require_admin(user: dict = Depends(require_auth)) -> dict:
+    """Require admin role"""
+    if not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+@app.post("/auth/google")
+async def google_login(req: GoogleAuthRequest):
+    """
+    Login with Google ID token.
+    Returns JWT token if user is allowed.
+    """
+    try:
+        # Verify Google token
+        google_user = await verify_google_token(req.token)
+        email = google_user["email"]
+
+        print(f"🔐 Login attempt: {email}")
+
+        # Check if user exists in database
+        if DB_SERVICE_AVAILABLE:
+            from database.connection import get_db
+            from database.models import User
+            from sqlalchemy import select
+
+            async with get_db() as db:
+                result = await db.execute(select(User).where(User.email == email))
+                user = result.scalar_one_or_none()
+
+                if not user:
+                    # Check if email is in allowed list (first user becomes admin)
+                    is_first_user = False
+                    user_count = await db.execute(select(User))
+                    if not user_count.scalars().all():
+                        is_first_user = True
+
+                    if email.strip() not in [e.strip() for e in ALLOWED_EMAILS if e.strip()] and not is_first_user:
+                        print(f"❌ Email not allowed: {email}")
+                        raise HTTPException(status_code=403, detail="Email not authorized. Contact admin to be added.")
+
+                    # Create new user
+                    user = User(
+                        email=email,
+                        name=google_user.get("name"),
+                        picture=google_user.get("picture"),
+                        google_id=google_user.get("google_id"),
+                        is_admin=is_first_user,  # First user is admin
+                        is_active=True
+                    )
+                    db.add(user)
+                    await db.commit()
+                    await db.refresh(user)
+                    print(f"✅ Created new user: {email} (admin={is_first_user})")
+                else:
+                    if not user.is_active:
+                        raise HTTPException(status_code=403, detail="Account is disabled")
+
+                    # Update last login
+                    user.last_login = datetime.utcnow()
+                    user.name = google_user.get("name") or user.name
+                    user.picture = google_user.get("picture") or user.picture
+                    await db.commit()
+                    print(f"✅ User logged in: {email}")
+
+                # Create JWT token
+                token = create_jwt_token({
+                    "email": user.email,
+                    "name": user.name,
+                    "picture": user.picture,
+                    "is_admin": user.is_admin
+                })
+
+                return {
+                    "success": True,
+                    "token": token,
+                    "user": {
+                        "email": user.email,
+                        "name": user.name,
+                        "picture": user.picture,
+                        "is_admin": user.is_admin
+                    }
+                }
+        else:
+            # No database - check allowed emails only
+            if email.strip() not in [e.strip() for e in ALLOWED_EMAILS if e.strip()]:
+                raise HTTPException(status_code=403, detail="Email not authorized")
+
+            token = create_jwt_token({
+                "email": email,
+                "name": google_user.get("name"),
+                "picture": google_user.get("picture"),
+                "is_admin": True  # Without DB, all allowed users are admin
+            })
+
+            return {
+                "success": True,
+                "token": token,
+                "user": {
+                    "email": email,
+                    "name": google_user.get("name"),
+                    "picture": google_user.get("picture"),
+                    "is_admin": True
+                }
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Auth error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/auth/me")
+async def get_me(user: dict = Depends(require_auth)):
+    """Get current user info"""
+    return {"user": user}
+
+
+@app.get("/auth/users")
+async def list_users(user: dict = Depends(require_admin)):
+    """List all users (admin only)"""
+    if not DB_SERVICE_AVAILABLE:
+        return {"users": [], "message": "Database not available"}
+
+    from database.connection import get_db
+    from database.models import User
+    from sqlalchemy import select
+
+    async with get_db() as db:
+        result = await db.execute(select(User).order_by(User.created_at.desc()))
+        users = result.scalars().all()
+
+        return {
+            "users": [
+                {
+                    "id": u.id,
+                    "email": u.email,
+                    "name": u.name,
+                    "picture": u.picture,
+                    "is_active": u.is_active,
+                    "is_admin": u.is_admin,
+                    "created_at": u.created_at.isoformat() if u.created_at else None,
+                    "last_login": u.last_login.isoformat() if u.last_login else None
+                }
+                for u in users
+            ]
+        }
+
+
+@app.post("/auth/users")
+async def add_user(req: AddUserRequest, user: dict = Depends(require_admin)):
+    """Add a new allowed user (admin only)"""
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import User
+    from sqlalchemy import select
+
+    async with get_db() as db:
+        # Check if user already exists
+        result = await db.execute(select(User).where(User.email == req.email))
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            raise HTTPException(status_code=400, detail="User already exists")
+
+        # Create user (they'll complete profile on first login)
+        new_user = User(
+            email=req.email.strip(),
+            is_admin=req.is_admin,
+            is_active=True
+        )
+        db.add(new_user)
+        await db.commit()
+
+        return {"success": True, "message": f"User {req.email} added successfully"}
+
+
+@app.delete("/auth/users/{user_id}")
+async def delete_user(user_id: int, user: dict = Depends(require_admin)):
+    """Delete a user (admin only)"""
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import User
+    from sqlalchemy import select
+
+    async with get_db() as db:
+        result = await db.execute(select(User).where(User.id == user_id))
+        target_user = result.scalar_one_or_none()
+
+        if not target_user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Can't delete yourself
+        if target_user.email == user["email"]:
+            raise HTTPException(status_code=400, detail="Cannot delete yourself")
+
+        await db.delete(target_user)
+        await db.commit()
+
+        return {"success": True, "message": f"User {target_user.email} deleted"}
+
+
+@app.put("/auth/users/{user_id}/toggle-admin")
+async def toggle_admin(user_id: int, user: dict = Depends(require_admin)):
+    """Toggle admin status for a user (admin only)"""
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import User
+    from sqlalchemy import select
+
+    async with get_db() as db:
+        result = await db.execute(select(User).where(User.id == user_id))
+        target_user = result.scalar_one_or_none()
+
+        if not target_user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        # Can't remove your own admin
+        if target_user.email == user["email"]:
+            raise HTTPException(status_code=400, detail="Cannot modify your own admin status")
+
+        target_user.is_admin = not target_user.is_admin
+        await db.commit()
+
+        return {"success": True, "is_admin": target_user.is_admin}
 
 
 if __name__ == "__main__":

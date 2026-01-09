@@ -1,13 +1,31 @@
 import { lazy, Suspense } from 'react';
 import Layout from "./Layout.jsx";
-import { BrowserRouter as Router, Route, Routes, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Route, Routes, useLocation, Navigate } from 'react-router-dom';
 import { Skeleton } from "@/components/ui/skeleton";
+import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 
 // Lazy load pages for faster initial load
 const Reports = lazy(() => import('./Reports'));
 const Pricing = lazy(() => import('./Pricing'));
 const KorealyProcessor = lazy(() => import('./KorealyProcessor'));
 const Settings = lazy(() => import('./Settings'));
+const Login = lazy(() => import('./Login'));
+const UserManagement = lazy(() => import('./UserManagement'));
+
+// Protected route wrapper
+function ProtectedRoute({ children }) {
+  const { isAuthenticated, loading } = useAuth();
+
+  if (loading) {
+    return <PageLoading />;
+  }
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return children;
+}
 
 // Loading component
 function PageLoading() {
@@ -29,6 +47,8 @@ const PAGES = {
 
     Settings: Settings,
 
+    UserManagement: UserManagement,
+
 }
 
 function _getCurrentPage(url) {
@@ -47,23 +67,31 @@ function _getCurrentPage(url) {
 // Create a wrapper component that uses useLocation inside the Router context
 function PagesContent() {
     const location = useLocation();
+    const { isAuthenticated } = useAuth();
     const currentPage = _getCurrentPage(location.pathname);
-    
+
+    // Login page doesn't need layout
+    if (location.pathname === '/login') {
+        return (
+            <Suspense fallback={<PageLoading />}>
+                <Routes>
+                    <Route path="/login" element={<Login />} />
+                </Routes>
+            </Suspense>
+        );
+    }
+
     return (
         <Layout currentPageName={currentPage}>
             <Suspense fallback={<PageLoading />}>
                 <Routes>
-
-                    <Route path="/" element={<Reports />} />
-
-                    <Route path="/Reports" element={<Reports />} />
-
-                    <Route path="/Pricing" element={<Pricing />} />
-
-                    <Route path="/KorealyProcessor" element={<KorealyProcessor />} />
-
-                    <Route path="/Settings" element={<Settings />} />
-
+                    <Route path="/" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
+                    <Route path="/Reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
+                    <Route path="/Pricing" element={<ProtectedRoute><Pricing /></ProtectedRoute>} />
+                    <Route path="/KorealyProcessor" element={<ProtectedRoute><KorealyProcessor /></ProtectedRoute>} />
+                    <Route path="/Settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+                    <Route path="/UserManagement" element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />
+                    <Route path="/login" element={<Login />} />
                 </Routes>
             </Suspense>
         </Layout>
@@ -73,7 +101,9 @@ function PagesContent() {
 export default function Pages() {
     return (
         <Router>
-            <PagesContent />
+            <AuthProvider>
+                <PagesContent />
+            </AuthProvider>
         </Router>
     );
 }

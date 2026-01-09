@@ -695,6 +695,127 @@ app.get('/api/db-stats', async (req, res) => {
   }
 });
 
+// ==================== AUTH ENDPOINTS ====================
+
+// Auth - Google Login
+app.post('/api/auth/google', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/auth/google`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body),
+      signal: AbortSignal.timeout(30000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Auth error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Auth - Get current user
+app.get('/api/auth/me', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/auth/me`, {
+      headers: {
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Auth me error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Auth - List users (admin only)
+app.get('/api/auth/users', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/auth/users`, {
+      headers: {
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Auth users list error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Auth - Add user (admin only)
+app.post('/api/auth/users', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/auth/users`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': req.headers.authorization || ''
+      },
+      body: JSON.stringify(req.body),
+      signal: AbortSignal.timeout(10000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Auth add user error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Auth - Delete user (admin only)
+app.delete('/api/auth/users/:userId', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/auth/users/${req.params.userId}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Auth delete user error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Auth - Toggle admin (admin only)
+app.put('/api/auth/users/:userId/toggle-admin', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/auth/users/${req.params.userId}/toggle-admin`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Auth toggle admin error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

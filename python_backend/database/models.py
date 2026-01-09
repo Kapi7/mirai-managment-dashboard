@@ -314,3 +314,18 @@ class SyncStatus(Base):
     __table_args__ = (
         UniqueConstraint('sync_type', 'store_id', name='uq_sync_status'),
     )
+
+
+class User(Base):
+    """Users with Google Login"""
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    name = Column(String(255))
+    picture = Column(String(500))  # Google profile picture URL
+    google_id = Column(String(100), unique=True)
+    is_active = Column(Boolean, default=True)
+    is_admin = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_login = Column(DateTime)

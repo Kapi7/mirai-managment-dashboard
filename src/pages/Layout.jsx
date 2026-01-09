@@ -1,13 +1,16 @@
 
-import React, { useState } from "react";
+import React from "react";
 import { Link, useLocation } from "react-router-dom";
 import { createPageUrl } from "@/utils";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   Settings,
   TrendingUp,
   Package,
   BarChart3,
-  DollarSign
+  DollarSign,
+  Users,
+  LogOut
 } from "lucide-react";
 import {
   Sidebar,
@@ -23,8 +26,17 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const navigationSections = [
   {
@@ -50,7 +62,7 @@ const navigationSections = [
 
 export default function Layout({ children }) {
   const location = useLocation();
-  const [user] = useState({ full_name: 'Admin', email: 'admin@miraiskin.com' });
+  const { user, isAdmin, logout } = useAuth();
 
   return (
     <SidebarProvider>
@@ -67,7 +79,7 @@ export default function Layout({ children }) {
               </div>
             </div>
           </SidebarHeader>
-          
+
           <SidebarContent className="p-3">
             {navigationSections.map((section) => (
               <SidebarGroup key={section.label} className="mb-4">
@@ -78,8 +90,8 @@ export default function Layout({ children }) {
                   <SidebarMenu>
                     {section.items.map((item) => (
                       <SidebarMenuItem key={item.title}>
-                        <SidebarMenuButton 
-                          asChild 
+                        <SidebarMenuButton
+                          asChild
                           className={`hover:bg-indigo-50 hover:text-indigo-700 transition-all duration-200 rounded-lg mb-1 ${
                             location.pathname === item.url ? 'bg-indigo-100 text-indigo-700 font-medium' : ''
                           }`}
@@ -100,22 +112,71 @@ export default function Layout({ children }) {
                 </SidebarGroupContent>
               </SidebarGroup>
             ))}
+
+            {/* Admin section */}
+            {isAdmin && (
+              <SidebarGroup className="mb-4">
+                <SidebarGroupLabel className="text-xs font-semibold text-slate-500 uppercase tracking-wider px-3 py-2">
+                  Admin
+                </SidebarGroupLabel>
+                <SidebarGroupContent>
+                  <SidebarMenu>
+                    <SidebarMenuItem>
+                      <SidebarMenuButton
+                        asChild
+                        className={`hover:bg-indigo-50 hover:text-indigo-700 transition-all duration-200 rounded-lg mb-1 ${
+                          location.pathname === '/UserManagement' ? 'bg-indigo-100 text-indigo-700 font-medium' : ''
+                        }`}
+                      >
+                        <Link to="/UserManagement" className="flex items-center gap-3 px-3 py-2.5">
+                          <Users className="w-4 h-4" />
+                          <span>User Management</span>
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  </SidebarMenu>
+                </SidebarGroupContent>
+              </SidebarGroup>
+            )}
           </SidebarContent>
 
           <SidebarFooter className="border-t border-slate-200 p-4">
-            <div className="flex items-center gap-3">
-              <Avatar className="h-9 w-9">
-                <AvatarFallback className="bg-gradient-to-br from-indigo-500 to-purple-600 text-white font-semibold">
-                  {user?.full_name?.charAt(0)?.toUpperCase() || 'U'}
-                </AvatarFallback>
-              </Avatar>
-              <div className="flex-1 min-w-0">
-                <p className="font-medium text-slate-900 text-sm truncate">
-                  {user?.full_name || 'User'}
-                </p>
-                <p className="text-xs text-slate-500 truncate">{user?.email || ''}</p>
-              </div>
-            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" className="w-full justify-start p-0 h-auto hover:bg-transparent">
+                  <div className="flex items-center gap-3 w-full">
+                    <Avatar className="h-9 w-9">
+                      {user?.picture && <AvatarImage src={user.picture} alt={user.name} />}
+                      <AvatarFallback className="bg-gradient-to-br from-indigo-500 to-purple-600 text-white font-semibold">
+                        {user?.name?.charAt(0)?.toUpperCase() || user?.email?.charAt(0)?.toUpperCase() || 'U'}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 min-w-0 text-left">
+                      <p className="font-medium text-slate-900 text-sm truncate">
+                        {user?.name || 'User'}
+                      </p>
+                      <p className="text-xs text-slate-500 truncate">{user?.email || ''}</p>
+                    </div>
+                  </div>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>My Account</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {isAdmin && (
+                  <DropdownMenuItem asChild>
+                    <Link to="/UserManagement" className="flex items-center">
+                      <Users className="mr-2 h-4 w-4" />
+                      User Management
+                    </Link>
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem onClick={logout} className="text-red-600">
+                  <LogOut className="mr-2 h-4 w-4" />
+                  Sign Out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </SidebarFooter>
         </Sidebar>
 
