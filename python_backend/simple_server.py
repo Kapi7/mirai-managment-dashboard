@@ -19,9 +19,11 @@ import pytz
 try:
     from database.service import db_service
     DB_SERVICE_AVAILABLE = True
-except ImportError:
+    print("✅ Database service imported successfully")
+except ImportError as e:
     DB_SERVICE_AVAILABLE = False
     db_service = None
+    print(f"⚠️ Database service import failed: {e}")
 
 app = FastAPI(title="Mirai Reports API - Simple", version="2.0.0")
 
@@ -639,7 +641,24 @@ async def db_stats():
     Get database statistics - orders, products, variants count
     """
     if not DB_SERVICE_AVAILABLE:
-        return {"error": "Database service not installed"}
+        # Try to get more info about why import failed
+        import subprocess
+        try:
+            result = subprocess.run(['pip', 'list'], capture_output=True, text=True)
+            packages = result.stdout
+            has_sqlalchemy = 'sqlalchemy' in packages.lower()
+            has_asyncpg = 'asyncpg' in packages.lower()
+        except:
+            has_sqlalchemy = False
+            has_asyncpg = False
+            packages = "Could not get package list"
+
+        return {
+            "error": "Database service not installed",
+            "has_sqlalchemy": has_sqlalchemy,
+            "has_asyncpg": has_asyncpg,
+            "debug": "Check deploy logs for import error details"
+        }
 
     try:
         stats = await db_service.get_stats()
