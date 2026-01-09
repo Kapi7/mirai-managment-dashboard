@@ -125,6 +125,7 @@ class SyncProducts(BaseSyncJob):
             variants_synced = 0
 
             while True:
+                print(f"  Fetching products from {domain}...")
                 result = _shopify_graphql(
                     PRODUCTS_QUERY,
                     {"cursor": cursor},
@@ -135,6 +136,12 @@ class SyncProducts(BaseSyncJob):
                 # Debug: Check for errors
                 if result.get("errors"):
                     print(f"  ⚠️ GraphQL errors: {result['errors']}")
+
+                # Debug: Print raw response structure
+                if cursor is None:
+                    print(f"  Raw result keys: {result.keys() if result else 'None'}")
+                    if result and result.get("data"):
+                        print(f"  Data keys: {result['data'].keys()}")
 
                 products_data = result.get("data", {}).get("products", {})
                 edges = products_data.get("edges", [])
