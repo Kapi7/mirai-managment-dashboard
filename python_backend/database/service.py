@@ -7,7 +7,7 @@ from datetime import datetime, date, timedelta
 from typing import List, Dict, Any, Optional
 from decimal import Decimal
 
-from sqlalchemy import select, func, and_, desc
+from sqlalchemy import select, func, and_, desc, case
 from sqlalchemy.orm import selectinload
 
 from .connection import get_db, is_db_configured
@@ -171,7 +171,7 @@ class DatabaseService:
         store_key: Optional[str] = None
     ) -> Optional[List[Dict[str, Any]]]:
         """
-        Get pre-aggregated daily KPIs
+        Get daily KPIs - aggregates from orders table directly
 
         Returns list with daily metrics
         """
@@ -180,52 +180,78 @@ class DatabaseService:
 
         try:
             async with get_db() as db:
+                # Aggregate directly from orders table
                 query = (
-                    select(DailyKPI)
+                    select(
+                        func.date(Order.created_at).label('order_date'),
+                        func.count(Order.id).label('orders'),
+                        func.sum(case((Order.is_returning == True, 1), else_=0)).label('returning_orders'),
+                        func.sum(Order.gross).label('gross'),
+                        func.sum(Order.discounts).label('discounts'),
+                        func.sum(Order.refunds).label('refunds'),
+                        func.sum(Order.net).label('net'),
+                        func.sum(Order.cogs).label('cogs'),
+                        func.sum(Order.shipping_charged).label('shipping_charged'),
+                    )
                     .where(
                         and_(
-                            DailyKPI.date >= start_date,
-                            DailyKPI.date <= end_date
+                            Order.created_at >= datetime.combine(start_date, datetime.min.time()),
+                            Order.created_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time()),
+                            Order.cancelled_at.is_(None)
                         )
                     )
-                    .order_by(desc(DailyKPI.date))
+                    .group_by(func.date(Order.created_at))
+                    .order_by(desc(func.date(Order.created_at)))
                 )
 
-                if store_key:
-                    query = query.join(Store).where(Store.key == store_key)
-
                 result = await db.execute(query)
-                kpis = result.scalars().all()
+                rows = result.all()
 
-                return [
-                    {
-                        "date": kpi.date.isoformat(),
-                        "orders": kpi.orders or 0,
-                        "gross": _decimal_to_float(kpi.gross) or 0,
-                        "discounts": _decimal_to_float(kpi.discounts) or 0,
-                        "refunds": _decimal_to_float(kpi.refunds) or 0,
-                        "net": _decimal_to_float(kpi.net) or 0,
-                        "cogs": _decimal_to_float(kpi.cogs) or 0,
-                        "shipping_charged": _decimal_to_float(kpi.shipping_charged) or 0,
-                        "shipping_cost": _decimal_to_float(kpi.shipping_cost) or 0,
-                        "psp_usd": _decimal_to_float(kpi.psp_fee) or 0,
-                        "google_spend": _decimal_to_float(kpi.google_spend) or 0,
-                        "meta_spend": _decimal_to_float(kpi.meta_spend) or 0,
-                        "total_spend": _decimal_to_float(kpi.google_spend or 0) + _decimal_to_float(kpi.meta_spend or 0),
-                        "operational_profit": _decimal_to_float(kpi.operational_profit) or 0,
-                        "net_margin": _decimal_to_float(kpi.net) - _decimal_to_float(kpi.cogs) - _decimal_to_float(kpi.shipping_cost or 0),
-                        "margin_pct": _decimal_to_float(kpi.margin_pct) or 0,
-                        "aov": _decimal_to_float(kpi.aov) or 0,
-                        "returning_customers": kpi.returning_orders or 0,
+                kpis = []
+                for row in rows:
+                    orders_count = row.orders or 0
+                    gross = _decimal_to_float(row.gross) or 0
+                    discounts = _decimal_to_float(row.discounts) or 0
+                    refunds = _decimal_to_float(row.refunds) or 0
+                    net = _decimal_to_float(row.net) or 0
+                    cogs = _decimal_to_float(row.cogs) or 0
+                    shipping_charged = _decimal_to_float(row.shipping_charged) or 0
+
+                    # Calculate metrics
+                    aov = net / orders_count if orders_count > 0 else 0
+                    net_margin = net - cogs
+                    margin_pct = (net_margin / net * 100) if net > 0 else 0
+
+                    kpis.append({
+                        "date": row.order_date.isoformat() if hasattr(row.order_date, 'isoformat') else str(row.order_date),
+                        "orders": orders_count,
+                        "gross": gross,
+                        "discounts": discounts,
+                        "refunds": refunds,
+                        "net": net,
+                        "cogs": cogs,
+                        "shipping_charged": shipping_charged,
+                        "shipping_cost": 0,  # Would need shipping rates calculation
+                        "psp_usd": round(net * 0.029 + 0.30 * orders_count, 2),  # Estimate PSP fees
+                        "google_spend": 0,  # Would need ad_spend table
+                        "meta_spend": 0,
+                        "total_spend": 0,
+                        "operational_profit": round(net_margin, 2),
+                        "net_margin": round(net_margin, 2),
+                        "margin_pct": round(margin_pct, 1),
+                        "aov": round(aov, 2),
+                        "returning_customers": row.returning_orders or 0,
                         "general_cpa": None,
-                        "google_pur": kpi.google_purchases or 0,
-                        "meta_pur": kpi.meta_purchases or 0
-                    }
-                    for kpi in kpis
-                ]
+                        "google_pur": 0,
+                        "meta_pur": 0
+                    })
+
+                return kpis
 
         except Exception as e:
             print(f"❌ Database error in get_daily_kpis: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     # ==================== BESTSELLERS ====================
@@ -248,7 +274,8 @@ class DatabaseService:
                 end_date = datetime.utcnow()
                 start_date = end_date - timedelta(days=days)
 
-                # Get order line items aggregated by variant
+                # Get order line items aggregated by SKU
+                # Join to variants by SKU (since variant_id FK may be NULL from orders synced before products)
                 query = (
                     select(
                         OrderLineItem.sku,
@@ -261,7 +288,7 @@ class DatabaseService:
                         func.count(func.distinct(OrderLineItem.order_id)).label('order_count')
                     )
                     .join(Order, OrderLineItem.order_id == Order.id)
-                    .outerjoin(Variant, OrderLineItem.variant_id == Variant.id)
+                    .outerjoin(Variant, Variant.sku == OrderLineItem.sku)  # Join by SKU instead of variant_id
                     .outerjoin(Product, Variant.product_id == Product.id)
                     .where(
                         and_(

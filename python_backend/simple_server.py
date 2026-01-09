@@ -1109,6 +1109,9 @@ async def sync_korealy_to_shopify_endpoint(req: KorealySyncRequest):
     For batches > 3, runs in background with progress tracking
     """
     try:
+        print(f"🔄 Korealy sync request received with {len(req.updates)} updates")
+        print(f"📋 Raw updates: {req.updates[:3]}...")  # Show first 3 for debugging
+
         # Build variant_ids list and cogs_map from updates
         variant_ids = []
         korealy_cogs_map = {}
@@ -1116,34 +1119,46 @@ async def sync_korealy_to_shopify_endpoint(req: KorealySyncRequest):
 
         for update in req.updates:
             variant_id = update.get("variant_id")
-            new_cogs = update.get("new_cogs")
+            new_cogs = update.get("new_cogs") or update.get("korealy_cogs")  # Try both field names
+
+            print(f"  Processing: variant_id={variant_id}, new_cogs={new_cogs}, keys={list(update.keys())}")
 
             # Skip records without valid variant_id or cogs
-            if not variant_id or variant_id == "null" or variant_id == "None":
+            if not variant_id or variant_id == "null" or variant_id == "None" or str(variant_id) == "None":
                 skipped.append({
                     "reason": "No Shopify mapping",
-                    "korealy_title": update.get("korealy_title", "Unknown")
+                    "korealy_title": update.get("korealy_title", "Unknown"),
+                    "raw_variant_id": variant_id
                 })
                 continue
 
             if new_cogs is None:
                 skipped.append({
                     "reason": "No Korealy COGS value",
-                    "variant_id": variant_id
+                    "variant_id": variant_id,
+                    "update_keys": list(update.keys())
                 })
                 continue
 
             variant_ids.append(str(variant_id))
             korealy_cogs_map[str(variant_id)] = float(new_cogs)
 
+        print(f"✅ Valid updates: {len(variant_ids)}, Skipped: {len(skipped)}")
+
         if not variant_ids:
+            print(f"⚠️ No valid items to sync!")
+            print(f"📋 Skipped items: {skipped[:5]}...")  # Show first 5 skipped
             return {
                 "success": False,
                 "updated_count": 0,
                 "failed_count": 0,
                 "skipped_count": len(skipped),
                 "message": f"No valid items to sync. {len(skipped)} items skipped (no Shopify mapping or missing COGS).",
-                "details": skipped
+                "details": skipped[:20],  # Return first 20 skipped for debugging
+                "debug": {
+                    "total_received": len(req.updates),
+                    "sample_update": req.updates[0] if req.updates else None
+                }
             }
 
         num_updates = len(variant_ids)
