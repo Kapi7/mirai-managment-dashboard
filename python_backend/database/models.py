@@ -316,6 +316,22 @@ class SyncStatus(Base):
     )
 
 
+class DailyPspFee(Base):
+    """Daily PSP (Payment Service Provider) fees from Shopify"""
+    __tablename__ = "daily_psp_fees"
+
+    id = Column(Integer, primary_key=True)
+    date = Column(Date, nullable=False, index=True)
+    store_id = Column(Integer, ForeignKey("stores.id"))
+    fee_amount = Column(Numeric(12, 2), nullable=False)  # In store currency (usually USD)
+    currency = Column(String(10), default='USD')
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint('date', 'store_id', name='uq_daily_psp_fee'),
+    )
+
+
 class User(Base):
     """Users with Google Login"""
     __tablename__ = "users"

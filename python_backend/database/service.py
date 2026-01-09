@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 from .connection import get_db, is_db_configured
 from .models import (
     Store, Product, Variant, Order, OrderLineItem,
-    AdSpend, DailyKPI, CompetitorScan, Customer
+    AdSpend, DailyKPI, CompetitorScan, Customer, DailyPspFee
 )
 
 
@@ -91,9 +91,9 @@ class DatabaseService:
         store_key: Optional[str] = None
     ) -> Optional[List[Dict[str, Any]]]:
         """
-        Get orders for date range
+        Get orders for date range with line items
 
-        Returns list with order details and analytics
+        Returns list with order details, line items, and analytics
         """
         if not is_db_configured():
             return None
@@ -102,7 +102,10 @@ class DatabaseService:
             async with get_db() as db:
                 query = (
                     select(Order)
-                    .options(selectinload(Order.customer))
+                    .options(
+                        selectinload(Order.customer),
+                        selectinload(Order.line_items).selectinload(OrderLineItem.variant).selectinload(Variant.product)
+                    )
                     .where(
                         and_(
                             Order.created_at >= datetime.combine(start_date, datetime.min.time()),
@@ -129,8 +132,41 @@ class DatabaseService:
                     net = _decimal_to_float(order.net) or 0
                     cogs = _decimal_to_float(order.cogs) or 0
                     shipping = _decimal_to_float(order.shipping_charged) or 0
-                    profit = net + shipping - cogs
+                    gross = _decimal_to_float(order.gross) or 0
+                    discounts = _decimal_to_float(order.discounts) or 0
+                    refunds = _decimal_to_float(order.refunds) or 0
+
+                    # PSP fee estimate for this order (2.9% + $0.30)
+                    psp_fee = round(net * 0.029 + 0.30, 2) if net > 0 else 0
+
+                    # Profit = net + shipping - cogs - psp_fee
+                    profit = net + shipping - cogs - psp_fee
                     margin_pct = (profit / (net + shipping)) * 100 if (net + shipping) > 0 else 0
+
+                    # Build line items
+                    items = []
+                    items_count = 0
+                    for line_item in order.line_items:
+                        qty = line_item.quantity or 0
+                        items_count += qty
+
+                        product_title = ""
+                        variant_title = ""
+                        if line_item.variant:
+                            variant_title = line_item.variant.title or ""
+                            if line_item.variant.product:
+                                product_title = line_item.variant.product.title or ""
+
+                        item_name = f"{product_title} - {variant_title}".strip(" - ") if product_title or variant_title else "Unknown Item"
+
+                        items.append({
+                            "sku": line_item.sku or "",
+                            "name": item_name,
+                            "quantity": qty,
+                            "gross": _decimal_to_float(line_item.gross) or 0,
+                            "unit_cogs": _decimal_to_float(line_item.unit_cogs) or 0,
+                            "total_cogs": round((_decimal_to_float(line_item.unit_cogs) or 0) * qty, 2)
+                        })
 
                     orders_data.append({
                         "order_id": order.shopify_gid.split("/")[-1] if order.shopify_gid else "",
@@ -146,16 +182,17 @@ class DatabaseService:
                         "country": order.country or "Unknown",
                         "city": "",
                         "is_cancelled": order.cancelled_at is not None,
-                        "gross": _decimal_to_float(order.gross) or 0,
-                        "discounts": _decimal_to_float(order.discounts) or 0,
-                        "refunds": _decimal_to_float(order.refunds) or 0,
+                        "gross": gross,
+                        "discounts": discounts,
+                        "refunds": refunds,
                         "net": net,
                         "shipping": shipping,
                         "cogs": cogs,
+                        "psp_fee": psp_fee,
                         "profit": round(profit, 2),
                         "margin_pct": round(margin_pct, 1),
-                        "items_count": 0,  # Would need line items count
-                        "items": [],
+                        "items_count": items_count,
+                        "items": items,
                         "store": ""
                     })
 
@@ -284,12 +321,11 @@ class DatabaseService:
                     # Calculate metrics matching original formula from master_report_mirai.py
                     aov = gross / orders_count if orders_count > 0 else 0
 
-                    # PSP fees estimate (2.9% + $0.30 per transaction)
-                    # TODO: Replace with actual PSP fees from Shopify API
+                    # PSP fees will be fetched from database below
+                    # Default to estimate: 2.9% + $0.30 per transaction
                     psp_usd = net * 0.029 + 0.30 * orders_count
 
                     # Shipping cost estimate (use 80% of shipping charged as estimate)
-                    # TODO: Replace with actual shipping matrix calculation
                     shipping_cost = shipping_charged * 0.8
 
                     # Revenue base = net + shipping charged (matches original)
@@ -340,7 +376,7 @@ class DatabaseService:
                         "meta_cpa": None,
                     })
 
-                # Fetch ad spend for these dates and merge
+                # Fetch ad spend and PSP fees for these dates and merge
                 if kpis:
                     dates = [datetime.strptime(k["date"], "%Y-%m-%d").date() for k in kpis]
                     ad_query = select(AdSpend).where(
@@ -351,6 +387,21 @@ class DatabaseService:
                     )
                     ad_result = await db.execute(ad_query)
                     ad_rows = ad_result.scalars().all()
+
+                    # Fetch PSP fees from database
+                    psp_query = select(DailyPspFee).where(
+                        and_(
+                            DailyPspFee.date >= min(dates),
+                            DailyPspFee.date <= max(dates)
+                        )
+                    )
+                    psp_result = await db.execute(psp_query)
+                    psp_rows = psp_result.scalars().all()
+
+                    # Build PSP lookup: {date: fee}
+                    psp_lookup = {}
+                    for psp in psp_rows:
+                        psp_lookup[psp.date.isoformat()] = _decimal_to_float(psp.fee_amount) or 0
 
                     # Build lookup: {date: {platform: spend}}
                     ad_lookup = {}
@@ -363,7 +414,7 @@ class DatabaseService:
                         elif ad.platform == "meta":
                             ad_lookup[d_key]["meta"] += _decimal_to_float(ad.spend_usd) or 0
 
-                    # Merge ad spend into KPIs
+                    # Merge ad spend and PSP fees into KPIs
                     for kpi in kpis:
                         ad_data = ad_lookup.get(kpi["date"], {"google": 0, "meta": 0})
                         google_spend = ad_data["google"]
@@ -374,12 +425,24 @@ class DatabaseService:
                         kpi["meta_spend"] = round(meta_spend, 2)
                         kpi["total_spend"] = round(total_spend, 2)
 
+                        # Use real PSP fees from database if available, otherwise keep estimate
+                        real_psp = psp_lookup.get(kpi["date"])
+                        if real_psp is not None:
+                            kpi["psp_usd"] = round(real_psp, 2)
+
+                        # Recalculate operational profit with real PSP fees
+                        # operational = (net + shipping_charged) - shipping_cost - cogs - psp
+                        revenue_base = kpi.get("revenue_base", kpi["net"])
+                        shipping_cost = kpi.get("shipping_cost", 0)
+                        cogs = kpi.get("cogs", 0)
+                        psp_usd = kpi.get("psp_usd", 0)
+                        kpi["operational"] = round(revenue_base - shipping_cost - cogs - psp_usd, 2)
+
                         # Recalculate margin with ad spend (matching original formula)
                         # margin = operational - total_spend
                         kpi["margin"] = round(kpi["operational"] - total_spend, 2)
 
                         # margin_pct = margin / revenue_base (as decimal 0.xx, not percentage)
-                        revenue_base = kpi.get("revenue_base", kpi["net"])
                         kpi["margin_pct"] = round(kpi["margin"] / revenue_base, 2) if revenue_base > 0 else 0
 
                         # Calculate CPAs (like Shopify attribution)
