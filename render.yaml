@@ -3,14 +3,7 @@ services:
   - type: web
     name: mirai-dashboard
     env: node
-    buildCommand: |
-      npm install
-      npm run build
-      cd python_backend
-      python3 -m pip install --upgrade pip
-      pip install --no-cache-dir -r requirements.txt
-      echo "✅ Installed Python packages:"
-      pip list | grep -E "gspread|facebook-business|fastapi|uvicorn|sqlalchemy|asyncpg"
+    buildCommand: npm install && npm run build && cd python_backend && python3 -m pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt && echo "✅ Installed packages:" && pip list | grep -E "sqlalchemy|asyncpg|psycopg2"
     startCommand: bash start.sh
     envVars:
       - key: NODE_VERSION
