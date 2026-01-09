@@ -388,5 +388,99 @@ class DatabaseService:
             return None
 
 
+    # ==================== UPDATE VARIANT ====================
+
+    @staticmethod
+    async def update_variant_price(
+        variant_id: str,
+        price: float = None,
+        compare_at_price: float = None,
+        cogs: float = None
+    ) -> bool:
+        """
+        Update variant pricing in database after Shopify update
+        Called automatically when prices are changed via dashboard
+        """
+        if not is_db_configured():
+            return False
+
+        try:
+            async with get_db() as db:
+                # Find variant by variant_id
+                result = await db.execute(
+                    select(Variant).where(Variant.variant_id == str(variant_id))
+                )
+                variant = result.scalar_one_or_none()
+
+                if not variant:
+                    print(f"⚠️ Variant {variant_id} not found in database")
+                    return False
+
+                # Update fields that were provided
+                if price is not None:
+                    variant.price = price
+                if compare_at_price is not None:
+                    variant.compare_at_price = compare_at_price
+                if cogs is not None:
+                    variant.cogs = cogs
+
+                variant.updated_at = datetime.utcnow()
+                await db.commit()
+
+                print(f"✅ Updated variant {variant_id} in database: price={price}, compare_at={compare_at_price}, cogs={cogs}")
+                return True
+
+        except Exception as e:
+            print(f"❌ Database error updating variant {variant_id}: {e}")
+            return False
+
+    # ==================== DATABASE STATS ====================
+
+    @staticmethod
+    async def get_stats() -> Dict[str, Any]:
+        """Get database statistics"""
+        if not is_db_configured():
+            return {"configured": False, "message": "Database not configured"}
+
+        try:
+            async with get_db() as db:
+                # Count records in each table
+                orders_count = (await db.execute(select(func.count(Order.id)))).scalar() or 0
+                variants_count = (await db.execute(select(func.count(Variant.id)))).scalar() or 0
+                products_count = (await db.execute(select(func.count(Product.id)))).scalar() or 0
+                customers_count = (await db.execute(select(func.count(Customer.id)))).scalar() or 0
+
+                # Get date range of orders
+                oldest_order = (await db.execute(
+                    select(Order.created_at).order_by(Order.created_at.asc()).limit(1)
+                )).scalar()
+                newest_order = (await db.execute(
+                    select(Order.created_at).order_by(Order.created_at.desc()).limit(1)
+                )).scalar()
+
+                return {
+                    "configured": True,
+                    "connected": True,
+                    "stats": {
+                        "orders": orders_count,
+                        "variants": variants_count,
+                        "products": products_count,
+                        "customers": customers_count,
+                    },
+                    "order_date_range": {
+                        "oldest": oldest_order.isoformat() if oldest_order else None,
+                        "newest": newest_order.isoformat() if newest_order else None,
+                    }
+                }
+
+        except Exception as e:
+            print(f"❌ Database error in get_stats: {e}")
+            return {
+                "configured": True,
+                "connected": False,
+                "error": str(e)
+            }
+
+
 # Global service instance
 db_service = DatabaseService()

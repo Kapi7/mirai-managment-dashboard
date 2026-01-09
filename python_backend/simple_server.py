@@ -128,6 +128,20 @@ def _run_price_update_background(task_id: str, updates: List[Dict[str, Any]]):
                     notes=update.get("notes", "")
                 )
 
+                # Update database immediately
+                if DB_SERVICE_AVAILABLE and db_service.is_available():
+                    try:
+                        import asyncio
+                        loop = asyncio.new_event_loop()
+                        loop.run_until_complete(db_service.update_variant_price(
+                            variant_id=variant_id,
+                            price=new_price,
+                            compare_at_price=new_compare_at
+                        ))
+                        loop.close()
+                    except Exception as db_err:
+                        print(f"⚠️ DB update failed for {variant_id}: {db_err}")
+
                 updated_count += 1
                 results.append({
                     "variant_id": variant_id,
@@ -452,6 +466,19 @@ def _run_korealy_sync_background(task_id: str, variant_ids: List[str], korealy_c
                     notes=f"KOREALY_COGS|{old_cogs:.2f}|{new_cogs:.2f}"
                 )
 
+                # Update database immediately
+                if DB_SERVICE_AVAILABLE and db_service.is_available():
+                    try:
+                        import asyncio
+                        loop = asyncio.new_event_loop()
+                        loop.run_until_complete(db_service.update_variant_price(
+                            variant_id=variant_id,
+                            cogs=new_cogs
+                        ))
+                        loop.close()
+                    except Exception as db_err:
+                        print(f"⚠️ DB update failed for {variant_id}: {db_err}")
+
                 updated_count += 1
                 results.append({
                     "variant_id": variant_id,
@@ -604,6 +631,21 @@ async def db_status():
             "configured": True,
             "message": f"Connection check failed: {e}"
         }
+
+
+@app.get("/db-stats")
+async def db_stats():
+    """
+    Get database statistics - orders, products, variants count
+    """
+    if not DB_SERVICE_AVAILABLE:
+        return {"error": "Database service not installed"}
+
+    try:
+        stats = await db_service.get_stats()
+        return stats
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @app.post("/daily-report")
