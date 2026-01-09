@@ -678,17 +678,23 @@ async def daily_report(req: DateRangeRequest):
         start_date = datetime.strptime(req.start_date, "%Y-%m-%d").date()
         end_date = datetime.strptime(req.end_date, "%Y-%m-%d").date()
 
+        print(f"📋 Daily report request: {start_date} to {end_date}")
+
         if start_date > end_date:
             raise HTTPException(status_code=400, detail="start_date must be <= end_date")
 
         # Try database first
         if DB_SERVICE_AVAILABLE and db_service.is_available():
+            print(f"  📊 Trying database query...")
             try:
                 db_data = await db_service.get_daily_kpis(start_date, end_date)
+                print(f"  📊 Database returned: {len(db_data) if db_data else 'None'} days")
                 if db_data is not None:
                     return {"data": db_data, "source": "database"}
             except Exception as db_err:
                 print(f"⚠️ Database query failed, falling back to API: {db_err}")
+                import traceback
+                traceback.print_exc()
 
         # Fallback to API-based logic
         from report_logic import fetch_daily_reports
@@ -1257,17 +1263,23 @@ async def order_report(req: OrderReportRequest):
         start_date = datetime.strptime(req.start_date, "%Y-%m-%d").date()
         end_date = datetime.strptime(req.end_date, "%Y-%m-%d").date()
 
+        print(f"📋 Order report request: {start_date} to {end_date}")
+
         if start_date > end_date:
             raise HTTPException(status_code=400, detail="start_date must be <= end_date")
 
         # Try database first
         if DB_SERVICE_AVAILABLE and db_service.is_available():
+            print(f"  📊 Trying database query...")
             try:
                 db_data = await db_service.get_orders(start_date, end_date)
+                print(f"  📊 Database returned: {len(db_data) if db_data else 'None'} orders")
                 if db_data is not None:
                     return {"data": db_data, "source": "database"}
             except Exception as db_err:
                 print(f"⚠️ Database query failed, falling back to API: {db_err}")
+                import traceback
+                traceback.print_exc()
 
         # Fallback to API-based logic
         from order_report_logic import fetch_order_report

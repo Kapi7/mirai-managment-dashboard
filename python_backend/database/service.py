@@ -160,6 +160,8 @@ class DatabaseService:
 
         except Exception as e:
             print(f"❌ Database error in get_orders: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     # ==================== DAILY KPIS ====================

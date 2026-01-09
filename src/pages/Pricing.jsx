@@ -71,6 +71,8 @@ export default function Pricing() {
   const [korealyStats, setKorealyStats] = useState({});
   const [korealySelectedRows, setKorealySelectedRows] = useState(new Set());
   const [korealyStatusFilter, setKorealyStatusFilter] = useState('all');
+  const [currentScanTask, setCurrentScanTask] = useState(null);
+  const [scanProgress, setScanProgress] = useState(null);
 
   // Pre-fetch items on mount for faster initial load
   useEffect(() => {
@@ -2540,6 +2542,13 @@ export default function Pricing() {
                   onClick={() => setKorealyStatusFilter('NO_MAPPING')}
                 >
                   No Mapping ({korealyStats.NO_MAPPING || 0})
+                </Button>
+                <Button
+                  variant={korealyStatusFilter === 'NO_COGS_IN_SHOPIFY' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setKorealyStatusFilter('NO_COGS_IN_SHOPIFY')}
+                >
+                  No Shopify COGS ({korealyStats.NO_COGS_IN_SHOPIFY || 0})
                 </Button>
                 <Button
                   variant={korealyStatusFilter === 'MATCH' ? 'default' : 'outline'}
