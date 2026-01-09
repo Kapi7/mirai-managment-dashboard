@@ -224,8 +224,19 @@ class DatabaseService:
                     net_margin = net - cogs
                     margin_pct = (net_margin / net * 100) if net > 0 else 0
 
+                    # Format date for display
+                    date_str = row.order_date.isoformat() if hasattr(row.order_date, 'isoformat') else str(row.order_date)
+                    # Create label like "Mon Jan 9"
+                    try:
+                        from datetime import datetime as dt
+                        d = dt.strptime(date_str, "%Y-%m-%d")
+                        label = d.strftime("%a %b %-d")  # Mon Jan 9
+                    except:
+                        label = date_str
+
                     kpis.append({
-                        "date": row.order_date.isoformat() if hasattr(row.order_date, 'isoformat') else str(row.order_date),
+                        "date": date_str,
+                        "label": label,  # Frontend expects this for display
                         "orders": orders_count,
                         "gross": gross,
                         "discounts": discounts,
