@@ -134,12 +134,20 @@ class SyncOrders(BaseSyncJob):
                         )
                         existing = result.scalar_one_or_none()
 
-                        # Parse order data
+                        # Parse order data (strip timezone to make naive UTC)
                         created_at_str = order_data.get("createdAt", "")
-                        created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00")) if created_at_str else datetime.utcnow()
+                        if created_at_str:
+                            created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+                            created_at = created_at.replace(tzinfo=None)  # Convert to naive
+                        else:
+                            created_at = datetime.utcnow()
 
                         cancelled_at_str = order_data.get("cancelledAt")
-                        cancelled_at = datetime.fromisoformat(cancelled_at_str.replace("Z", "+00:00")) if cancelled_at_str else None
+                        if cancelled_at_str:
+                            cancelled_at = datetime.fromisoformat(cancelled_at_str.replace("Z", "+00:00"))
+                            cancelled_at = cancelled_at.replace(tzinfo=None)  # Convert to naive
+                        else:
+                            cancelled_at = None
 
                         # Customer
                         customer_data = order_data.get("customer") or {}
