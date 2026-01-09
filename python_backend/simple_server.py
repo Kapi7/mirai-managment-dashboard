@@ -24,8 +24,13 @@ JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24 * 7  # 1 week
 
 # Google OAuth Settings
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
-ALLOWED_EMAILS = os.getenv("ALLOWED_EMAILS", "").split(",")  # Comma-separated list of allowed emails
+GOOGLE_CLIENT_ID = os.getenv("VITE_GOOGLE_CLIENT_ID", os.getenv("GOOGLE_CLIENT_ID", ""))
+# First admin email - this user will be created as admin on first login
+FIRST_ADMIN_EMAIL = os.getenv("FIRST_ADMIN_EMAIL", "kapoosha@gmail.com")
+ALLOWED_EMAILS = [e.strip() for e in os.getenv("ALLOWED_EMAILS", "").split(",") if e.strip()]
+# Always allow first admin email
+if FIRST_ADMIN_EMAIL and FIRST_ADMIN_EMAIL not in ALLOWED_EMAILS:
+    ALLOWED_EMAILS.append(FIRST_ADMIN_EMAIL)
 
 security = HTTPBearer(auto_error=False)
 
@@ -1480,29 +1485,34 @@ async def google_login(req: GoogleAuthRequest):
                 user = result.scalar_one_or_none()
 
                 if not user:
-                    # Check if email is in allowed list (first user becomes admin)
+                    # Check if email is in allowed list
                     is_first_user = False
                     user_count = await db.execute(select(User))
                     if not user_count.scalars().all():
                         is_first_user = True
 
-                    if email.strip() not in [e.strip() for e in ALLOWED_EMAILS if e.strip()] and not is_first_user:
+                    # Check if user is allowed (first user or in allowed list or is first admin email)
+                    is_first_admin = email.strip().lower() == FIRST_ADMIN_EMAIL.strip().lower()
+                    is_allowed = email.strip() in ALLOWED_EMAILS or is_first_user or is_first_admin
+
+                    if not is_allowed:
                         print(f"❌ Email not allowed: {email}")
                         raise HTTPException(status_code=403, detail="Email not authorized. Contact admin to be added.")
 
-                    # Create new user
+                    # Create new user - first user or first admin email becomes admin
+                    make_admin = is_first_user or is_first_admin
                     user = User(
                         email=email,
                         name=google_user.get("name"),
                         picture=google_user.get("picture"),
                         google_id=google_user.get("google_id"),
-                        is_admin=is_first_user,  # First user is admin
+                        is_admin=make_admin,
                         is_active=True
                     )
                     db.add(user)
                     await db.commit()
                     await db.refresh(user)
-                    print(f"✅ Created new user: {email} (admin={is_first_user})")
+                    print(f"✅ Created new user: {email} (admin={make_admin})")
                 else:
                     if not user.is_active:
                         raise HTTPException(status_code=403, detail="Account is disabled")
