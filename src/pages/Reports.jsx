@@ -8,8 +8,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Input } from '@/components/ui/input';
-import { CalendarIcon, TrendingUp, TrendingDown, DollarSign, ShoppingCart, Target, Percent, Package, Users, Globe, Clock, ArrowUpDown } from 'lucide-react';
-import { format, subDays } from 'date-fns';
+import { CalendarIcon, TrendingUp, TrendingDown, DollarSign, ShoppingCart, Target, Percent, Package, Users, Globe, Clock, ArrowUpDown, Star } from 'lucide-react';
+import { format, subDays, startOfMonth, endOfMonth, subMonths, startOfDay, endOfDay } from 'date-fns';
 import { cn } from '@/lib/utils';
 
 // Use same-origin API to avoid CORS issues
@@ -23,6 +23,8 @@ export default function Reports() {
   const [reportData, setReportData] = useState([]);
   const [orderData, setOrderData] = useState({ orders: [], analytics: null });
   const [orderSearch, setOrderSearch] = useState('');
+  const [bestsellersData, setBestsellersData] = useState(null);
+  const [bestsellersDay, setBestsellersDay] = useState(30); // 7, 30, or 60
   const [dateRange, setDateRange] = useState({
     from: subDays(new Date(), 7),
     to: new Date()
@@ -51,8 +53,17 @@ export default function Reports() {
       fetchReportData();
     } else if (activeTab === 'orders') {
       fetchOrderData();
+    } else if (activeTab === 'bestsellers') {
+      fetchBestsellers();
     }
   }, [dateRange, activeTab]);
+
+  // Refetch bestsellers when period changes
+  useEffect(() => {
+    if (activeTab === 'bestsellers') {
+      fetchBestsellers();
+    }
+  }, [bestsellersDay]);
 
   const fetchReportData = async () => {
     setLoading(true);
@@ -116,6 +127,27 @@ export default function Reports() {
     } catch (err) {
       console.error('Failed to fetch order data:', err);
       setError(`Failed to fetch order report: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchBestsellers = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`${REPORT_API_URL}/bestsellers/${bestsellersDay}`);
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const result = await response.json();
+      setBestsellersData(result.data || null);
+    } catch (err) {
+      console.error('Failed to fetch bestsellers:', err);
+      setError(`Failed to fetch bestsellers: ${err.message}`);
     } finally {
       setLoading(false);
     }
@@ -202,7 +234,34 @@ export default function Reports() {
           </PopoverTrigger>
           <PopoverContent className="w-auto p-0" align="end">
             <div className="p-3 space-y-2">
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const today = new Date();
+                    setDateRange({ from: startOfDay(today), to: endOfDay(today) });
+                  }}
+                >
+                  Today
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const yesterday = subDays(new Date(), 1);
+                    setDateRange({ from: startOfDay(yesterday), to: endOfDay(yesterday) });
+                  }}
+                >
+                  Yesterday
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setDateRange({ from: subDays(new Date(), 3), to: new Date() })}
+                >
+                  Last 3 Days
+                </Button>
                 <Button
                   variant="outline"
                   size="sm"
@@ -216,6 +275,26 @@ export default function Reports() {
                   onClick={() => setDateRange({ from: subDays(new Date(), 30), to: new Date() })}
                 >
                   Last 30 Days
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const now = new Date();
+                    setDateRange({ from: startOfMonth(now), to: endOfMonth(now) });
+                  }}
+                >
+                  This Month
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const lastMonth = subMonths(new Date(), 1);
+                    setDateRange({ from: startOfMonth(lastMonth), to: endOfMonth(lastMonth) });
+                  }}
+                >
+                  Last Month
                 </Button>
               </div>
               <Calendar
@@ -254,6 +333,10 @@ export default function Reports() {
           <TabsTrigger value="orders">
             <Package className="h-4 w-4 mr-2" />
             Order Report
+          </TabsTrigger>
+          <TabsTrigger value="bestsellers">
+            <Star className="h-4 w-4 mr-2" />
+            Best Sellers
           </TabsTrigger>
         </TabsList>
 
@@ -627,6 +710,208 @@ export default function Reports() {
                       )}
                     </div>
                   )}
+                </CardContent>
+              </Card>
+            </>
+          )}
+        </TabsContent>
+
+        {/* BESTSELLERS TAB */}
+        <TabsContent value="bestsellers" className="space-y-4">
+          {/* Period Selector */}
+          <div className="flex items-center gap-2 mb-4">
+            <span className="text-sm font-medium text-slate-700">Period:</span>
+            <div className="flex gap-2">
+              {[7, 30, 60].map((days) => (
+                <Button
+                  key={days}
+                  variant={bestsellersDay === days ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setBestsellersDay(days)}
+                >
+                  Last {days} Days
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          {loading ? (
+            <div className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                {[1, 2, 3, 4].map((i) => (
+                  <Card key={i}>
+                    <CardContent className="pt-6">
+                      <Skeleton className="h-8 w-20" />
+                      <Skeleton className="h-4 w-24 mt-2" />
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+              {[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-12 w-full" />)}
+            </div>
+          ) : !bestsellersData ? (
+            <div className="text-center py-8 text-slate-500">
+              <p>No bestsellers data available</p>
+            </div>
+          ) : (
+            <>
+              {/* Analytics Summary */}
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+                <Card>
+                  <CardContent className="pt-6">
+                    <div className="text-2xl font-bold">{bestsellersData.analytics?.total_products_sold || 0}</div>
+                    <p className="text-xs text-muted-foreground">Products Sold</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="pt-6">
+                    <div className="text-2xl font-bold">{bestsellersData.analytics?.total_units_sold || 0}</div>
+                    <p className="text-xs text-muted-foreground">Total Units</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="pt-6">
+                    <div className="text-2xl font-bold">{formatCurrency(bestsellersData.analytics?.total_revenue || 0)}</div>
+                    <p className="text-xs text-muted-foreground">Total Revenue</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="pt-6">
+                    <div className={`text-2xl font-bold ${(bestsellersData.analytics?.total_profit || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {formatCurrency(bestsellersData.analytics?.total_profit || 0)}
+                    </div>
+                    <p className="text-xs text-muted-foreground">Total Profit</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="pt-6">
+                    <div className="text-2xl font-bold">{bestsellersData.analytics?.total_orders || 0}</div>
+                    <p className="text-xs text-muted-foreground">Total Orders</p>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Top Products by Different Metrics */}
+              <div className="grid gap-4 md:grid-cols-3">
+                {/* Top by Quantity */}
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium flex items-center gap-2">
+                      <Package className="h-4 w-4" /> Top by Quantity
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      {(bestsellersData.top_by_quantity || []).slice(0, 5).map((p, i) => (
+                        <div key={i} className="flex justify-between items-center text-sm">
+                          <span className="truncate max-w-[180px]" title={`${p.product_title} ${p.variant_title}`}>
+                            {i + 1}. {p.product_title}
+                          </span>
+                          <Badge variant="secondary">{p.total_qty} units</Badge>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Top by Revenue */}
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium flex items-center gap-2">
+                      <DollarSign className="h-4 w-4" /> Top by Revenue
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      {(bestsellersData.top_by_revenue || []).slice(0, 5).map((p, i) => (
+                        <div key={i} className="flex justify-between items-center text-sm">
+                          <span className="truncate max-w-[180px]" title={`${p.product_title} ${p.variant_title}`}>
+                            {i + 1}. {p.product_title}
+                          </span>
+                          <Badge variant="secondary">{formatCurrency(p.total_revenue)}</Badge>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Top by Profit */}
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium flex items-center gap-2">
+                      <TrendingUp className="h-4 w-4" /> Top by Profit
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      {(bestsellersData.top_by_profit || []).slice(0, 5).map((p, i) => (
+                        <div key={i} className="flex justify-between items-center text-sm">
+                          <span className="truncate max-w-[180px]" title={`${p.product_title} ${p.variant_title}`}>
+                            {i + 1}. {p.product_title}
+                          </span>
+                          <Badge variant={p.total_profit >= 0 ? 'default' : 'destructive'}>
+                            {formatCurrency(p.total_profit)}
+                          </Badge>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Full Bestsellers Table */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>All Best Sellers</CardTitle>
+                  <CardDescription>
+                    Showing top 100 products by quantity sold in the last {bestsellersDay} days
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
+                    <Table>
+                      <TableHeader className="sticky top-0 bg-white">
+                        <TableRow>
+                          <TableHead className="w-12">#</TableHead>
+                          <TableHead>Product</TableHead>
+                          <TableHead>Variant</TableHead>
+                          <TableHead className="text-right">Qty Sold</TableHead>
+                          <TableHead className="text-right">Orders</TableHead>
+                          <TableHead className="text-right">Revenue</TableHead>
+                          <TableHead className="text-right">COGS</TableHead>
+                          <TableHead className="text-right">Profit</TableHead>
+                          <TableHead className="text-right">Margin</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {(bestsellersData.bestsellers || []).map((product, idx) => (
+                          <TableRow key={product.variant_id}>
+                            <TableCell className="font-bold text-slate-500">{idx + 1}</TableCell>
+                            <TableCell className="font-medium max-w-[200px] truncate" title={product.product_title}>
+                              {product.product_title}
+                            </TableCell>
+                            <TableCell className="text-sm text-slate-600 max-w-[150px] truncate">
+                              {product.variant_title || 'Default'}
+                            </TableCell>
+                            <TableCell className="text-right font-bold">{product.total_qty}</TableCell>
+                            <TableCell className="text-right">{product.order_count}</TableCell>
+                            <TableCell className="text-right">{formatCurrency(product.total_revenue)}</TableCell>
+                            <TableCell className="text-right">{formatCurrency(product.total_cogs)}</TableCell>
+                            <TableCell className="text-right">
+                              <span className={product.total_profit >= 0 ? 'text-green-600' : 'text-red-600'}>
+                                {formatCurrency(product.total_profit)}
+                              </span>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Badge variant={product.margin_pct >= 20 ? 'default' : product.margin_pct >= 10 ? 'secondary' : 'destructive'}>
+                                {product.margin_pct?.toFixed(1)}%
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
                 </CardContent>
               </Card>
             </>

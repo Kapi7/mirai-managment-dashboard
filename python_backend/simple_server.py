@@ -905,6 +905,56 @@ async def order_report(req: OrderReportRequest):
         return {"error": str(e), "data": []}
 
 
+# ==================== BESTSELLERS ENDPOINTS ====================
+
+@app.get("/bestsellers/{days}")
+async def get_bestsellers(days: int = 30):
+    """
+    Get best selling products for the specified number of days.
+    Supported values: 7, 30, 60
+    """
+    if days not in [7, 30, 60]:
+        raise HTTPException(status_code=400, detail="Days must be 7, 30, or 60")
+
+    try:
+        from bestsellers_logic import fetch_bestsellers
+        data = fetch_bestsellers(days)
+        return {"success": True, "data": data}
+    except ImportError as e:
+        print(f"❌ Import error in get_bestsellers: {e}")
+        raise HTTPException(status_code=500, detail=f"Module import error: {e}")
+    except Exception as e:
+        print(f"❌ Error in get_bestsellers: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class VariantOrderCountRequest(BaseModel):
+    variant_ids: List[str]
+    days: int = 30
+
+
+@app.post("/variant-order-counts")
+async def get_variant_order_counts(req: VariantOrderCountRequest):
+    """
+    Get order count for specific variant IDs in the last N days.
+    Used to add order count to target prices.
+    """
+    try:
+        from bestsellers_logic import get_variant_order_count
+        counts = get_variant_order_count(req.variant_ids, req.days)
+        return {"success": True, "counts": counts}
+    except ImportError as e:
+        print(f"❌ Import error in get_variant_order_counts: {e}")
+        raise HTTPException(status_code=500, detail=f"Module import error: {e}")
+    except Exception as e:
+        print(f"❌ Error in get_variant_order_counts: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8080))

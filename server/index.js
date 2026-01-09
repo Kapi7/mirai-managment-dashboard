@@ -22,17 +22,14 @@ app.use(express.json());
 app.post('/reports-api/daily-report', async (req, res) => {
   try {
     const { start_date, end_date } = req.body;
-    console.log(`📊 Fetching report: ${start_date} to ${end_date}`);
+    console.log(`📊 Fetching daily report: ${start_date} to ${end_date}`);
 
-    // Proxy to Python backend with 2 minute timeout (reports can be slow)
     const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
     const response = await fetch(`${pythonBackendUrl}/daily-report`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ start_date, end_date }),
-      signal: AbortSignal.timeout(120000) // 2 minute timeout
+      signal: AbortSignal.timeout(120000)
     });
 
     if (!response.ok) {
@@ -47,7 +44,6 @@ app.post('/reports-api/daily-report', async (req, res) => {
   } catch (error) {
     console.error('❌ Report API error:', error);
 
-    // Better error messages
     if (error.cause?.code === 'ECONNREFUSED') {
       return res.status(503).json({
         error: 'Python backend unavailable. Please wait a moment and try again.',
@@ -62,6 +58,109 @@ app.post('/reports-api/daily-report', async (req, res) => {
     }
 
     res.status(500).json({ error: error.message, data: [] });
+  }
+});
+
+// Order Report API endpoint - per-order breakdown
+app.post('/reports-api/order-report', async (req, res) => {
+  try {
+    const { start_date, end_date } = req.body;
+    console.log(`📦 Fetching order report: ${start_date} to ${end_date}`);
+
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/order-report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ start_date, end_date }),
+      signal: AbortSignal.timeout(180000) // 3 min timeout for order-level data
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ Python backend error (${response.status}):`, errorText);
+      throw new Error(`Python backend error: ${response.status} - ${errorText}`);
+    }
+
+    const result = await response.json();
+    console.log(`✅ Fetched ${result.data?.orders?.length || 0} orders`);
+    res.json(result);
+  } catch (error) {
+    console.error('❌ Order Report API error:', error);
+
+    if (error.cause?.code === 'ECONNREFUSED') {
+      return res.status(503).json({
+        error: 'Python backend unavailable.',
+        data: { orders: [], analytics: null }
+      });
+    }
+    if (error.name === 'TimeoutError') {
+      return res.status(504).json({
+        error: 'Request timed out. Try a shorter date range.',
+        data: { orders: [], analytics: null }
+      });
+    }
+
+    res.status(500).json({ error: error.message, data: { orders: [], analytics: null } });
+  }
+});
+
+// Bestsellers endpoint
+app.get('/reports-api/bestsellers/:days', async (req, res) => {
+  try {
+    const { days } = req.params;
+    console.log(`📊 Fetching bestsellers for last ${days} days`);
+
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/bestsellers/${days}`, {
+      signal: AbortSignal.timeout(180000) // 3 min timeout
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ Bestsellers error: ${response.status} - ${errorText}`);
+      return res.status(response.status).json({ error: errorText, data: null });
+    }
+
+    const data = await response.json();
+    res.json(data);
+
+  } catch (error) {
+    console.error('❌ Bestsellers endpoint error:', error);
+    if (error.name === 'TimeoutError') {
+      return res.status(504).json({
+        error: 'Request timed out.',
+        data: null
+      });
+    }
+    res.status(500).json({ error: error.message, data: null });
+  }
+});
+
+// Variant order counts endpoint
+app.post('/reports-api/variant-order-counts', async (req, res) => {
+  try {
+    console.log('📊 Fetching variant order counts');
+
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/variant-order-counts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body),
+      signal: AbortSignal.timeout(180000) // 3 min timeout
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ Variant order counts error: ${response.status} - ${errorText}`);
+      return res.status(response.status).json({ error: errorText, counts: {} });
+    }
+
+    const data = await response.json();
+    res.json(data);
+
+  } catch (error) {
+    console.error('❌ Variant order counts error:', error);
+    res.status(500).json({ error: error.message, counts: {} });
   }
 });
 

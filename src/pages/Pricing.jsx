@@ -49,6 +49,8 @@ export default function Pricing() {
   const [targetPricesPriorityFilter, setTargetPricesPriorityFilter] = useState('all');
   const [targetPricesSearchFilter, setTargetPricesSearchFilter] = useState('');
   const [selectedTargetPrices, setSelectedTargetPrices] = useState(new Set());
+  const [orderCounts, setOrderCounts] = useState({}); // variant_id -> order count
+  const [loadingOrderCounts, setLoadingOrderCounts] = useState(false);
 
   // Competitor Analysis tab state
   const [competitorAnalysis, setCompetitorAnalysis] = useState(null);
@@ -58,6 +60,7 @@ export default function Pricing() {
   const [scanHistorySortDirection, setScanHistorySortDirection] = useState('desc');
   const [backgroundScan, setBackgroundScan] = useState(null); // { taskId, status, progress, total, currentItem }
   const [backgroundUpdate, setBackgroundUpdate] = useState(null); // { taskId, status, progress, total, currentItem }
+  const [expandedCompetitorSections, setExpandedCompetitorSections] = useState({}); // { overpriced: false, underpriced: false, competitive: false }
 
   // Product Management tab state
   const [productManagementActions, setProductManagementActions] = useState([]);
@@ -579,11 +582,63 @@ export default function Pricing() {
             <Filter className="h-4 w-4 mr-2" />
             Korealy
           </TabsTrigger>
-          <TabsTrigger value="product-management">
-            <Package className="h-4 w-4 mr-2" />
-            Products
-          </TabsTrigger>
+          {/* Products tab hidden per user request */}
+          {false && (
+            <TabsTrigger value="product-management">
+              <Package className="h-4 w-4 mr-2" />
+              Products
+            </TabsTrigger>
+          )}
         </TabsList>
+
+        {/* GLOBAL PROGRESS INDICATOR - Always visible when background task is running */}
+        {(backgroundScan || backgroundUpdate) && (
+          <div className="mt-4 p-4 bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-lg shadow-sm">
+            <div className="flex items-center gap-4">
+              <div className="flex-shrink-0">
+                <div className="animate-spin h-6 w-6 border-2 border-blue-500 border-t-transparent rounded-full"></div>
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm font-semibold text-blue-900">
+                    {backgroundScan ? '🔍 Scanning Competitor Prices' : '💰 Updating Prices'}
+                  </span>
+                  <span className="text-sm font-bold text-blue-700">
+                    {backgroundScan ? `${backgroundScan.progress} / ${backgroundScan.total}` : `${backgroundUpdate.progress} / ${backgroundUpdate.total}`}
+                  </span>
+                </div>
+                <div className="w-full bg-blue-200 rounded-full h-3">
+                  <div
+                    className="bg-gradient-to-r from-blue-500 to-purple-500 h-3 rounded-full transition-all duration-500 ease-out"
+                    style={{
+                      width: `${(() => {
+                        const task = backgroundScan || backgroundUpdate;
+                        return task.total > 0 ? (task.progress / task.total) * 100 : 0;
+                      })()}%`
+                    }}
+                  ></div>
+                </div>
+                <div className="flex items-center justify-between mt-1">
+                  <p className="text-xs text-blue-700 truncate max-w-md">
+                    {backgroundScan?.currentItem || backgroundUpdate?.currentItem || 'Processing...'}
+                  </p>
+                  <span className="text-xs text-blue-600 font-medium">
+                    {(() => {
+                      const task = backgroundScan || backgroundUpdate;
+                      if (task.status === 'completed') return '✅ Complete!';
+                      if (task.status === 'failed') return '❌ Failed';
+                      if (task.total > 0) {
+                        const pct = ((task.progress / task.total) * 100).toFixed(0);
+                        return `${pct}% complete`;
+                      }
+                      return 'Starting...';
+                    })()}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ITEMS TAB */}
         <TabsContent value="items">
@@ -1380,7 +1435,7 @@ export default function Pricing() {
           <Card>
             <CardHeader>
               <CardTitle>Price Update History</CardTitle>
-              <CardDescription>Recent price changes and their status</CardDescription>
+              <CardDescription>Recent price changes and their status (includes Korealy COGS syncs)</CardDescription>
             </CardHeader>
             <CardContent>
               {loading ? (
@@ -1397,36 +1452,65 @@ export default function Pricing() {
                         <TableHead>Timestamp</TableHead>
                         <TableHead>Variant ID</TableHead>
                         <TableHead>Item</TableHead>
-                        <TableHead>Market</TableHead>
-                        <TableHead className="text-right">Old Price</TableHead>
-                        <TableHead className="text-right">New Price</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead className="text-right">Old Value</TableHead>
+                        <TableHead className="text-right">New Value</TableHead>
                         <TableHead className="text-right">Change %</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead>Notes</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {updateLog.map((log, idx) => (
-                        <TableRow key={idx}>
-                          <TableCell className="text-sm">{log.timestamp}</TableCell>
-                          <TableCell className="font-mono text-sm">{log.variant_id}</TableCell>
-                          <TableCell className="font-medium">{log.item}</TableCell>
-                          <TableCell><Badge variant="outline">{log.market}</Badge></TableCell>
-                          <TableCell className="text-right">{formatCurrency(log.old_price)}</TableCell>
-                          <TableCell className="text-right">{formatCurrency(log.new_price)}</TableCell>
-                          <TableCell className="text-right">
-                            <span className={log.change_pct >= 0 ? 'text-green-600' : 'text-red-600'}>
-                              {log.change_pct >= 0 ? '+' : ''}{formatPercent(log.change_pct)}
-                            </span>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant={log.status === 'success' ? 'default' : 'destructive'}>
-                              {log.status}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-sm text-slate-600">{log.notes}</TableCell>
-                        </TableRow>
-                      ))}
+                      {updateLog.map((log, idx) => {
+                        // Parse Korealy COGS updates from notes format: KOREALY_COGS|old|new
+                        const isKorealyCogs = log.notes?.startsWith('KOREALY_COGS|');
+                        let oldCogs = null, newCogs = null, displayNotes = log.notes;
+                        if (isKorealyCogs) {
+                          const parts = log.notes.split('|');
+                          oldCogs = parseFloat(parts[1]) || 0;
+                          newCogs = parseFloat(parts[2]) || 0;
+                          displayNotes = `COGS: $${oldCogs.toFixed(2)} → $${newCogs.toFixed(2)}`;
+                        }
+
+                        return (
+                          <TableRow key={idx} className={isKorealyCogs ? 'bg-purple-50' : ''}>
+                            <TableCell className="text-sm">{log.timestamp}</TableCell>
+                            <TableCell className="font-mono text-sm">{log.variant_id}</TableCell>
+                            <TableCell className="font-medium max-w-[200px] truncate" title={log.item}>{log.item}</TableCell>
+                            <TableCell>
+                              <Badge variant={isKorealyCogs ? 'secondary' : 'outline'}>
+                                {isKorealyCogs ? 'Korealy COGS' : log.market || 'Price'}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {isKorealyCogs ? formatCurrency(oldCogs) : formatCurrency(log.old_price)}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {isKorealyCogs ? formatCurrency(newCogs) : formatCurrency(log.new_price)}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {(() => {
+                                const oldVal = isKorealyCogs ? oldCogs : log.old_price;
+                                const newVal = isKorealyCogs ? newCogs : log.new_price;
+                                const changePct = oldVal > 0 ? ((newVal - oldVal) / oldVal) * 100 : 0;
+                                return (
+                                  <span className={changePct >= 0 ? 'text-green-600' : 'text-red-600'}>
+                                    {changePct >= 0 ? '+' : ''}{changePct.toFixed(1)}%
+                                  </span>
+                                );
+                              })()}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant={log.status === 'success' ? 'default' : 'destructive'}>
+                                {log.status}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-sm text-slate-600 max-w-[200px] truncate" title={displayNotes}>
+                              {displayNotes}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </div>
@@ -1482,6 +1566,34 @@ export default function Pricing() {
                       <SelectItem value="LOW">LOW</SelectItem>
                     </SelectContent>
                   </Select>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={loadingOrderCounts || targetPrices.length === 0}
+                    onClick={async () => {
+                      setLoadingOrderCounts(true);
+                      try {
+                        const variantIds = targetPrices.map(p => p.variant_id);
+                        const response = await fetch(`${API_URL}/variant-order-counts`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ variant_ids: variantIds, days: 30 })
+                        });
+                        if (!response.ok) throw new Error('Failed to fetch order counts');
+                        const result = await response.json();
+                        if (result.success) {
+                          setOrderCounts(result.counts || {});
+                        }
+                      } catch (err) {
+                        console.error('Error fetching order counts:', err);
+                        alert(`Failed to fetch order counts: ${err.message}`);
+                      } finally {
+                        setLoadingOrderCounts(false);
+                      }
+                    }}
+                  >
+                    {loadingOrderCounts ? '⏳ Loading...' : '📊 Load Orders (30d)'}
+                  </Button>
                   {selectedTargetPrices.size > 0 && (
                     <>
                       <Button
@@ -1630,6 +1742,9 @@ export default function Pricing() {
                           >
                             COGS{getTargetPricesSortIcon('cogs')}
                           </TableHead>
+                          <TableHead className="text-right">
+                            Orders (30d)
+                          </TableHead>
                           <TableHead
                             className="text-right cursor-pointer hover:bg-slate-50"
                             onClick={() => handleTargetPricesSort('current')}
@@ -1728,6 +1843,15 @@ export default function Pricing() {
                             <TableCell className="font-medium max-w-[250px] truncate">{price.item}</TableCell>
                             <TableCell className="text-right">{(price.weight_g || 0).toFixed(0)}</TableCell>
                             <TableCell className="text-right">{formatCurrency(price.cogs)}</TableCell>
+                            <TableCell className="text-right">
+                              {orderCounts[price.variant_id] !== undefined ? (
+                                <Badge variant={orderCounts[price.variant_id] > 0 ? 'default' : 'outline'}>
+                                  {orderCounts[price.variant_id]}
+                                </Badge>
+                              ) : (
+                                <span className="text-slate-400">-</span>
+                              )}
+                            </TableCell>
                             <TableCell className="text-right">{formatCurrency(price[`current_${countryKey}`])}</TableCell>
                             <TableCell className="text-right">{formatCurrency(price[`ship_${countryKey}`])}</TableCell>
                             <TableCell className="text-right">{formatCurrency(price[`breakeven_${countryKey}`])}</TableCell>
@@ -2052,9 +2176,9 @@ export default function Pricing() {
                     <div>
                       <h3 className="text-lg font-semibold mb-3 text-red-700">🚨 Overpriced Products ({competitorAnalysis.overpriced.length})</h3>
                       <p className="text-sm text-slate-600 mb-4">Your prices are &gt;35% higher than competitor average - you may be losing sales</p>
-                      <div className="overflow-x-auto">
+                      <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
                         <Table>
-                          <TableHeader>
+                          <TableHeader className="sticky top-0 bg-white">
                             <TableRow>
                               <TableHead>Item</TableHead>
                               <TableHead className="text-right">Your Price</TableHead>
@@ -2065,7 +2189,10 @@ export default function Pricing() {
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {competitorAnalysis.overpriced.slice(0, 10).map((product) => {
+                            {(expandedCompetitorSections.overpriced
+                              ? competitorAnalysis.overpriced
+                              : competitorAnalysis.overpriced.slice(0, 10)
+                            ).map((product) => {
                               const countryKey = selectedCountry;
                               const current = product[`current_${countryKey}`];
                               const compAvg = product[`comp_avg_${countryKey}`];
@@ -2089,7 +2216,20 @@ export default function Pricing() {
                         </Table>
                       </div>
                       {competitorAnalysis.overpriced.length > 10 && (
-                        <p className="text-sm text-slate-500 mt-2">... and {competitorAnalysis.overpriced.length - 10} more</p>
+                        <Button
+                          variant="link"
+                          size="sm"
+                          onClick={() => setExpandedCompetitorSections(prev => ({
+                            ...prev,
+                            overpriced: !prev.overpriced
+                          }))}
+                          className="mt-2 text-red-600"
+                        >
+                          {expandedCompetitorSections.overpriced
+                            ? '▲ Show Less'
+                            : `▼ Show ${competitorAnalysis.overpriced.length - 10} more`
+                          }
+                        </Button>
                       )}
                     </div>
                   )}
@@ -2099,9 +2239,9 @@ export default function Pricing() {
                     <div>
                       <h3 className="text-lg font-semibold mb-3 text-green-700">💰 Underpriced Products ({competitorAnalysis.underpriced.length})</h3>
                       <p className="text-sm text-slate-600 mb-4">Your prices are &lt;15% lower than competitor average - opportunity to raise prices</p>
-                      <div className="overflow-x-auto">
+                      <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
                         <Table>
-                          <TableHeader>
+                          <TableHeader className="sticky top-0 bg-white">
                             <TableRow>
                               <TableHead>Item</TableHead>
                               <TableHead className="text-right">Your Price</TableHead>
@@ -2112,7 +2252,10 @@ export default function Pricing() {
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {competitorAnalysis.underpriced.slice(0, 10).map((product) => {
+                            {(expandedCompetitorSections.underpriced
+                              ? competitorAnalysis.underpriced
+                              : competitorAnalysis.underpriced.slice(0, 10)
+                            ).map((product) => {
                               const countryKey = selectedCountry;
                               const current = product[`current_${countryKey}`];
                               const compAvg = product[`comp_avg_${countryKey}`];
@@ -2136,7 +2279,20 @@ export default function Pricing() {
                         </Table>
                       </div>
                       {competitorAnalysis.underpriced.length > 10 && (
-                        <p className="text-sm text-slate-500 mt-2">... and {competitorAnalysis.underpriced.length - 10} more</p>
+                        <Button
+                          variant="link"
+                          size="sm"
+                          onClick={() => setExpandedCompetitorSections(prev => ({
+                            ...prev,
+                            underpriced: !prev.underpriced
+                          }))}
+                          className="mt-2 text-green-600"
+                        >
+                          {expandedCompetitorSections.underpriced
+                            ? '▲ Show Less'
+                            : `▼ Show ${competitorAnalysis.underpriced.length - 10} more`
+                          }
+                        </Button>
                       )}
                     </div>
                   )}

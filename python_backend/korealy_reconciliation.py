@@ -669,6 +669,9 @@ def sync_korealy_to_shopify(variant_ids: List[str], korealy_cogs_map: Dict[str, 
     failed_count = 0
     details = []
 
+    print(f"🔄 Starting Korealy sync for {len(variant_ids)} variants")
+    print(f"📊 COGS map: {korealy_cogs_map}")
+
     for variant_id in variant_ids:
         if variant_id not in korealy_cogs_map:
             failed_count += 1
@@ -683,6 +686,8 @@ def sync_korealy_to_shopify(variant_ids: List[str], korealy_cogs_map: Dict[str, 
             variant_gid = f"gid://shopify/ProductVariant/{variant_id}"
             new_cogs = float(korealy_cogs_map[variant_id])
 
+            print(f"📦 Processing variant {variant_id} -> new COGS: ${new_cogs:.2f}")
+
             # Get inventory item ID and current COGS for logging
             inv_query = """
             query($id: ID!) {
@@ -695,25 +700,50 @@ def sync_korealy_to_shopify(variant_ids: List[str], korealy_cogs_map: Dict[str, 
                         id
                         unitCost {
                             amount
+                            currencyCode
                         }
                     }
                 }
             }
             """
             inv_result = _shopify_graphql(inv_query, {"id": variant_gid})
+
+            if not inv_result.get("data", {}).get("productVariant"):
+                raise RuntimeError(f"Variant not found in Shopify: {variant_gid}")
+
             variant_data = inv_result["data"]["productVariant"]
+
+            if not variant_data.get("inventoryItem"):
+                raise RuntimeError(f"No inventory item found for variant: {variant_gid}")
+
             inv_item_id = variant_data["inventoryItem"]["id"]
 
             # Get current COGS and item name for logging
             old_cogs = 0.0
+            currency = "USD"
             if variant_data["inventoryItem"].get("unitCost"):
                 old_cogs = float(variant_data["inventoryItem"]["unitCost"]["amount"] or 0)
+                currency = variant_data["inventoryItem"]["unitCost"].get("currencyCode", "USD")
 
             product_title = variant_data["product"]["title"]
             variant_title = variant_data["title"]
             item_name = f"{product_title} — {variant_title}".strip(" — ")
 
-            # Update unit cost
+            print(f"  📍 Item: {item_name}")
+            print(f"  📍 Inventory Item ID: {inv_item_id}")
+            print(f"  📍 Old COGS: ${old_cogs:.2f} {currency}")
+
+            # Skip if COGS is already the same
+            if abs(old_cogs - new_cogs) < 0.01:
+                print(f"  ⏭️ Skipping - COGS already matches")
+                details.append({
+                    "variant_id": variant_id,
+                    "status": "skipped",
+                    "message": f"COGS already ${new_cogs:.2f}"
+                })
+                continue
+
+            # Update unit cost using inventoryItemUpdate mutation
             cost_mutation = """
             mutation inventoryItemUpdate($id: ID!, $input: InventoryItemInput!) {
                 inventoryItemUpdate(id: $id, input: $input) {
@@ -721,6 +751,7 @@ def sync_korealy_to_shopify(variant_ids: List[str], korealy_cogs_map: Dict[str, 
                         id
                         unitCost {
                             amount
+                            currencyCode
                         }
                     }
                     userErrors {
@@ -730,36 +761,58 @@ def sync_korealy_to_shopify(variant_ids: List[str], korealy_cogs_map: Dict[str, 
                 }
             }
             """
+
+            print(f"  🔧 Sending mutation with cost: {new_cogs}")
             cost_result = _shopify_graphql(cost_mutation, {
                 "id": inv_item_id,
-                "input": {"cost": str(new_cogs)}
+                "input": {"cost": new_cogs}  # Use number, not string
             })
 
-            cost_errors = cost_result["data"]["inventoryItemUpdate"]["userErrors"]
-            if cost_errors:
-                raise RuntimeError("; ".join([e["message"] for e in cost_errors]))
+            print(f"  📨 Mutation result: {cost_result}")
 
-            # Log to update log
+            cost_errors = cost_result.get("data", {}).get("inventoryItemUpdate", {}).get("userErrors", [])
+            if cost_errors:
+                error_msgs = "; ".join([e.get("message", str(e)) for e in cost_errors])
+                raise RuntimeError(f"Shopify mutation errors: {error_msgs}")
+
+            # Verify the update
+            updated_item = cost_result.get("data", {}).get("inventoryItemUpdate", {}).get("inventoryItem", {})
+            verified_cogs = 0.0
+            if updated_item.get("unitCost"):
+                verified_cogs = float(updated_item["unitCost"].get("amount", 0))
+
+            print(f"  ✅ Verified new COGS: ${verified_cogs:.2f}")
+
+            if abs(verified_cogs - new_cogs) > 0.01:
+                print(f"  ⚠️ WARNING: COGS mismatch! Expected ${new_cogs:.2f}, got ${verified_cogs:.2f}")
+                raise RuntimeError(f"COGS not updated correctly. Expected ${new_cogs:.2f}, got ${verified_cogs:.2f}")
+
+            # Log to update log with special Korealy format
             from pricing_logic import log_price_update
             log_price_update(
                 variant_id=variant_id,
                 item=item_name,
-                old_price=old_cogs,  # Using COGS as "price" for logging
+                old_price=old_cogs,
                 new_price=new_cogs,
                 old_compare_at=0.0,
                 new_compare_at=0.0,
                 status="success",
-                notes=f"Korealy COGS sync: ${old_cogs:.2f} → ${new_cogs:.2f}"
+                notes=f"KOREALY_COGS|{old_cogs:.2f}|{new_cogs:.2f}"
             )
 
             updated_count += 1
             details.append({
                 "variant_id": variant_id,
+                "item": item_name,
                 "status": "success",
+                "old_cogs": old_cogs,
+                "new_cogs": new_cogs,
                 "message": f"Updated COGS from ${old_cogs:.2f} to ${new_cogs:.2f}"
             })
 
-            time.sleep(0.1)  # Rate limiting
+            print(f"  ✅ Successfully updated {variant_id}: ${old_cogs:.2f} → ${new_cogs:.2f}")
+
+            time.sleep(0.15)  # Rate limiting
 
         except Exception as e:
             failed_count += 1
@@ -769,10 +822,14 @@ def sync_korealy_to_shopify(variant_ids: List[str], korealy_cogs_map: Dict[str, 
                 "message": str(e)
             })
             print(f"❌ Failed to update {variant_id}: {e}")
+            import traceback
+            traceback.print_exc()
 
     message = f"Updated {updated_count} variants"
     if failed_count > 0:
         message += f", {failed_count} failed"
+
+    print(f"🏁 Korealy sync complete: {message}")
 
     return {
         "updated_count": updated_count,
