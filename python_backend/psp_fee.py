@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-psp_fees.py — Shopify Payments fee fetcher (EUR) with daily + MTD helpers,
-for MULTIPLE Shopify stores.
+psp_fees.py — Shopify Payments fee fetcher (EUR/USD) with daily helpers.
 
 - Uses `processed_at` for time filtering (correct for Balance Transactions).
-- Supports many stores via config.SHOPIFY_STORES.
-- Returns daily buckets (dict[date] -> fee_eur) summed across all stores.
-- MTD total is also summed across all stores.
-- No writes; just a library to import.
+- Returns daily buckets (dict[date] -> fee) summed across configured stores.
+- Standalone version - no config.py dependency.
 
 Env:
   SHOPIFY_STORE / SHOPIFY_ACCESS_TOKEN           (main store)
-  SHOPIFY_STORE_C / SHOPIFY_ACCESS_TOKEN_C       (cosmetics store)
   SHOPIFY_API_VERSION
+  REPORT_TZ
 """
 
 from __future__ import annotations
@@ -25,8 +22,22 @@ import pytz
 import requests
 from dotenv import load_dotenv
 
-from config import SHOPIFY_STORES, SHOPIFY_API_VERSION
-from shopify_client import get_shop_timezone
+load_dotenv()
+
+# Config from environment
+SHOPIFY_API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2025-07").strip()
+SHOPIFY_STORE = os.getenv("SHOPIFY_STORE", "").strip()
+SHOPIFY_ACCESS_TOKEN = os.getenv("SHOPIFY_ACCESS_TOKEN", "").strip()
+
+# Build stores list
+SHOPIFY_STORES = []
+if SHOPIFY_STORE and SHOPIFY_ACCESS_TOKEN:
+    SHOPIFY_STORES.append({
+        "key": "skin",
+        "label": "Mirai Skin",
+        "domain": SHOPIFY_STORE,
+        "access_token": SHOPIFY_ACCESS_TOKEN,
+    })
 
 
 def _headers_for(access_token: str) -> Dict[str, str]:
@@ -58,7 +69,7 @@ def _extract_next_link(link_header: str) -> Optional[str]:
 
 
 def _get_tz() -> pytz.BaseTzInfo:
-    tz_name = get_shop_timezone() or os.getenv("REPORT_TZ") or "UTC"
+    tz_name = os.getenv("REPORT_TZ") or "UTC"
     return pytz.timezone(tz_name)
 
 
@@ -78,15 +89,20 @@ def _fetch_until_for_store(
     pages = 0
 
     while True:
-        r = requests.get(
-            url,
-            headers=_headers_for(access_token),
-            params=params if pages == 0 else None,
-            timeout=60,
-        )
-        if r.status_code == 404:
+        try:
+            r = requests.get(
+                url,
+                headers=_headers_for(access_token),
+                params=params if pages == 0 else None,
+                timeout=60,
+            )
+            if r.status_code == 404:
+                break
+            r.raise_for_status()
+        except Exception as e:
+            print(f"[psp_fees] Error fetching: {e}")
             break
-        r.raise_for_status()
+
         data = r.json() or {}
         txns = data.get("transactions") or data.get("balance_transactions") or []
         if not txns:
@@ -116,27 +132,23 @@ def _fetch_until_for_store(
 
 def get_psp_fees_daily(start_date: date, end_date_exclusive: date) -> Dict[date, float]:
     """
-    Returns dict[date] -> total PSP fee (EUR) for each day in [start_date, end_date_exclusive),
-    summed across ALL stores in config.SHOPIFY_STORES.
-
-    Missing days are omitted (0 not included).
+    Returns dict[date] -> total PSP fee for each day in [start_date, end_date_exclusive).
+    Fee is returned in the currency from Shopify (typically store currency).
     """
-    from os.path import dirname, join
-    load_dotenv(join(dirname(__file__), ".env"))
-
     if not SHOPIFY_STORES:
+        print("[psp_fees] No stores configured")
         return {}
 
     tz = _get_tz()
     start_dt = tz.localize(datetime.combine(start_date, datetime.min.time()))
-    end_dt   = tz.localize(datetime.combine(end_date_exclusive, datetime.min.time()))
+    end_dt = tz.localize(datetime.combine(end_date_exclusive, datetime.min.time()))
 
     daily: Dict[date, float] = {}
 
     for store in SHOPIFY_STORES:
         domain = store["domain"]
-        token  = store["access_token"]
-        label  = store["label"]
+        token = store["access_token"]
+        label = store["label"]
 
         txns = _fetch_until_for_store(domain, token, start_dt, tz)
         print(f"[psp_fees] Store '{label}' ({domain}) – transactions fetched: {len(txns)}")
@@ -161,18 +173,7 @@ def get_psp_fees_daily(start_date: date, end_date_exclusive: date) -> Dict[date,
     return daily
 
 
-def get_psp_fee_mtd(today_local: date | None = None) -> float:
-    """
-    Returns MTD total PSP fees (EUR) across ALL stores up to 'today_local'
-    (exclusive of tomorrow boundary).
-    """
-    tz = _get_tz()
-    now_local = datetime.now(tz)
-    if today_local is None:
-        today_local = now_local.date()
-
-    start = today_local.replace(day=1)
-    end_excl = today_local + timedelta(days=1)
-
-    daily = get_psp_fees_daily(start, end_excl)
-    return round(sum(daily.values()), 2)
+def get_psp_fee_for_date(target_date: date) -> float:
+    """Get PSP fee for a single date."""
+    daily = get_psp_fees_daily(target_date, target_date + timedelta(days=1))
+    return daily.get(target_date, 0.0)

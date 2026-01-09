@@ -236,7 +236,7 @@ class DatabaseService:
 
         try:
             async with get_db() as db:
-                # Aggregate directly from orders table
+                # Aggregate directly from orders table with channel attribution
                 query = (
                     select(
                         func.date(Order.created_at).label('order_date'),
@@ -248,6 +248,9 @@ class DatabaseService:
                         func.sum(Order.net).label('net'),
                         func.sum(Order.cogs).label('cogs'),
                         func.sum(Order.shipping_charged).label('shipping_charged'),
+                        # Channel-based purchase counts (like Shopify attribution)
+                        func.sum(case((Order.channel == 'google', 1), else_=0)).label('google_pur'),
+                        func.sum(case((Order.channel == 'meta', 1), else_=0)).label('meta_pur'),
                     )
                     .where(
                         and_(
@@ -272,14 +275,18 @@ class DatabaseService:
                     net = _decimal_to_float(row.net) or 0
                     cogs = _decimal_to_float(row.cogs) or 0
                     shipping_charged = _decimal_to_float(row.shipping_charged) or 0
+                    google_pur = row.google_pur or 0
+                    meta_pur = row.meta_pur or 0
 
                     # Calculate metrics matching original formula from master_report_mirai.py
                     aov = gross / orders_count if orders_count > 0 else 0
 
                     # PSP fees estimate (2.9% + $0.30 per transaction)
+                    # TODO: Replace with actual PSP fees from Shopify API
                     psp_usd = net * 0.029 + 0.30 * orders_count
 
                     # Shipping cost estimate (use 80% of shipping charged as estimate)
+                    # TODO: Replace with actual shipping matrix calculation
                     shipping_cost = shipping_charged * 0.8
 
                     # Revenue base = net + shipping charged (matches original)
@@ -306,12 +313,12 @@ class DatabaseService:
                         "date": date_str,
                         "label": label,  # Frontend expects this for display
                         "orders": orders_count,
-                        "gross": gross,
-                        "discounts": discounts,
-                        "refunds": refunds,
-                        "net": net,
-                        "cogs": cogs,
-                        "shipping_charged": shipping_charged,
+                        "gross": round(gross, 2),
+                        "discounts": round(discounts, 2),
+                        "refunds": round(refunds, 2),
+                        "net": round(net, 2),
+                        "cogs": round(cogs, 2),
+                        "shipping_charged": round(shipping_charged, 2),
                         "shipping_cost": round(shipping_cost, 2),
                         "psp_usd": round(psp_usd, 2),
                         "google_spend": 0,  # Will be filled from ad_spend table
@@ -324,8 +331,10 @@ class DatabaseService:
                         "aov": round(aov, 2),
                         "returning_customers": row.returning_orders or 0,
                         "general_cpa": None,
-                        "google_pur": 0,
-                        "meta_pur": 0
+                        "google_pur": google_pur,
+                        "meta_pur": meta_pur,
+                        "google_cpa": None,  # Will be calculated after ad spend
+                        "meta_cpa": None,
                     })
 
                 # Fetch ad spend for these dates and merge
@@ -354,21 +363,33 @@ class DatabaseService:
                     # Merge ad spend into KPIs
                     for kpi in kpis:
                         ad_data = ad_lookup.get(kpi["date"], {"google": 0, "meta": 0})
-                        kpi["google_spend"] = round(ad_data["google"], 2)
-                        kpi["meta_spend"] = round(ad_data["meta"], 2)
-                        kpi["total_spend"] = round(ad_data["google"] + ad_data["meta"], 2)
+                        google_spend = ad_data["google"]
+                        meta_spend = ad_data["meta"]
+                        total_spend = google_spend + meta_spend
+
+                        kpi["google_spend"] = round(google_spend, 2)
+                        kpi["meta_spend"] = round(meta_spend, 2)
+                        kpi["total_spend"] = round(total_spend, 2)
 
                         # Recalculate margin with ad spend (matching original formula)
                         # margin = operational - total_spend
-                        kpi["margin"] = round(kpi["operational"] - kpi["total_spend"], 2)
+                        kpi["margin"] = round(kpi["operational"] - total_spend, 2)
 
                         # margin_pct = margin / revenue_base (as decimal 0.xx, not percentage)
                         revenue_base = kpi.get("revenue_base", kpi["net"])
                         kpi["margin_pct"] = round(kpi["margin"] / revenue_base, 2) if revenue_base > 0 else 0
 
-                        # Calculate CPA
-                        if kpi["orders"] > 0 and kpi["total_spend"] > 0:
-                            kpi["general_cpa"] = round(kpi["total_spend"] / kpi["orders"], 2)
+                        # Calculate CPAs (like Shopify attribution)
+                        if kpi["orders"] > 0 and total_spend > 0:
+                            kpi["general_cpa"] = round(total_spend / kpi["orders"], 2)
+
+                        # Google CPA = google_spend / google_purchases
+                        if kpi["google_pur"] > 0 and google_spend > 0:
+                            kpi["google_cpa"] = round(google_spend / kpi["google_pur"], 2)
+
+                        # Meta CPA = meta_spend / meta_purchases
+                        if kpi["meta_pur"] > 0 and meta_spend > 0:
+                            kpi["meta_cpa"] = round(meta_spend / kpi["meta_pur"], 2)
 
                 return kpis
 
