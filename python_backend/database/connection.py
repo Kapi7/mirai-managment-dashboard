@@ -90,6 +90,30 @@ async def init_db():
             # Import models to register them with Base
             from . import models
             await conn.run_sync(Base.metadata.create_all)
+
+            # Run migrations for new columns (ALTER TABLE doesn't happen with create_all)
+            migrations = [
+                # Add inbox_type column to support_emails if it doesn't exist
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'support_emails' AND column_name = 'inbox_type'
+                    ) THEN
+                        ALTER TABLE support_emails ADD COLUMN inbox_type VARCHAR(20) DEFAULT 'support';
+                        CREATE INDEX IF NOT EXISTS idx_support_emails_inbox_type ON support_emails(inbox_type);
+                    END IF;
+                END $$;
+                """,
+            ]
+
+            for migration in migrations:
+                try:
+                    await conn.execute(text(migration))
+                except Exception as me:
+                    print(f"⚠️ Migration note: {me}")
+
         print("✅ Database initialized successfully")
         return True
     except Exception as e:
