@@ -345,3 +345,70 @@ class User(Base):
     is_admin = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     last_login = Column(DateTime)
+
+
+class SupportEmail(Base):
+    """Support email threads"""
+    __tablename__ = "support_emails"
+
+    id = Column(Integer, primary_key=True)
+    thread_id = Column(String(255), unique=True, index=True)  # Gmail thread ID
+    message_id = Column(String(255))  # Gmail message ID
+    customer_email = Column(String(255), nullable=False, index=True)
+    customer_name = Column(String(255))
+    subject = Column(Text)
+
+    # Classification
+    status = Column(String(50), default='pending', index=True)  # pending, draft_ready, approved, sent, rejected
+    classification = Column(String(50))  # support, sales, support_sales
+    intent = Column(String(100))  # tracking, return, product_question, complaint, etc.
+    priority = Column(String(20), default='medium')  # low, medium, high
+    sales_opportunity = Column(Boolean, default=False)
+
+    # AI processing
+    ai_confidence = Column(Numeric(3, 2))  # 0.00 to 1.00
+
+    # Timestamps
+    received_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    messages = relationship("SupportMessage", back_populates="email", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index('idx_support_email_status', 'status', 'received_at'),
+    )
+
+
+class SupportMessage(Base):
+    """Individual messages in a support thread"""
+    __tablename__ = "support_messages"
+
+    id = Column(Integer, primary_key=True)
+    email_id = Column(Integer, ForeignKey("support_emails.id", ondelete="CASCADE"))
+
+    # Message details
+    direction = Column(String(10), nullable=False)  # inbound, outbound
+    sender_email = Column(String(255))
+    sender_name = Column(String(255))
+    content = Column(Text, nullable=False)  # Original message content
+    content_html = Column(Text)  # HTML version if available
+
+    # AI draft (for outbound)
+    ai_draft = Column(Text)  # AI-generated response
+    ai_model = Column(String(50))  # Model used (gpt-4o-mini, etc.)
+    ai_reasoning = Column(Text)  # AI's reasoning for the response
+
+    # Approval workflow
+    final_content = Column(Text)  # Edited/approved content
+    approved_by = Column(Integer, ForeignKey("users.id"))
+    approved_at = Column(DateTime)
+    sent_at = Column(DateTime)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    email = relationship("SupportEmail", back_populates="messages")
+    approver = relationship("User", foreign_keys=[approved_by])

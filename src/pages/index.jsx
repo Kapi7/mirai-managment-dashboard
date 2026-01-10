@@ -11,6 +11,7 @@ const KorealyProcessor = lazy(() => import('./KorealyProcessor'));
 const Settings = lazy(() => import('./Settings'));
 const Login = lazy(() => import('./Login'));
 const UserManagement = lazy(() => import('./UserManagement'));
+const Support = lazy(() => import('./Support'));
 
 // Protected route wrapper
 function ProtectedRoute({ children }) {
@@ -48,6 +49,8 @@ const PAGES = {
     Settings: Settings,
 
     UserManagement: UserManagement,
+
+    Support: Support,
 
 }
 
@@ -91,6 +94,7 @@ function PagesContent() {
                     <Route path="/KorealyProcessor" element={<ProtectedRoute><KorealyProcessor /></ProtectedRoute>} />
                     <Route path="/Settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
                     <Route path="/UserManagement" element={<ProtectedRoute><UserManagement /></ProtectedRoute>} />
+                    <Route path="/Support" element={<ProtectedRoute><Support /></ProtectedRoute>} />
                     <Route path="/login" element={<Login />} />
                 </Routes>
             </Suspense>

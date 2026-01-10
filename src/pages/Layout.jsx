@@ -10,7 +10,8 @@ import {
   BarChart3,
   DollarSign,
   Users,
-  LogOut
+  LogOut,
+  MessageSquare
 } from "lucide-react";
 import {
   Sidebar,
@@ -50,6 +51,12 @@ const navigationSections = [
     items: [
       { title: "Pricing", url: createPageUrl("Pricing"), icon: DollarSign },
       { title: "Korealy Tracking", url: createPageUrl("KorealyProcessor"), icon: Package },
+    ]
+  },
+  {
+    label: "Sales & Support",
+    items: [
+      { title: "Support Inbox", url: createPageUrl("Support"), icon: MessageSquare },
     ]
   },
   {

@@ -1701,6 +1701,377 @@ async def toggle_admin(user_id: int, user: dict = Depends(require_admin)):
         return {"success": True, "is_admin": target_user.is_admin}
 
 
+# ==================== SUPPORT ENDPOINTS ====================
+
+class SupportEmailCreate(BaseModel):
+    thread_id: str
+    message_id: Optional[str] = None
+    customer_email: str
+    customer_name: Optional[str] = None
+    subject: str
+    content: str
+    content_html: Optional[str] = None
+
+
+class SupportEmailUpdate(BaseModel):
+    status: Optional[str] = None
+    classification: Optional[str] = None
+    intent: Optional[str] = None
+    priority: Optional[str] = None
+    ai_draft: Optional[str] = None
+    final_content: Optional[str] = None
+
+
+@app.get("/support/emails")
+async def list_support_emails(
+    status: Optional[str] = None,
+    classification: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    user: dict = Depends(get_current_user)
+):
+    """List support emails with optional filters"""
+    if not DB_SERVICE_AVAILABLE:
+        return {"emails": [], "total": 0, "message": "Database not available"}
+
+    from database.connection import get_db
+    from database.models import SupportEmail, SupportMessage
+    from sqlalchemy import select, func, desc
+    from sqlalchemy.orm import selectinload
+
+    async with get_db() as db:
+        # Build query
+        query = select(SupportEmail).options(
+            selectinload(SupportEmail.messages)
+        ).order_by(desc(SupportEmail.received_at))
+
+        # Apply filters
+        if status:
+            query = query.where(SupportEmail.status == status)
+        if classification:
+            query = query.where(SupportEmail.classification == classification)
+
+        # Get total count
+        count_query = select(func.count(SupportEmail.id))
+        if status:
+            count_query = count_query.where(SupportEmail.status == status)
+        if classification:
+            count_query = count_query.where(SupportEmail.classification == classification)
+        total_result = await db.execute(count_query)
+        total = total_result.scalar() or 0
+
+        # Apply pagination
+        query = query.offset(offset).limit(limit)
+
+        result = await db.execute(query)
+        emails = result.scalars().all()
+
+        return {
+            "emails": [
+                {
+                    "id": e.id,
+                    "thread_id": e.thread_id,
+                    "customer_email": e.customer_email,
+                    "customer_name": e.customer_name,
+                    "subject": e.subject,
+                    "status": e.status,
+                    "classification": e.classification,
+                    "intent": e.intent,
+                    "priority": e.priority,
+                    "sales_opportunity": e.sales_opportunity,
+                    "ai_confidence": float(e.ai_confidence) if e.ai_confidence else None,
+                    "received_at": e.received_at.isoformat() if e.received_at else None,
+                    "messages_count": len(e.messages),
+                    "latest_message": e.messages[-1].content[:200] if e.messages else None,
+                    "ai_draft": e.messages[-1].ai_draft if e.messages and e.messages[-1].ai_draft else None
+                }
+                for e in emails
+            ],
+            "total": total
+        }
+
+
+@app.get("/support/emails/{email_id}")
+async def get_support_email(email_id: int, user: dict = Depends(get_current_user)):
+    """Get a single support email with all messages"""
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import SupportEmail
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    async with get_db() as db:
+        result = await db.execute(
+            select(SupportEmail)
+            .options(selectinload(SupportEmail.messages))
+            .where(SupportEmail.id == email_id)
+        )
+        email = result.scalar_one_or_none()
+
+        if not email:
+            raise HTTPException(status_code=404, detail="Email not found")
+
+        return {
+            "id": email.id,
+            "thread_id": email.thread_id,
+            "customer_email": email.customer_email,
+            "customer_name": email.customer_name,
+            "subject": email.subject,
+            "status": email.status,
+            "classification": email.classification,
+            "intent": email.intent,
+            "priority": email.priority,
+            "sales_opportunity": email.sales_opportunity,
+            "ai_confidence": float(email.ai_confidence) if email.ai_confidence else None,
+            "received_at": email.received_at.isoformat() if email.received_at else None,
+            "created_at": email.created_at.isoformat() if email.created_at else None,
+            "messages": [
+                {
+                    "id": m.id,
+                    "direction": m.direction,
+                    "sender_email": m.sender_email,
+                    "sender_name": m.sender_name,
+                    "content": m.content,
+                    "ai_draft": m.ai_draft,
+                    "ai_reasoning": m.ai_reasoning,
+                    "final_content": m.final_content,
+                    "sent_at": m.sent_at.isoformat() if m.sent_at else None,
+                    "created_at": m.created_at.isoformat() if m.created_at else None
+                }
+                for m in email.messages
+            ]
+        }
+
+
+@app.post("/support/emails")
+async def create_support_email(req: SupportEmailCreate, user: dict = Depends(get_current_user)):
+    """Create a new support email (used by Gmail poller webhook)"""
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import SupportEmail, SupportMessage
+    from sqlalchemy import select
+
+    async with get_db() as db:
+        # Check if thread already exists
+        result = await db.execute(
+            select(SupportEmail).where(SupportEmail.thread_id == req.thread_id)
+        )
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            # Add message to existing thread
+            message = SupportMessage(
+                email_id=existing.id,
+                direction="inbound",
+                sender_email=req.customer_email,
+                sender_name=req.customer_name,
+                content=req.content,
+                content_html=req.content_html
+            )
+            db.add(message)
+            existing.status = "pending"  # Reset to pending for new message
+            await db.commit()
+            return {"id": existing.id, "message": "Message added to existing thread"}
+
+        # Create new email thread
+        email = SupportEmail(
+            thread_id=req.thread_id,
+            message_id=req.message_id,
+            customer_email=req.customer_email,
+            customer_name=req.customer_name,
+            subject=req.subject,
+            status="pending",
+            received_at=datetime.utcnow()
+        )
+        db.add(email)
+        await db.flush()
+
+        # Create first message
+        message = SupportMessage(
+            email_id=email.id,
+            direction="inbound",
+            sender_email=req.customer_email,
+            sender_name=req.customer_name,
+            content=req.content,
+            content_html=req.content_html
+        )
+        db.add(message)
+        await db.commit()
+
+        return {"id": email.id, "message": "Email created successfully"}
+
+
+@app.patch("/support/emails/{email_id}")
+async def update_support_email(
+    email_id: int,
+    req: SupportEmailUpdate,
+    user: dict = Depends(get_current_user)
+):
+    """Update support email status, classification, or AI draft"""
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import SupportEmail, SupportMessage
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    async with get_db() as db:
+        result = await db.execute(
+            select(SupportEmail)
+            .options(selectinload(SupportEmail.messages))
+            .where(SupportEmail.id == email_id)
+        )
+        email = result.scalar_one_or_none()
+
+        if not email:
+            raise HTTPException(status_code=404, detail="Email not found")
+
+        # Update fields
+        if req.status:
+            email.status = req.status
+        if req.classification:
+            email.classification = req.classification
+        if req.intent:
+            email.intent = req.intent
+        if req.priority:
+            email.priority = req.priority
+
+        # Update AI draft on latest message or create outbound message
+        if req.ai_draft:
+            # Find latest inbound message and add draft
+            inbound_msgs = [m for m in email.messages if m.direction == "inbound"]
+            if inbound_msgs:
+                inbound_msgs[-1].ai_draft = req.ai_draft
+            email.status = "draft_ready"
+
+        # Update final content
+        if req.final_content:
+            # Create outbound message with final content
+            outbound = SupportMessage(
+                email_id=email.id,
+                direction="outbound",
+                sender_email="support@miraiskin.com",
+                sender_name="Mirai Support",
+                content=req.final_content,
+                final_content=req.final_content,
+                approved_by=user.get("user_id"),
+                approved_at=datetime.utcnow()
+            )
+            db.add(outbound)
+            email.status = "approved"
+
+        await db.commit()
+        return {"success": True, "status": email.status}
+
+
+@app.post("/support/emails/{email_id}/approve")
+async def approve_support_email(email_id: int, user: dict = Depends(get_current_user)):
+    """Approve AI draft and mark for sending"""
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import SupportEmail, SupportMessage
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    async with get_db() as db:
+        result = await db.execute(
+            select(SupportEmail)
+            .options(selectinload(SupportEmail.messages))
+            .where(SupportEmail.id == email_id)
+        )
+        email = result.scalar_one_or_none()
+
+        if not email:
+            raise HTTPException(status_code=404, detail="Email not found")
+
+        # Get latest AI draft
+        ai_draft = None
+        for msg in reversed(email.messages):
+            if msg.ai_draft:
+                ai_draft = msg.ai_draft
+                break
+
+        if not ai_draft:
+            raise HTTPException(status_code=400, detail="No AI draft to approve")
+
+        # Create approved outbound message
+        outbound = SupportMessage(
+            email_id=email.id,
+            direction="outbound",
+            sender_email="support@miraiskin.com",
+            sender_name="Mirai Support",
+            content=ai_draft,
+            final_content=ai_draft,
+            approved_by=user.get("user_id"),
+            approved_at=datetime.utcnow()
+        )
+        db.add(outbound)
+        email.status = "approved"
+        await db.commit()
+
+        return {"success": True, "message": "Email approved for sending"}
+
+
+@app.post("/support/emails/{email_id}/reject")
+async def reject_support_email(email_id: int, user: dict = Depends(get_current_user)):
+    """Reject/archive email"""
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import SupportEmail
+    from sqlalchemy import select
+
+    async with get_db() as db:
+        result = await db.execute(
+            select(SupportEmail).where(SupportEmail.id == email_id)
+        )
+        email = result.scalar_one_or_none()
+
+        if not email:
+            raise HTTPException(status_code=404, detail="Email not found")
+
+        email.status = "rejected"
+        await db.commit()
+
+        return {"success": True, "message": "Email rejected"}
+
+
+@app.get("/support/stats")
+async def get_support_stats(user: dict = Depends(get_current_user)):
+    """Get support dashboard statistics"""
+    if not DB_SERVICE_AVAILABLE:
+        return {"pending": 0, "draft_ready": 0, "approved": 0, "sent": 0}
+
+    from database.connection import get_db
+    from database.models import SupportEmail
+    from sqlalchemy import select, func
+
+    async with get_db() as db:
+        # Count by status
+        result = await db.execute(
+            select(SupportEmail.status, func.count(SupportEmail.id))
+            .group_by(SupportEmail.status)
+        )
+        counts = {row[0]: row[1] for row in result.all()}
+
+        return {
+            "pending": counts.get("pending", 0),
+            "draft_ready": counts.get("draft_ready", 0),
+            "approved": counts.get("approved", 0),
+            "sent": counts.get("sent", 0),
+            "rejected": counts.get("rejected", 0),
+            "total": sum(counts.values())
+        }
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8080))
