@@ -1853,9 +1853,112 @@ async def get_support_email(email_id: int, user: dict = Depends(get_current_user
         }
 
 
+@app.post("/webhook/support-email")
+async def webhook_support_email(req: SupportEmailCreate):
+    """Webhook for internal services (Emma poller) - no auth required for internal use"""
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import SupportEmail, SupportMessage
+    from sqlalchemy import select
+
+    async with get_db() as db:
+        # Check if thread already exists
+        result = await db.execute(
+            select(SupportEmail).where(SupportEmail.thread_id == req.thread_id)
+        )
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            # Add message to existing thread
+            message = SupportMessage(
+                email_id=existing.id,
+                direction="inbound",
+                sender_email=req.customer_email,
+                sender_name=req.customer_name,
+                content=req.content,
+                content_html=req.content_html
+            )
+            db.add(message)
+            existing.status = "pending"
+            await db.commit()
+            return {"id": existing.id, "message": "Message added to existing thread"}
+
+        # Create new email thread
+        email = SupportEmail(
+            thread_id=req.thread_id,
+            message_id=req.message_id,
+            customer_email=req.customer_email,
+            customer_name=req.customer_name,
+            subject=req.subject,
+            status="pending",
+            received_at=datetime.utcnow()
+        )
+        db.add(email)
+        await db.flush()
+
+        # Create first message
+        message = SupportMessage(
+            email_id=email.id,
+            direction="inbound",
+            sender_email=req.customer_email,
+            sender_name=req.customer_name,
+            content=req.content,
+            content_html=req.content_html
+        )
+        db.add(message)
+        await db.commit()
+
+        return {"id": email.id, "message": "Email created successfully"}
+
+
+@app.patch("/webhook/support-email/{email_id}")
+async def webhook_update_support_email(email_id: int, req: SupportEmailUpdate):
+    """Webhook for internal services (Emma) to update email drafts - no auth required"""
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import SupportEmail, SupportMessage
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    async with get_db() as db:
+        result = await db.execute(
+            select(SupportEmail)
+            .options(selectinload(SupportEmail.messages))
+            .where(SupportEmail.id == email_id)
+        )
+        email = result.scalar_one_or_none()
+
+        if not email:
+            raise HTTPException(status_code=404, detail="Email not found")
+
+        # Update fields
+        if req.status:
+            email.status = req.status
+        if req.classification:
+            email.classification = req.classification
+        if req.intent:
+            email.intent = req.intent
+        if req.priority:
+            email.priority = req.priority
+
+        # Update AI draft on latest message
+        if req.ai_draft:
+            inbound_msgs = [m for m in email.messages if m.direction == "inbound"]
+            if inbound_msgs:
+                inbound_msgs[-1].ai_draft = req.ai_draft
+            email.status = "draft_ready"
+
+        await db.commit()
+        return {"success": True, "status": email.status}
+
+
 @app.post("/support/emails")
 async def create_support_email(req: SupportEmailCreate, user: dict = Depends(get_current_user)):
-    """Create a new support email (used by Gmail poller webhook)"""
+    """Create a new support email (authenticated endpoint for frontend)"""
     if not DB_SERVICE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
