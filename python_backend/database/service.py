@@ -139,8 +139,11 @@ class DatabaseService:
                     # PSP fee estimate for this order (2.9% + $0.30)
                     psp_fee = round(net * 0.029 + 0.30, 2) if net > 0 else 0
 
-                    # Profit = net + shipping - cogs - psp_fee
-                    profit = net + shipping - cogs - psp_fee
+                    # Shipping cost estimate (80% of shipping charged)
+                    shipping_cost = round(shipping * 0.8, 2)
+
+                    # Profit = net + shipping - shipping_cost - cogs - psp_fee
+                    profit = net + shipping - shipping_cost - cogs - psp_fee
                     margin_pct = (profit / (net + shipping)) * 100 if (net + shipping) > 0 else 0
 
                     # Build line items
@@ -187,6 +190,7 @@ class DatabaseService:
                         "refunds": refunds,
                         "net": net,
                         "shipping": shipping,
+                        "shipping_cost": shipping_cost,
                         "cogs": cogs,
                         "psp_fee": psp_fee,
                         "profit": round(profit, 2),

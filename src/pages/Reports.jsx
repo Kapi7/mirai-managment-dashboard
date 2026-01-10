@@ -706,7 +706,8 @@ export default function Reports() {
                             <TableHead>Channel</TableHead>
                             <TableHead>Country</TableHead>
                             <TableHead className="text-right">Gross</TableHead>
-                            <TableHead className="text-right">Ship</TableHead>
+                            <TableHead className="text-right">Ship Chg</TableHead>
+                            <TableHead className="text-right">Ship Cost</TableHead>
                             <TableHead className="text-right">Net</TableHead>
                             <TableHead className="text-right">COGS</TableHead>
                             <TableHead className="text-right">PSP</TableHead>
@@ -764,6 +765,7 @@ export default function Reports() {
                                 <TableCell>{order.country}</TableCell>
                                 <TableCell className="text-right">{formatCurrency(order.gross)}</TableCell>
                                 <TableCell className="text-right">{formatCurrency(order.shipping)}</TableCell>
+                                <TableCell className="text-right">{formatCurrency(order.shipping_cost)}</TableCell>
                                 <TableCell className="text-right">{formatCurrency(order.net)}</TableCell>
                                 <TableCell className="text-right">{formatCurrency(order.cogs)}</TableCell>
                                 <TableCell className="text-right">{formatCurrency(order.psp_fee)}</TableCell>
@@ -782,7 +784,7 @@ export default function Reports() {
                               {/* Expanded Items Row */}
                               {expandedOrders[order.order_id] && order.items && order.items.length > 0 && (
                                 <TableRow className="bg-slate-100">
-                                  <TableCell colSpan={14} className="p-0">
+                                  <TableCell colSpan={15} className="p-0">
                                     <div className="px-8 py-3">
                                       <div className="text-xs font-semibold text-slate-600 mb-2">Line Items:</div>
                                       <div className="space-y-1">
