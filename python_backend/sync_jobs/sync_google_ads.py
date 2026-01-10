@@ -14,6 +14,40 @@ from database.models import AdSpend, Store
 from sync_jobs.base_sync import BaseSyncJob, run_sync
 
 
+def create_google_ads_yaml_from_env():
+    """Create google-ads.yaml from environment variables if it doesn't exist"""
+    config_path = "google-ads.yaml"
+
+    # Check if we have the required env vars
+    developer_token = os.getenv("GOOGLE_ADS_DEVELOPER_TOKEN", "").strip()
+    client_id = os.getenv("GOOGLE_ADS_CLIENT_ID", "").strip()
+    client_secret = os.getenv("GOOGLE_ADS_CLIENT_SECRET", "").strip()
+    refresh_token = os.getenv("GOOGLE_ADS_REFRESH_TOKEN", "").strip()
+    client_customer_id = os.getenv("GOOGLE_ADS_CUSTOMER_ID", "").strip()
+    login_customer_id = os.getenv("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "").strip()
+
+    if not all([developer_token, client_id, client_secret, refresh_token]):
+        print("⚠️ Missing Google Ads env vars (need GOOGLE_ADS_DEVELOPER_TOKEN, CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN)")
+        return None
+
+    # Create the yaml content
+    yaml_content = f"""developer_token: {developer_token}
+client_id: {client_id}
+client_secret: {client_secret}
+refresh_token: {refresh_token}
+client_customer_id: '{client_customer_id}'
+login_customer_id: '{login_customer_id}'
+use_proto_plus: true
+"""
+
+    # Write to file
+    with open(config_path, 'w') as f:
+        f.write(yaml_content)
+
+    print(f"✅ Created {config_path} from environment variables")
+    return config_path
+
+
 class SyncGoogleAds(BaseSyncJob):
     """Sync Google Ads spend from Google Ads API"""
 
@@ -41,8 +75,11 @@ class SyncGoogleAds(BaseSyncJob):
                     config_path = path
                     break
             else:
-                print("⚠️ google-ads.yaml not found, skipping Google Ads sync")
-                return
+                # Try to create from environment variables
+                config_path = create_google_ads_yaml_from_env()
+                if not config_path:
+                    print("⚠️ google-ads.yaml not found and couldn't create from env, skipping Google Ads sync")
+                    return
 
         try:
             from google_ads_spend import daily_spend_usd_aligned
