@@ -33,7 +33,7 @@ EMMA_ACCOUNT = {
     "host": os.getenv("EMMA_IMAP_HOST") or os.getenv("INBOUND_IMAP_HOST") or "imap.gmail.com",
     "port": int(os.getenv("EMMA_IMAP_PORT") or os.getenv("INBOUND_IMAP_PORT") or "993"),
     "mailbox": os.getenv("EMMA_IMAP_MAILBOX") or "INBOX",
-    "type": "sales"  # For classification context
+    "type": "emma"  # inbox_type for dashboard (was "sales")
 }
 
 # Account 2: Support

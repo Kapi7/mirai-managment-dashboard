@@ -97,7 +97,8 @@ def is_customer_email(email_address: str, subject: str = "", content: str = "") 
             }
 
     # Check if it's an internal email (from our own domain)
-    if '@miraiskin.com' in email_lower or '@mirai' in email_lower:
+    # Be specific to avoid matching unintended domains
+    if '@miraiskin.com' in email_lower or '@miraiskin.co' in email_lower:
         return {
             'is_customer': False,
             'sender_type': 'internal',
@@ -390,7 +391,8 @@ def push_email_to_dashboard(
     customer_name: Optional[str] = None,
     content_html: Optional[str] = None,
     message_id: Optional[str] = None,
-    inbox_type: Optional[str] = "support"
+    inbox_type: Optional[str] = "support",
+    sender_type: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Push an incoming email to the Mirai Dashboard support queue.
@@ -410,7 +412,8 @@ def push_email_to_dashboard(
             "subject": subject,
             "content": content,
             "content_html": content_html,
-            "inbox_type": inbox_type
+            "inbox_type": inbox_type,
+            "sender_type": sender_type
         }
 
         response = requests.post(url, json=payload, headers=_api_headers(), timeout=30)
@@ -572,6 +575,7 @@ def process_incoming_email(
         print(f"[dashboard_bridge] Skipping AI draft for non-customer: {sender_check.get('reason')}")
 
     # Step 1: Push to dashboard (always push, even for suppliers)
+    # Include sender_type so it's set on creation, not just on update
     push_result = push_email_to_dashboard(
         thread_id=thread_id,
         customer_email=customer_email,
@@ -580,7 +584,8 @@ def process_incoming_email(
         customer_name=customer_name,
         content_html=content_html,
         message_id=message_id,
-        inbox_type=inbox_type
+        inbox_type=inbox_type,
+        sender_type=sender_type
     )
 
     if not push_result.get("success"):

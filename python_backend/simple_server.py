@@ -1720,6 +1720,7 @@ class SupportEmailCreate(BaseModel):
     content: str
     content_html: Optional[str] = None
     inbox_type: Optional[str] = "support"  # 'emma' (sales) or 'support'
+    sender_type: Optional[str] = None  # 'customer', 'supplier', 'automated', 'internal'
 
 
 class SupportEmailUpdate(BaseModel):
@@ -1903,6 +1904,7 @@ async def webhook_support_email(req: SupportEmailCreate):
             subject=req.subject,
             status="pending",
             inbox_type=req.inbox_type or "support",
+            sender_type=req.sender_type or "customer",  # Set sender_type on creation
             received_at=datetime.utcnow()
         )
         db.add(email)
@@ -2009,6 +2011,7 @@ async def create_support_email(req: SupportEmailCreate, user: dict = Depends(get
             subject=req.subject,
             status="pending",
             inbox_type=req.inbox_type or "support",
+            sender_type=req.sender_type or "customer",  # Set sender_type on creation
             received_at=datetime.utcnow()
         )
         db.add(email)
