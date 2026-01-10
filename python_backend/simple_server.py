@@ -553,10 +553,18 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
-    """Log configuration on startup for debugging"""
+    """Initialize database and log configuration on startup"""
     print("=" * 60)
     print("🚀 Mirai Reports API Starting Up")
     print("=" * 60)
+
+    # Initialize database tables (creates new tables if they don't exist)
+    try:
+        from database.connection import init_db
+        await init_db()
+        print("✅ Database tables initialized")
+    except Exception as e:
+        print(f"⚠️ Database init: {e}")
 
     # Check for google-ads.yaml
     config_path = os.getenv("GOOGLE_ADS_CONFIG", "google-ads.yaml")
