@@ -496,6 +496,7 @@ def process_incoming_email(
     ai_draft = None
     if generate_draft:
         try:
+            print(f"[dashboard_bridge] Generating Emma draft for email_id={email_id}...")
             from emma_agent import respond_as_emma
 
             # Get customer context
@@ -508,6 +509,7 @@ def process_incoming_email(
                 if customer_orders[0]:
                     order_summary += f"Last order: {customer_orders[0].get('order_name')} on {customer_orders[0].get('created_at', '')[:10]}"
                 history.append({"role": "system", "content": order_summary})
+                print(f"[dashboard_bridge] Customer has {len(customer_orders)} previous orders")
 
             # Extract first name from customer_name
             first_name = ""
@@ -524,19 +526,24 @@ def process_incoming_email(
                 style_mode="soft",
                 customer_email=customer_email
             )
+            print(f"[dashboard_bridge] Emma draft generated: {len(ai_draft) if ai_draft else 0} chars")
         except Exception as e:
+            import traceback
             print(f"[dashboard_bridge] Emma draft generation failed: {e}")
+            traceback.print_exc()
             ai_draft = None
 
-    # Step 4: Update dashboard
+    # Step 4: Update dashboard with classification and draft
     if email_id and (ai_draft or classification):
-        update_email_draft(
+        print(f"[dashboard_bridge] Updating email_id={email_id} with classification={classification.get('classification')}, draft={len(ai_draft) if ai_draft else 0} chars")
+        update_result = update_email_draft(
             email_id=email_id,
             ai_draft=ai_draft or "",
             classification=classification.get("classification"),
             intent=classification.get("intent"),
             priority=classification.get("priority")
         )
+        print(f"[dashboard_bridge] Update result: {update_result}")
 
     return {
         "success": True,
