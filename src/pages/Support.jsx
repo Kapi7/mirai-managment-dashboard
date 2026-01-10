@@ -38,9 +38,7 @@ import {
   Edit,
   Eye,
   Sparkles,
-  ArrowRight,
   BarChart3,
-  Timer,
   Inbox,
   ChevronRight,
   ChevronDown,
@@ -48,7 +46,6 @@ import {
   Zap,
   Tag,
   Calendar,
-  Percent,
   ShoppingCart
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
@@ -67,7 +64,8 @@ export default function Support() {
   const [loading, setLoading] = useState(true);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [error, setError] = useState(null);
-  const [activeTab, setActiveTab] = useState('all');
+  const [activeInbox, setActiveInbox] = useState('all'); // 'all', 'emma', 'support'
+  const [statusFilter, setStatusFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [selectedEmail, setSelectedEmail] = useState(null);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -77,10 +75,11 @@ export default function Support() {
   const [isSending, setIsSending] = useState(false);
 
   // Fetch emails
-  const fetchEmails = async (status = null) => {
+  const fetchEmails = async () => {
     try {
       const params = new URLSearchParams();
-      if (status && status !== 'all') params.append('status', status);
+      if (statusFilter && statusFilter !== 'all') params.append('status', statusFilter);
+      if (activeInbox && activeInbox !== 'all') params.append('inbox_type', activeInbox);
       params.append('limit', '100');
 
       const response = await fetch(`${API_URL}/support/emails?${params}`);
@@ -109,21 +108,21 @@ export default function Support() {
   useEffect(() => {
     const loadData = async () => {
       setLoading(true);
-      await Promise.all([fetchEmails(activeTab), fetchStats()]);
+      await Promise.all([fetchEmails(), fetchStats()]);
       setLoading(false);
     };
     loadData();
   }, []);
 
-  // Reload when tab changes
+  // Reload when filters change
   useEffect(() => {
-    fetchEmails(activeTab);
-  }, [activeTab]);
+    fetchEmails();
+  }, [activeInbox, statusFilter]);
 
   // Refresh
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    await Promise.all([fetchEmails(activeTab), fetchStats()]);
+    await Promise.all([fetchEmails(), fetchStats()]);
     setIsRefreshing(false);
   };
 
@@ -178,7 +177,7 @@ export default function Support() {
     setIsSending(false);
   };
 
-  // Send manual response (for pending emails without draft)
+  // Send manual response
   const handleSendManual = async () => {
     if (!selectedEmail || !manualResponse.trim()) return;
     setIsSending(true);
@@ -226,16 +225,16 @@ export default function Support() {
   // Status badge
   const getStatusBadge = (status) => {
     const variants = {
-      pending: { variant: 'secondary', icon: Clock, label: 'Pending', color: 'text-yellow-600 bg-yellow-50' },
-      draft_ready: { variant: 'default', icon: Bot, label: 'AI Draft Ready', color: 'text-blue-600 bg-blue-50' },
-      approved: { variant: 'outline', icon: CheckCircle, label: 'Approved', color: 'text-green-600 bg-green-50' },
-      sent: { variant: 'default', icon: Send, label: 'Sent', color: 'text-indigo-600 bg-indigo-50' },
-      rejected: { variant: 'destructive', icon: XCircle, label: 'Rejected', color: 'text-red-600 bg-red-50' }
+      pending: { icon: Clock, label: 'Pending', color: 'text-yellow-600 bg-yellow-50' },
+      draft_ready: { icon: Bot, label: 'AI Ready', color: 'text-blue-600 bg-blue-50' },
+      approved: { icon: CheckCircle, label: 'Approved', color: 'text-green-600 bg-green-50' },
+      sent: { icon: Send, label: 'Sent', color: 'text-indigo-600 bg-indigo-50' },
+      rejected: { icon: XCircle, label: 'Rejected', color: 'text-red-600 bg-red-50' }
     };
     const config = variants[status] || variants.pending;
     const Icon = config.icon;
     return (
-      <Badge className={cn("flex items-center gap-1", config.color)}>
+      <Badge className={cn("flex items-center gap-1 text-xs", config.color)}>
         <Icon className="h-3 w-3" />
         {config.label}
       </Badge>
@@ -252,7 +251,7 @@ export default function Support() {
     };
     return (
       <Badge className={cn('text-xs', colors[classification] || 'bg-gray-100')}>
-        {classification === 'support_sales' ? 'Support + Sales' : classification}
+        {classification === 'support_sales' ? 'Support+Sales' : classification}
       </Badge>
     );
   };
@@ -272,18 +271,35 @@ export default function Support() {
     );
   };
 
+  // Inbox badge
+  const getInboxBadge = (inboxType) => {
+    if (!inboxType) return null;
+    return (
+      <Badge className={cn('text-xs', inboxType === 'emma' ? 'bg-pink-100 text-pink-800' : 'bg-slate-100 text-slate-800')}>
+        {inboxType === 'emma' ? 'Emma' : 'Support'}
+      </Badge>
+    );
+  };
+
   // Check if email has AI draft
   const hasAIDraft = (email) => {
     return email?.messages?.some(m => m.ai_draft);
   };
+
+  // Count emails by inbox
+  const inboxCounts = useMemo(() => {
+    const all = emails.length;
+    // Since we're fetching filtered, we need to estimate from stats or just show totals
+    return { all, emma: 0, support: 0 };
+  }, [emails]);
 
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-slate-900">Support Inbox</h1>
-          <p className="text-slate-500 mt-1">AI-powered customer support management</p>
+          <h1 className="text-3xl font-bold text-slate-900">Email Inbox</h1>
+          <p className="text-slate-500 mt-1">Manage Emma Sales and Support emails</p>
         </div>
         <Button onClick={handleRefresh} disabled={isRefreshing}>
           <RefreshCw className={cn("h-4 w-4 mr-2", isRefreshing && "animate-spin")} />
@@ -291,130 +307,65 @@ export default function Support() {
         </Button>
       </div>
 
-      {/* Workflow Guide */}
-      <Card className="bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200">
-        <CardContent className="p-4">
-          <div className="flex items-center gap-6 text-sm">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full bg-yellow-500 text-white flex items-center justify-center font-bold">1</div>
-              <span className="font-medium">Email Arrives</span>
-            </div>
-            <ChevronRight className="h-4 w-4 text-slate-400" />
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold">2</div>
-              <span className="font-medium">AI Classifies & Drafts</span>
-            </div>
-            <ChevronRight className="h-4 w-4 text-slate-400" />
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full bg-green-500 text-white flex items-center justify-center font-bold">3</div>
-              <span className="font-medium">You Review & Approve</span>
-            </div>
-            <ChevronRight className="h-4 w-4 text-slate-400" />
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full bg-indigo-500 text-white flex items-center justify-center font-bold">4</div>
-              <span className="font-medium">Response Sent</span>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        <Card
-          className={cn("cursor-pointer hover:shadow-md transition-shadow", activeTab === 'pending' && "ring-2 ring-yellow-500")}
-          onClick={() => setActiveTab('pending')}
-        >
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-slate-500">Needs Review</p>
-                <p className="text-2xl font-bold text-yellow-600">{stats.pending || 0}</p>
-              </div>
-              <div className="h-12 w-12 rounded-full bg-yellow-100 flex items-center justify-center">
-                <Clock className="h-6 w-6 text-yellow-600" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card
-          className={cn("cursor-pointer hover:shadow-md transition-shadow", activeTab === 'draft_ready' && "ring-2 ring-blue-500")}
-          onClick={() => setActiveTab('draft_ready')}
-        >
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-slate-500">AI Drafts Ready</p>
-                <p className="text-2xl font-bold text-blue-600">{stats.draft_ready || 0}</p>
-              </div>
-              <div className="h-12 w-12 rounded-full bg-blue-100 flex items-center justify-center">
-                <Bot className="h-6 w-6 text-blue-600" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card
-          className={cn("cursor-pointer hover:shadow-md transition-shadow", activeTab === 'approved' && "ring-2 ring-green-500")}
-          onClick={() => setActiveTab('approved')}
-        >
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-slate-500">Approved</p>
-                <p className="text-2xl font-bold text-green-600">{stats.approved || 0}</p>
-              </div>
-              <div className="h-12 w-12 rounded-full bg-green-100 flex items-center justify-center">
-                <CheckCircle className="h-6 w-6 text-green-600" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card
-          className={cn("cursor-pointer hover:shadow-md transition-shadow", activeTab === 'sent' && "ring-2 ring-indigo-500")}
-          onClick={() => setActiveTab('sent')}
-        >
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-slate-500">Sent</p>
-                <p className="text-2xl font-bold text-indigo-600">{stats.sent || 0}</p>
-              </div>
-              <div className="h-12 w-12 rounded-full bg-indigo-100 flex items-center justify-center">
-                <Send className="h-6 w-6 text-indigo-600" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card
-          className={cn("cursor-pointer hover:shadow-md transition-shadow", activeTab === 'all' && "ring-2 ring-slate-500")}
-          onClick={() => setActiveTab('all')}
-        >
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-slate-500">Total</p>
-                <p className="text-2xl font-bold">{stats.total || 0}</p>
-              </div>
-              <div className="h-12 w-12 rounded-full bg-slate-100 flex items-center justify-center">
-                <Inbox className="h-6 w-6 text-slate-600" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      {/* Inbox Selector Tabs */}
+      <div className="flex items-center gap-4 border-b border-slate-200 pb-4">
+        <Tabs value={activeInbox} onValueChange={setActiveInbox} className="w-full">
+          <TabsList className="grid w-full max-w-md grid-cols-3">
+            <TabsTrigger value="all" className="flex items-center gap-2">
+              <Inbox className="h-4 w-4" />
+              All Emails
+            </TabsTrigger>
+            <TabsTrigger value="emma" className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-pink-500" />
+              Emma (Sales)
+            </TabsTrigger>
+            <TabsTrigger value="support" className="flex items-center gap-2">
+              <MessageSquare className="h-4 w-4 text-blue-500" />
+              Support
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
       </div>
 
-      {/* Analytics Section */}
+      {/* Quick Stats Row */}
+      <div className="grid grid-cols-5 gap-3">
+        {[
+          { key: 'all', label: 'Total', value: stats.total, color: 'slate', icon: Inbox },
+          { key: 'pending', label: 'Pending', value: stats.pending, color: 'yellow', icon: Clock },
+          { key: 'draft_ready', label: 'AI Ready', value: stats.draft_ready, color: 'blue', icon: Bot },
+          { key: 'approved', label: 'Approved', value: stats.approved, color: 'green', icon: CheckCircle },
+          { key: 'sent', label: 'Sent', value: stats.sent, color: 'indigo', icon: Send },
+        ].map(({ key, label, value, color, icon: Icon }) => (
+          <Card
+            key={key}
+            className={cn(
+              "cursor-pointer hover:shadow-md transition-shadow",
+              statusFilter === key && `ring-2 ring-${color}-500`
+            )}
+            onClick={() => setStatusFilter(statusFilter === key ? 'all' : key)}
+          >
+            <CardContent className="p-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-slate-500">{label}</p>
+                  <p className={`text-xl font-bold text-${color}-600`}>{value || 0}</p>
+                </div>
+                <Icon className={`h-5 w-5 text-${color}-500`} />
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      {/* Analytics Collapse */}
       <Card>
         <CardHeader
-          className="cursor-pointer hover:bg-slate-50 transition-colors"
+          className="cursor-pointer hover:bg-slate-50 transition-colors py-3"
           onClick={() => setShowAnalytics(!showAnalytics)}
         >
           <div className="flex items-center justify-between">
-            <CardTitle className="flex items-center gap-2">
-              <BarChart3 className="h-5 w-5" />
+            <CardTitle className="flex items-center gap-2 text-base">
+              <BarChart3 className="h-4 w-4" />
               Analytics & Insights
             </CardTitle>
             <Button variant="ghost" size="sm">
@@ -424,221 +375,176 @@ export default function Support() {
         </CardHeader>
         {showAnalytics && (
           <CardContent className="pt-0">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {/* Time Metrics */}
-              <div className="p-4 bg-slate-50 rounded-lg">
-                <div className="flex items-center gap-2 mb-3">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              {/* Activity */}
+              <div className="p-3 bg-slate-50 rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
                   <Calendar className="h-4 w-4 text-slate-600" />
-                  <h4 className="font-semibold text-sm">Activity</h4>
+                  <span className="font-semibold text-sm">Activity</span>
                 </div>
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-slate-600">Today</span>
-                    <span className="font-bold text-lg">{stats.today_count}</span>
+                <div className="space-y-1 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">Today</span>
+                    <span className="font-bold">{stats.today_count}</span>
                   </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-slate-600">Yesterday</span>
-                    <span className="font-medium">{stats.yesterday_count}</span>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">Yesterday</span>
+                    <span>{stats.yesterday_count}</span>
                   </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-slate-600">Last 7 days</span>
-                    <span className="font-medium">{stats.week_count}</span>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">Last 7 days</span>
+                    <span>{stats.week_count}</span>
                   </div>
-                  {stats.today_count > stats.yesterday_count && stats.yesterday_count > 0 && (
-                    <div className="flex items-center gap-1 text-green-600 text-xs mt-1">
-                      <TrendingUp className="h-3 w-3" />
-                      +{Math.round((stats.today_count - stats.yesterday_count) / stats.yesterday_count * 100)}% vs yesterday
-                    </div>
-                  )}
                 </div>
               </div>
 
-              {/* Classification Breakdown */}
-              <div className="p-4 bg-slate-50 rounded-lg">
-                <div className="flex items-center gap-2 mb-3">
+              {/* Classification */}
+              <div className="p-3 bg-slate-50 rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
                   <Tag className="h-4 w-4 text-slate-600" />
-                  <h4 className="font-semibold text-sm">Classification</h4>
+                  <span className="font-semibold text-sm">Classification</span>
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-1 text-sm">
                   {Object.entries(stats.classification_breakdown || {}).map(([key, value]) => (
                     <div key={key} className="flex justify-between items-center">
-                      <span className="text-sm text-slate-600 capitalize">
-                        {key === 'support_sales' ? 'Support + Sales' : key}
-                      </span>
-                      <Badge className={cn('text-xs', {
-                        'bg-blue-100 text-blue-800': key === 'support',
-                        'bg-green-100 text-green-800': key === 'sales',
-                        'bg-purple-100 text-purple-800': key === 'support_sales',
-                        'bg-gray-100 text-gray-800': key === 'unknown'
-                      })}>{value}</Badge>
+                      <span className="text-slate-600 capitalize">{key === 'support_sales' ? 'Support+Sales' : key}</span>
+                      <Badge className="text-xs">{value}</Badge>
                     </div>
                   ))}
                 </div>
               </div>
 
-              {/* Performance Metrics */}
-              <div className="p-4 bg-slate-50 rounded-lg">
-                <div className="flex items-center gap-2 mb-3">
+              {/* Performance */}
+              <div className="p-3 bg-slate-50 rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
                   <Zap className="h-4 w-4 text-slate-600" />
-                  <h4 className="font-semibold text-sm">Performance</h4>
+                  <span className="font-semibold text-sm">Performance</span>
                 </div>
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-slate-600">Resolution Rate</span>
+                <div className="space-y-1 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">Resolution Rate</span>
                     <span className="font-bold text-green-600">{stats.resolution_rate}%</span>
                   </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-slate-600">AI Draft Rate</span>
-                    <span className="font-medium">{stats.ai_draft_rate}%</span>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">AI Draft Rate</span>
+                    <span>{stats.ai_draft_rate}%</span>
                   </div>
-                  {stats.avg_confidence && (
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-slate-600">AI Confidence</span>
-                      <span className="font-medium">{Math.round(stats.avg_confidence * 100)}%</span>
-                    </div>
-                  )}
                 </div>
               </div>
 
-              {/* Intent & Sales */}
-              <div className="p-4 bg-slate-50 rounded-lg">
-                <div className="flex items-center gap-2 mb-3">
+              {/* Intents */}
+              <div className="p-3 bg-slate-50 rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
                   <Target className="h-4 w-4 text-slate-600" />
-                  <h4 className="font-semibold text-sm">Top Intents</h4>
+                  <span className="font-semibold text-sm">Top Intents</span>
                 </div>
-                <div className="space-y-2">
-                  {Object.entries(stats.intent_breakdown || {}).slice(0, 4).map(([key, value]) => (
-                    <div key={key} className="flex justify-between items-center">
-                      <span className="text-sm text-slate-600 capitalize truncate">{key.replace('_', ' ')}</span>
-                      <span className="font-medium">{value}</span>
+                <div className="space-y-1 text-sm">
+                  {Object.entries(stats.intent_breakdown || {}).slice(0, 3).map(([key, value]) => (
+                    <div key={key} className="flex justify-between">
+                      <span className="text-slate-600 capitalize truncate">{key.replace('_', ' ')}</span>
+                      <span>{value}</span>
                     </div>
                   ))}
                   {stats.sales_opportunities > 0 && (
-                    <div className="flex justify-between items-center pt-2 border-t border-slate-200 mt-2">
-                      <span className="text-sm text-amber-700 flex items-center gap-1">
+                    <div className="flex justify-between pt-1 border-t">
+                      <span className="text-amber-700 flex items-center gap-1">
                         <ShoppingCart className="h-3 w-3" />
-                        Sales Opportunities
+                        Sales Opps
                       </span>
-                      <Badge className="bg-amber-100 text-amber-800">{stats.sales_opportunities}</Badge>
+                      <Badge className="bg-amber-100 text-amber-800 text-xs">{stats.sales_opportunities}</Badge>
                     </div>
                   )}
                 </div>
               </div>
             </div>
-
-            {/* Priority Breakdown */}
-            {Object.keys(stats.priority_breakdown || {}).length > 0 && (
-              <div className="mt-4 p-4 bg-slate-50 rounded-lg">
-                <h4 className="font-semibold text-sm mb-3 flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4" />
-                  Priority Distribution
-                </h4>
-                <div className="flex gap-4">
-                  {['high', 'medium', 'low'].map(p => {
-                    const count = stats.priority_breakdown[p] || 0;
-                    const pct = stats.total > 0 ? Math.round(count / stats.total * 100) : 0;
-                    return (
-                      <div key={p} className="flex-1">
-                        <div className="flex justify-between mb-1">
-                          <span className={cn('text-xs font-medium capitalize', {
-                            'text-red-600': p === 'high',
-                            'text-yellow-600': p === 'medium',
-                            'text-gray-600': p === 'low'
-                          })}>{p}</span>
-                          <span className="text-xs text-slate-500">{count} ({pct}%)</span>
-                        </div>
-                        <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
-                          <div
-                            className={cn('h-full transition-all', {
-                              'bg-red-500': p === 'high',
-                              'bg-yellow-500': p === 'medium',
-                              'bg-gray-400': p === 'low'
-                            })}
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
           </CardContent>
         )}
       </Card>
 
-      {/* Email List */}
+      {/* Email Table */}
       <Card>
-        <CardHeader>
+        <CardHeader className="py-3">
           <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <Mail className="h-5 w-5" />
-                Email Queue
-              </CardTitle>
-              <CardDescription>
-                {filteredEmails.length} emails {activeTab !== 'all' ? `in ${activeTab.replace('_', ' ')} status` : 'total'}
-              </CardDescription>
-            </div>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Mail className="h-4 w-4" />
+              {activeInbox === 'emma' ? 'Emma Sales' : activeInbox === 'support' ? 'Support' : 'All'} Emails
+              <Badge variant="secondary">{filteredEmails.length}</Badge>
+            </CardTitle>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
               <Input
-                placeholder="Search emails..."
+                placeholder="Search..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-[250px] pl-9"
+                className="w-[200px] pl-9 h-8"
               />
             </div>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-0">
           {loading ? (
-            <div className="space-y-2">
-              {[1, 2, 3].map(i => <Skeleton key={i} className="h-20 w-full" />)}
+            <div className="p-4 space-y-2">
+              {[1, 2, 3].map(i => <Skeleton key={i} className="h-12 w-full" />)}
             </div>
           ) : filteredEmails.length === 0 ? (
             <div className="text-center py-12 text-slate-500">
-              <Inbox className="h-16 w-16 mx-auto mb-4 opacity-30" />
-              <p className="text-lg font-medium">No emails here</p>
-              <p className="text-sm mt-1">Emails will appear when customers contact you</p>
+              <Inbox className="h-12 w-12 mx-auto mb-3 opacity-30" />
+              <p className="font-medium">No emails found</p>
+              <p className="text-sm">Emails will appear when customers contact you</p>
             </div>
           ) : (
-            <div className="space-y-2">
-              {filteredEmails.map((email) => (
-                <div
-                  key={email.id}
-                  className="p-4 rounded-lg border hover:bg-slate-50 cursor-pointer transition-colors"
-                  onClick={() => openEmailDetail(email)}
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-semibold truncate">{email.customer_name || 'Unknown'}</span>
-                        <span className="text-slate-400 text-sm truncate">&lt;{email.customer_email}&gt;</span>
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-slate-50">
+                  <TableHead className="w-[200px]">From</TableHead>
+                  <TableHead>Subject</TableHead>
+                  <TableHead className="w-[80px]">Inbox</TableHead>
+                  <TableHead className="w-[80px]">Type</TableHead>
+                  <TableHead className="w-[80px]">Priority</TableHead>
+                  <TableHead className="w-[100px]">Status</TableHead>
+                  <TableHead className="w-[100px]">Received</TableHead>
+                  <TableHead className="w-[60px]"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredEmails.map((email) => (
+                  <TableRow
+                    key={email.id}
+                    className="cursor-pointer hover:bg-slate-50"
+                    onClick={() => openEmailDetail(email)}
+                  >
+                    <TableCell>
+                      <div className="flex flex-col">
+                        <span className="font-medium truncate max-w-[180px]">{email.customer_name || 'Unknown'}</span>
+                        <span className="text-xs text-slate-500 truncate max-w-[180px]">{email.customer_email}</span>
                       </div>
-                      <div className="font-medium text-slate-900 truncate">{email.subject}</div>
-                      <div className="text-sm text-slate-500 mt-1 flex items-center gap-3">
-                        <span>{email.received_at ? formatDistanceToNow(new Date(email.received_at), { addSuffix: true }) : '-'}</span>
-                        {getClassificationBadge(email.classification)}
-                        {getPriorityBadge(email.priority)}
-                        {email.sales_opportunity && (
-                          <Badge className="bg-amber-100 text-amber-800 text-xs">
-                            <TrendingUp className="h-3 w-3 mr-1" />
-                            Sales
-                          </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-col">
+                        <span className="font-medium truncate max-w-[300px]">{email.subject}</span>
+                        {email.latest_message && (
+                          <span className="text-xs text-slate-500 truncate max-w-[300px]">{email.latest_message}</span>
                         )}
                       </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {getStatusBadge(email.status)}
+                    </TableCell>
+                    <TableCell>{getInboxBadge(email.inbox_type)}</TableCell>
+                    <TableCell>{getClassificationBadge(email.classification)}</TableCell>
+                    <TableCell>{getPriorityBadge(email.priority)}</TableCell>
+                    <TableCell>{getStatusBadge(email.status)}</TableCell>
+                    <TableCell>
+                      <span className="text-xs text-slate-500">
+                        {email.received_at ? formatDistanceToNow(new Date(email.received_at), { addSuffix: true }) : '-'}
+                      </span>
+                    </TableCell>
+                    <TableCell>
                       <Button variant="ghost" size="sm">
                         <Eye className="h-4 w-4" />
                       </Button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           )}
         </CardContent>
       </Card>
@@ -651,12 +557,12 @@ export default function Support() {
               <Mail className="h-5 w-5" />
               {selectedEmail?.subject || 'Email Details'}
             </DialogTitle>
-            <DialogDescription className="flex items-center gap-2">
+            <DialogDescription className="flex items-center gap-2 flex-wrap">
               From: <span className="font-medium">{selectedEmail?.customer_name || 'Unknown'}</span>
               <span className="text-slate-400">({selectedEmail?.customer_email})</span>
               {selectedEmail?.received_at && (
                 <span className="text-slate-400">
-                  • {format(new Date(selectedEmail.received_at), 'MMM d, yyyy h:mm a')}
+                  - {format(new Date(selectedEmail.received_at), 'MMM d, yyyy h:mm a')}
                 </span>
               )}
             </DialogDescription>
@@ -667,6 +573,7 @@ export default function Support() {
               {/* Status & Classification */}
               <div className="flex items-center gap-2 flex-wrap p-3 bg-slate-50 rounded-lg">
                 {getStatusBadge(selectedEmail.status)}
+                {getInboxBadge(selectedEmail.inbox_type)}
                 {getClassificationBadge(selectedEmail.classification)}
                 {selectedEmail.intent && (
                   <Badge variant="outline">{selectedEmail.intent}</Badge>
@@ -732,10 +639,10 @@ export default function Support() {
                     Ready to Send
                   </h4>
                   <p className="text-sm text-green-700">
-                    Review the AI-generated draft above. You can approve it as-is, edit it, or reject it.
+                    Review the AI draft above. You can approve it, edit it, or reject it.
                   </p>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Edit draft before sending (optional):</label>
+                    <label className="text-sm font-medium">Edit draft (optional):</label>
                     <Textarea
                       value={editDraft}
                       onChange={(e) => setEditDraft(e.target.value)}
@@ -754,15 +661,15 @@ export default function Support() {
                     Awaiting AI Draft
                   </h4>
                   <p className="text-sm text-yellow-700">
-                    The AI is processing this email. You can wait for the draft or write a manual response.
+                    AI is processing. You can wait or write a manual response.
                   </p>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Write manual response:</label>
+                    <label className="text-sm font-medium">Manual response:</label>
                     <Textarea
                       value={manualResponse}
                       onChange={(e) => setManualResponse(e.target.value)}
                       rows={6}
-                      placeholder="Type your response here..."
+                      placeholder="Type your response..."
                       className="bg-white"
                     />
                   </div>

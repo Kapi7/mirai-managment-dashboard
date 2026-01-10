@@ -1719,6 +1719,7 @@ class SupportEmailCreate(BaseModel):
     subject: str
     content: str
     content_html: Optional[str] = None
+    inbox_type: Optional[str] = "support"  # 'emma' (sales) or 'support'
 
 
 class SupportEmailUpdate(BaseModel):
@@ -1734,6 +1735,7 @@ class SupportEmailUpdate(BaseModel):
 async def list_support_emails(
     status: Optional[str] = None,
     classification: Optional[str] = None,
+    inbox_type: Optional[str] = None,
     limit: int = 50,
     offset: int = 0,
     user: dict = Depends(get_current_user)
@@ -1758,6 +1760,8 @@ async def list_support_emails(
             query = query.where(SupportEmail.status == status)
         if classification:
             query = query.where(SupportEmail.classification == classification)
+        if inbox_type:
+            query = query.where(SupportEmail.inbox_type == inbox_type)
 
         # Get total count
         count_query = select(func.count(SupportEmail.id))
@@ -1765,6 +1769,8 @@ async def list_support_emails(
             count_query = count_query.where(SupportEmail.status == status)
         if classification:
             count_query = count_query.where(SupportEmail.classification == classification)
+        if inbox_type:
+            count_query = count_query.where(SupportEmail.inbox_type == inbox_type)
         total_result = await db.execute(count_query)
         total = total_result.scalar() or 0
 
@@ -1787,6 +1793,7 @@ async def list_support_emails(
                     "intent": e.intent,
                     "priority": e.priority,
                     "sales_opportunity": e.sales_opportunity,
+                    "inbox_type": e.inbox_type,
                     "ai_confidence": float(e.ai_confidence) if e.ai_confidence else None,
                     "received_at": e.received_at.isoformat() if e.received_at else None,
                     "messages_count": len(e.messages),
@@ -1893,6 +1900,7 @@ async def webhook_support_email(req: SupportEmailCreate):
             customer_name=req.customer_name,
             subject=req.subject,
             status="pending",
+            inbox_type=req.inbox_type or "support",
             received_at=datetime.utcnow()
         )
         db.add(email)
@@ -1996,6 +2004,7 @@ async def create_support_email(req: SupportEmailCreate, user: dict = Depends(get
             customer_name=req.customer_name,
             subject=req.subject,
             status="pending",
+            inbox_type=req.inbox_type or "support",
             received_at=datetime.utcnow()
         )
         db.add(email)

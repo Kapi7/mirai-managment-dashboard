@@ -308,7 +308,8 @@ def push_email_to_dashboard(
     content: str,
     customer_name: Optional[str] = None,
     content_html: Optional[str] = None,
-    message_id: Optional[str] = None
+    message_id: Optional[str] = None,
+    inbox_type: Optional[str] = "support"
 ) -> Dict[str, Any]:
     """
     Push an incoming email to the Mirai Dashboard support queue.
@@ -327,7 +328,8 @@ def push_email_to_dashboard(
             "customer_name": customer_name,
             "subject": subject,
             "content": content,
-            "content_html": content_html
+            "content_html": content_html,
+            "inbox_type": inbox_type
         }
 
         response = requests.post(url, json=payload, headers=_api_headers(), timeout=30)
@@ -462,6 +464,7 @@ def process_incoming_email(
     customer_name: Optional[str] = None,
     content_html: Optional[str] = None,
     message_id: Optional[str] = None,
+    inbox_type: Optional[str] = "support",
     generate_draft: bool = True
 ) -> Dict[str, Any]:
     """
@@ -481,7 +484,8 @@ def process_incoming_email(
         content=content,
         customer_name=customer_name,
         content_html=content_html,
-        message_id=message_id
+        message_id=message_id,
+        inbox_type=inbox_type
     )
 
     if not push_result.get("success"):

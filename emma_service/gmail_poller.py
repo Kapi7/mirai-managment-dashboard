@@ -122,6 +122,7 @@ def _push_to_dashboard(payload: dict):
             customer_name=customer_name,
             content_html=payload.get("body_html"),
             message_id=payload.get("message_id"),
+            inbox_type=payload.get("inbox_name") or payload.get("inbox_type") or "support",
             generate_draft=True  # Have Emma generate a draft response
         )
 
