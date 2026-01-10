@@ -1,12 +1,13 @@
 # gmail_poller.py
 # Runs an IMAP poller in a background thread. Exposes start/stop/status/force/reset.
 # Now also pushes emails to Mirai Dashboard for AI classification and draft generation.
+# Supports MULTIPLE email accounts (emma@ and support@)
 
 from __future__ import annotations
 import os, time, imaplib, email, requests, re, sys, threading
 from html import unescape
 from email.header import decode_header
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 try:
     from dotenv import load_dotenv
@@ -23,12 +24,38 @@ except ImportError:
     def process_incoming_email(*args, **kwargs):
         return {"success": False, "error": "dashboard_bridge not available"}
 
-# ---- Config (prefer INBOUND_*; fallback to IMAP_*) ----
-IMAP_HOST     = os.getenv("INBOUND_IMAP_HOST")     or os.getenv("IMAP_HOST")     or "imap.gmail.com"
-IMAP_PORT     = int(os.getenv("INBOUND_IMAP_PORT") or os.getenv("IMAP_PORT")     or "993")
-IMAP_MAILBOX  = os.getenv("INBOUND_IMAP_MAILBOX")  or os.getenv("IMAP_MAILBOX")  or "INBOX"
-IMAP_USER     = os.getenv("INBOUND_EMAIL_USER")    or os.getenv("IMAP_USER")
-IMAP_PASS     = os.getenv("INBOUND_EMAIL_PASS")    or os.getenv("IMAP_PASS")
+# ---- Multi-Account Config ----
+# Account 1: Emma (sales/abandoned cart)
+EMMA_ACCOUNT = {
+    "name": "emma",
+    "user": os.getenv("EMMA_EMAIL_USER") or os.getenv("INBOUND_EMAIL_USER") or os.getenv("IMAP_USER"),
+    "pass": os.getenv("EMMA_EMAIL_PASS") or os.getenv("INBOUND_EMAIL_PASS") or os.getenv("IMAP_PASS"),
+    "host": os.getenv("EMMA_IMAP_HOST") or os.getenv("INBOUND_IMAP_HOST") or "imap.gmail.com",
+    "port": int(os.getenv("EMMA_IMAP_PORT") or os.getenv("INBOUND_IMAP_PORT") or "993"),
+    "mailbox": os.getenv("EMMA_IMAP_MAILBOX") or "INBOX",
+    "type": "sales"  # For classification context
+}
+
+# Account 2: Support
+SUPPORT_ACCOUNT = {
+    "name": "support",
+    "user": os.getenv("SUPPORT_EMAIL_USER"),
+    "pass": os.getenv("SUPPORT_EMAIL_PASS"),
+    "host": os.getenv("SUPPORT_IMAP_HOST") or "imap.gmail.com",
+    "port": int(os.getenv("SUPPORT_IMAP_PORT") or "993"),
+    "mailbox": os.getenv("SUPPORT_IMAP_MAILBOX") or "INBOX",
+    "type": "support"  # For classification context
+}
+
+# Build list of active accounts
+def _get_active_accounts() -> List[Dict[str, Any]]:
+    accounts = []
+    if EMMA_ACCOUNT["user"] and EMMA_ACCOUNT["pass"]:
+        accounts.append(EMMA_ACCOUNT)
+    if SUPPORT_ACCOUNT["user"] and SUPPORT_ACCOUNT["pass"]:
+        accounts.append(SUPPORT_ACCOUNT)
+    return accounts
+
 POLL_SECONDS  = int(os.getenv("INBOUND_POLL_SECONDS") or os.getenv("IMAP_POLL_SECONDS") or "20")
 WEBHOOK_URL   = os.getenv("INBOUND_WEBHOOK_URL", "http://localhost:5001/webhook/inbound-reply")
 
@@ -36,13 +63,15 @@ _state = {
     "running": False,
     "last_cycle": None,
     "last_error": None,
-    "seen_set": set(),   # simple dedupe for this process
+    "seen_sets": {},   # per-account dedupe: {"emma": set(), "support": set()}
+    "accounts_status": {}  # per-account status
 }
 _thread: Optional[threading.Thread] = None
 
 def _fatal_if_missing_creds():
-    if not IMAP_USER or not IMAP_PASS:
-        raise SystemExit("[gmail-poller] Missing INBOUND_EMAIL_USER/INBOUND_EMAIL_PASS (or IMAP_USER/IMAP_PASS). Use a 16-char Gmail App Password and enable IMAP in Gmail settings.")
+    accounts = _get_active_accounts()
+    if not accounts:
+        raise SystemExit("[gmail-poller] No email accounts configured. Set EMMA_EMAIL_USER/PASS or SUPPORT_EMAIL_USER/PASS.")
 
 def _html_to_text(html: str) -> str:
     x = re.sub(r"(?is)<(script|style).*?>.*?</\1>", "", html or "")
@@ -100,25 +129,35 @@ def _push_to_dashboard(payload: dict):
     except Exception as e:
         print(f"[gmail-poller] dashboard error: {e}")
 
-def _cycle():
+def _cycle_account(account: Dict[str, Any]):
+    """Poll a single email account for new messages"""
+    account_name = account["name"]
+
+    # Initialize seen set for this account if not exists
+    if account_name not in _state["seen_sets"]:
+        _state["seen_sets"][account_name] = set()
+
     try:
-        M = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
-        M.login(IMAP_USER, IMAP_PASS)
-        M.select(IMAP_MAILBOX)
+        M = imaplib.IMAP4_SSL(account["host"], account["port"])
+        M.login(account["user"], account["pass"])
+        M.select(account["mailbox"])
+        _state["accounts_status"][account_name] = {"connected": True, "last_check": time.time()}
     except imaplib.IMAP4.error as e:
-        _state["last_error"] = f"auth/conn error: {e}"
-        print(f"[gmail-poller] ERROR: {e}")
-        time.sleep(POLL_SECONDS)
+        _state["accounts_status"][account_name] = {"connected": False, "error": str(e)}
+        print(f"[gmail-poller:{account_name}] ERROR: {e}")
         return
 
     try:
         typ, data = M.search(None, 'UNSEEN')
         if typ != 'OK':
             return
+
+        seen_set = _state["seen_sets"][account_name]
+
         for num in data[0].split():
-            if num in _state["seen_set"]:
+            if num in seen_set:
                 continue
-            _state["seen_set"].add(num)
+            seen_set.add(num)
 
             typ, msg_data = M.fetch(num, '(RFC822)')
             if typ != 'OK' or not msg_data:
@@ -137,9 +176,9 @@ def _cycle():
                     if part.get_content_maintype() == "multipart":
                         continue
                     ctype = part.get_content_type()
-                    payload = part.get_payload(decode=True)
+                    payload_data = part.get_payload(decode=True)
                     try:
-                        text = payload.decode(part.get_content_charset() or "utf-8", errors="ignore") if payload else ""
+                        text = payload_data.decode(part.get_content_charset() or "utf-8", errors="ignore") if payload_data else ""
                     except Exception:
                         text = ""
                     if ctype == "text/plain" and not body_text:
@@ -148,8 +187,8 @@ def _cycle():
                         body_html = text
             else:
                 ctype = msg.get_content_type()
-                payload = msg.get_payload(decode=True)
-                text = payload.decode(msg.get_content_charset() or "utf-8", errors="ignore") if payload else ""
+                payload_data = msg.get_payload(decode=True)
+                text = payload_data.decode(msg.get_content_charset() or "utf-8", errors="ignore") if payload_data else ""
                 if ctype == "text/plain":
                     body_text = text
                 elif ctype == "text/html":
@@ -160,7 +199,7 @@ def _cycle():
 
             payload = {
                 "email": from_addr,
-                "from_header": from_header,  # Full From header for name extraction
+                "from_header": from_header,
                 "subject": subj,
                 "body_text": (body_text or "").strip() or "[customer replied with an empty body or image]",
                 "body_html": (body_html or "").strip(),
@@ -168,9 +207,13 @@ def _cycle():
                 "in_reply_to": msg.get("In-Reply-To") or "",
                 "message_id": message_id,
                 "cart_items": [],
+                "inbox_type": account["type"],  # "sales" or "support"
+                "inbox_name": account_name,
             }
+
+            print(f"[gmail-poller:{account_name}] New email from {from_addr}: {subj[:50]}")
             _post_webhook(payload)
-            _push_to_dashboard(payload)  # Also push to Mirai Dashboard
+            _push_to_dashboard(payload)
     finally:
         try:
             M.close()
@@ -178,8 +221,21 @@ def _cycle():
         except Exception:
             pass
 
+
+def _cycle():
+    """Poll all configured email accounts"""
+    accounts = _get_active_accounts()
+    for account in accounts:
+        try:
+            _cycle_account(account)
+        except Exception as e:
+            print(f"[gmail-poller:{account['name']}] cycle error: {e}")
+
 def _loop():
-    print(f"[gmail-poller] starting on {IMAP_HOST}:{IMAP_PORT} mailbox={IMAP_MAILBOX} user={IMAP_USER}")
+    accounts = _get_active_accounts()
+    account_names = [a["name"] + ":" + a["user"] for a in accounts]
+    print(f"[gmail-poller] starting with {len(accounts)} accounts: {', '.join(account_names)}")
+
     while _state["running"]:
         try:
             _cycle()
@@ -206,10 +262,13 @@ def stop_gmail_poller():
     _state["running"] = False
 
 def get_gmail_poller_status():
+    accounts = _get_active_accounts()
     return {
         "running": _state["running"],
         "last_cycle": _state["last_cycle"],
         "last_error": _state["last_error"],
+        "accounts": [{"name": a["name"], "user": a["user"], "type": a["type"]} for a in accounts],
+        "accounts_status": _state.get("accounts_status", {}),
     }
 
 def force_cycle():
@@ -218,4 +277,5 @@ def force_cycle():
     _state["last_cycle"] = time.time()
 
 def reset_cursor():
-    _state["seen_set"].clear()
+    _state["seen_sets"].clear()
+    print("[gmail-poller] All account cursors reset")
