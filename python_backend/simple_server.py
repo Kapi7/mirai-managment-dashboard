@@ -2157,13 +2157,14 @@ async def reject_support_email(email_id: int, user: dict = Depends(get_current_u
 
 @app.get("/support/stats")
 async def get_support_stats(user: dict = Depends(get_current_user)):
-    """Get support dashboard statistics"""
+    """Get support dashboard statistics with detailed analytics"""
     if not DB_SERVICE_AVAILABLE:
-        return {"pending": 0, "draft_ready": 0, "approved": 0, "sent": 0}
+        return {"pending": 0, "draft_ready": 0, "approved": 0, "sent": 0, "total": 0}
 
     from database.connection import get_db
     from database.models import SupportEmail
-    from sqlalchemy import select, func
+    from sqlalchemy import select, func, and_
+    from datetime import datetime, timedelta
 
     async with get_db() as db:
         # Count by status
@@ -2173,13 +2174,105 @@ async def get_support_stats(user: dict = Depends(get_current_user)):
         )
         counts = {row[0]: row[1] for row in result.all()}
 
+        # Classification breakdown
+        class_result = await db.execute(
+            select(SupportEmail.classification, func.count(SupportEmail.id))
+            .group_by(SupportEmail.classification)
+        )
+        classification_counts = {row[0] or 'unknown': row[1] for row in class_result.all()}
+
+        # Priority breakdown
+        priority_result = await db.execute(
+            select(SupportEmail.priority, func.count(SupportEmail.id))
+            .group_by(SupportEmail.priority)
+        )
+        priority_counts = {row[0] or 'medium': row[1] for row in priority_result.all()}
+
+        # Intent breakdown
+        intent_result = await db.execute(
+            select(SupportEmail.intent, func.count(SupportEmail.id))
+            .where(SupportEmail.intent.isnot(None))
+            .group_by(SupportEmail.intent)
+        )
+        intent_counts = {row[0]: row[1] for row in intent_result.all()}
+
+        # Sales opportunities count
+        sales_result = await db.execute(
+            select(func.count(SupportEmail.id))
+            .where(SupportEmail.sales_opportunity == True)
+        )
+        sales_opportunities = sales_result.scalar() or 0
+
+        # Today's emails
+        now = datetime.utcnow()
+        today_start = datetime(now.year, now.month, now.day)
+        yesterday_start = today_start - timedelta(days=1)
+        week_ago = today_start - timedelta(days=7)
+
+        today_result = await db.execute(
+            select(func.count(SupportEmail.id))
+            .where(SupportEmail.received_at >= today_start)
+        )
+        today_count = today_result.scalar() or 0
+
+        yesterday_result = await db.execute(
+            select(func.count(SupportEmail.id))
+            .where(and_(
+                SupportEmail.received_at >= yesterday_start,
+                SupportEmail.received_at < today_start
+            ))
+        )
+        yesterday_count = yesterday_result.scalar() or 0
+
+        # Last 7 days
+        week_result = await db.execute(
+            select(func.count(SupportEmail.id))
+            .where(SupportEmail.received_at >= week_ago)
+        )
+        week_count = week_result.scalar() or 0
+
+        # Average AI confidence
+        conf_result = await db.execute(
+            select(func.avg(SupportEmail.ai_confidence))
+            .where(SupportEmail.ai_confidence.isnot(None))
+        )
+        avg_confidence = conf_result.scalar()
+
+        # Resolution rate (sent / (sent + rejected))
+        sent_count = counts.get("sent", 0)
+        rejected_count = counts.get("rejected", 0)
+        resolved_total = sent_count + rejected_count
+        resolution_rate = round(sent_count / resolved_total * 100, 1) if resolved_total > 0 else 0
+
+        # Draft generation rate (draft_ready / total that have been processed)
+        draft_ready = counts.get("draft_ready", 0)
+        processed = draft_ready + sent_count + rejected_count + counts.get("approved", 0)
+        draft_rate = round(processed / sum(counts.values()) * 100, 1) if sum(counts.values()) > 0 else 0
+
         return {
+            # Status counts
             "pending": counts.get("pending", 0),
-            "draft_ready": counts.get("draft_ready", 0),
+            "draft_ready": draft_ready,
             "approved": counts.get("approved", 0),
-            "sent": counts.get("sent", 0),
-            "rejected": counts.get("rejected", 0),
-            "total": sum(counts.values())
+            "sent": sent_count,
+            "rejected": rejected_count,
+            "total": sum(counts.values()),
+
+            # Analytics
+            "classification_breakdown": classification_counts,
+            "priority_breakdown": priority_counts,
+            "intent_breakdown": intent_counts,
+            "sales_opportunities": sales_opportunities,
+
+            # Time-based metrics
+            "today_count": today_count,
+            "yesterday_count": yesterday_count,
+            "week_count": week_count,
+
+            # Performance metrics
+            "avg_confidence": round(float(avg_confidence), 2) if avg_confidence else None,
+            "resolution_rate": resolution_rate,
+            "ai_draft_rate": draft_rate
         }
 
 

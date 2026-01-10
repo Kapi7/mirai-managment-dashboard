@@ -42,7 +42,14 @@ import {
   BarChart3,
   Timer,
   Inbox,
-  ChevronRight
+  ChevronRight,
+  ChevronDown,
+  Target,
+  Zap,
+  Tag,
+  Calendar,
+  Percent,
+  ShoppingCart
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { cn } from '@/lib/utils';
@@ -51,8 +58,14 @@ const API_URL = '/api';
 
 export default function Support() {
   const [emails, setEmails] = useState([]);
-  const [stats, setStats] = useState({ pending: 0, draft_ready: 0, approved: 0, sent: 0, total: 0 });
+  const [stats, setStats] = useState({
+    pending: 0, draft_ready: 0, approved: 0, sent: 0, total: 0,
+    classification_breakdown: {}, priority_breakdown: {}, intent_breakdown: {},
+    sales_opportunities: 0, today_count: 0, yesterday_count: 0, week_count: 0,
+    avg_confidence: null, resolution_rate: 0, ai_draft_rate: 0
+  });
   const [loading, setLoading] = useState(true);
+  const [showAnalytics, setShowAnalytics] = useState(false);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('all');
   const [search, setSearch] = useState('');
@@ -392,6 +405,167 @@ export default function Support() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Analytics Section */}
+      <Card>
+        <CardHeader
+          className="cursor-pointer hover:bg-slate-50 transition-colors"
+          onClick={() => setShowAnalytics(!showAnalytics)}
+        >
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center gap-2">
+              <BarChart3 className="h-5 w-5" />
+              Analytics & Insights
+            </CardTitle>
+            <Button variant="ghost" size="sm">
+              {showAnalytics ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </Button>
+          </div>
+        </CardHeader>
+        {showAnalytics && (
+          <CardContent className="pt-0">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Time Metrics */}
+              <div className="p-4 bg-slate-50 rounded-lg">
+                <div className="flex items-center gap-2 mb-3">
+                  <Calendar className="h-4 w-4 text-slate-600" />
+                  <h4 className="font-semibold text-sm">Activity</h4>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-slate-600">Today</span>
+                    <span className="font-bold text-lg">{stats.today_count}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-slate-600">Yesterday</span>
+                    <span className="font-medium">{stats.yesterday_count}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-slate-600">Last 7 days</span>
+                    <span className="font-medium">{stats.week_count}</span>
+                  </div>
+                  {stats.today_count > stats.yesterday_count && stats.yesterday_count > 0 && (
+                    <div className="flex items-center gap-1 text-green-600 text-xs mt-1">
+                      <TrendingUp className="h-3 w-3" />
+                      +{Math.round((stats.today_count - stats.yesterday_count) / stats.yesterday_count * 100)}% vs yesterday
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Classification Breakdown */}
+              <div className="p-4 bg-slate-50 rounded-lg">
+                <div className="flex items-center gap-2 mb-3">
+                  <Tag className="h-4 w-4 text-slate-600" />
+                  <h4 className="font-semibold text-sm">Classification</h4>
+                </div>
+                <div className="space-y-2">
+                  {Object.entries(stats.classification_breakdown || {}).map(([key, value]) => (
+                    <div key={key} className="flex justify-between items-center">
+                      <span className="text-sm text-slate-600 capitalize">
+                        {key === 'support_sales' ? 'Support + Sales' : key}
+                      </span>
+                      <Badge className={cn('text-xs', {
+                        'bg-blue-100 text-blue-800': key === 'support',
+                        'bg-green-100 text-green-800': key === 'sales',
+                        'bg-purple-100 text-purple-800': key === 'support_sales',
+                        'bg-gray-100 text-gray-800': key === 'unknown'
+                      })}>{value}</Badge>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Performance Metrics */}
+              <div className="p-4 bg-slate-50 rounded-lg">
+                <div className="flex items-center gap-2 mb-3">
+                  <Zap className="h-4 w-4 text-slate-600" />
+                  <h4 className="font-semibold text-sm">Performance</h4>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-slate-600">Resolution Rate</span>
+                    <span className="font-bold text-green-600">{stats.resolution_rate}%</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-slate-600">AI Draft Rate</span>
+                    <span className="font-medium">{stats.ai_draft_rate}%</span>
+                  </div>
+                  {stats.avg_confidence && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-slate-600">AI Confidence</span>
+                      <span className="font-medium">{Math.round(stats.avg_confidence * 100)}%</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Intent & Sales */}
+              <div className="p-4 bg-slate-50 rounded-lg">
+                <div className="flex items-center gap-2 mb-3">
+                  <Target className="h-4 w-4 text-slate-600" />
+                  <h4 className="font-semibold text-sm">Top Intents</h4>
+                </div>
+                <div className="space-y-2">
+                  {Object.entries(stats.intent_breakdown || {}).slice(0, 4).map(([key, value]) => (
+                    <div key={key} className="flex justify-between items-center">
+                      <span className="text-sm text-slate-600 capitalize truncate">{key.replace('_', ' ')}</span>
+                      <span className="font-medium">{value}</span>
+                    </div>
+                  ))}
+                  {stats.sales_opportunities > 0 && (
+                    <div className="flex justify-between items-center pt-2 border-t border-slate-200 mt-2">
+                      <span className="text-sm text-amber-700 flex items-center gap-1">
+                        <ShoppingCart className="h-3 w-3" />
+                        Sales Opportunities
+                      </span>
+                      <Badge className="bg-amber-100 text-amber-800">{stats.sales_opportunities}</Badge>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Priority Breakdown */}
+            {Object.keys(stats.priority_breakdown || {}).length > 0 && (
+              <div className="mt-4 p-4 bg-slate-50 rounded-lg">
+                <h4 className="font-semibold text-sm mb-3 flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4" />
+                  Priority Distribution
+                </h4>
+                <div className="flex gap-4">
+                  {['high', 'medium', 'low'].map(p => {
+                    const count = stats.priority_breakdown[p] || 0;
+                    const pct = stats.total > 0 ? Math.round(count / stats.total * 100) : 0;
+                    return (
+                      <div key={p} className="flex-1">
+                        <div className="flex justify-between mb-1">
+                          <span className={cn('text-xs font-medium capitalize', {
+                            'text-red-600': p === 'high',
+                            'text-yellow-600': p === 'medium',
+                            'text-gray-600': p === 'low'
+                          })}>{p}</span>
+                          <span className="text-xs text-slate-500">{count} ({pct}%)</span>
+                        </div>
+                        <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                          <div
+                            className={cn('h-full transition-all', {
+                              'bg-red-500': p === 'high',
+                              'bg-yellow-500': p === 'medium',
+                              'bg-gray-400': p === 'low'
+                            })}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        )}
+      </Card>
 
       {/* Email List */}
       <Card>
