@@ -106,6 +106,18 @@ async def init_db():
                     END IF;
                 END $$;
                 """,
+                # Add sender_type column to support_emails if it doesn't exist
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'support_emails' AND column_name = 'sender_type'
+                    ) THEN
+                        ALTER TABLE support_emails ADD COLUMN sender_type VARCHAR(20) DEFAULT 'customer';
+                    END IF;
+                END $$;
+                """,
             ]
 
             for migration in migrations:

@@ -361,6 +361,9 @@ class SupportEmail(Base):
     # Inbox source
     inbox_type = Column(String(20), default='support', index=True)  # 'emma' (sales) or 'support'
 
+    # Sender classification
+    sender_type = Column(String(20), default='customer')  # 'customer', 'supplier', 'automated', 'internal'
+
     # Classification
     status = Column(String(50), default='pending', index=True)  # pending, draft_ready, approved, sent, rejected
     classification = Column(String(50))  # support, sales, support_sales

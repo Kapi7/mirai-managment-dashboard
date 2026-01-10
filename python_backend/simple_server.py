@@ -1727,6 +1727,7 @@ class SupportEmailUpdate(BaseModel):
     classification: Optional[str] = None
     intent: Optional[str] = None
     priority: Optional[str] = None
+    sender_type: Optional[str] = None  # 'customer', 'supplier', 'automated', 'internal'
     ai_draft: Optional[str] = None
     final_content: Optional[str] = None
 
@@ -1794,6 +1795,7 @@ async def list_support_emails(
                     "priority": e.priority,
                     "sales_opportunity": e.sales_opportunity,
                     "inbox_type": e.inbox_type,
+                    "sender_type": getattr(e, 'sender_type', 'customer'),
                     "ai_confidence": float(e.ai_confidence) if e.ai_confidence else None,
                     "received_at": e.received_at.isoformat() if e.received_at else None,
                     "messages_count": len(e.messages),
@@ -1952,6 +1954,8 @@ async def webhook_update_support_email(email_id: int, req: SupportEmailUpdate):
             email.intent = req.intent
         if req.priority:
             email.priority = req.priority
+        if req.sender_type:
+            email.sender_type = req.sender_type
 
         # Update AI draft on latest message
         if req.ai_draft:

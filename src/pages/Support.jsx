@@ -211,17 +211,6 @@ export default function Support() {
     }
   };
 
-  // Filter emails by search
-  const filteredEmails = useMemo(() => {
-    if (!search.trim()) return emails;
-    const s = search.toLowerCase();
-    return emails.filter(e =>
-      e.customer_email?.toLowerCase().includes(s) ||
-      e.customer_name?.toLowerCase().includes(s) ||
-      e.subject?.toLowerCase().includes(s)
-    );
-  }, [emails, search]);
-
   // Status badge
   const getStatusBadge = (status) => {
     const variants = {
@@ -281,16 +270,46 @@ export default function Support() {
     );
   };
 
+  // Sender type badge (customer vs supplier)
+  const getSenderBadge = (senderType) => {
+    if (!senderType || senderType === 'customer') return null;
+    const config = {
+      supplier: { label: 'Supplier', color: 'bg-orange-100 text-orange-800' },
+      automated: { label: 'Auto', color: 'bg-gray-100 text-gray-600' },
+      internal: { label: 'Internal', color: 'bg-cyan-100 text-cyan-800' }
+    };
+    const { label, color } = config[senderType] || { label: senderType, color: 'bg-gray-100' };
+    return <Badge className={cn('text-xs', color)}>{label}</Badge>;
+  };
+
   // Check if email has AI draft
   const hasAIDraft = (email) => {
     return email?.messages?.some(m => m.ai_draft);
   };
 
-  // Count emails by inbox
-  const inboxCounts = useMemo(() => {
-    const all = emails.length;
-    // Since we're fetching filtered, we need to estimate from stats or just show totals
-    return { all, emma: 0, support: 0 };
+  // Filter emails - hide suppliers by default unless searching
+  const filteredEmails = useMemo(() => {
+    let result = emails;
+
+    // Filter by search
+    if (search.trim()) {
+      const s = search.toLowerCase();
+      result = result.filter(e =>
+        e.customer_email?.toLowerCase().includes(s) ||
+        e.customer_name?.toLowerCase().includes(s) ||
+        e.subject?.toLowerCase().includes(s)
+      );
+    } else {
+      // If not searching, hide supplier/automated emails by default
+      result = result.filter(e => !e.sender_type || e.sender_type === 'customer');
+    }
+
+    return result;
+  }, [emails, search]);
+
+  // Count including hidden supplier emails
+  const supplierCount = useMemo(() => {
+    return emails.filter(e => e.sender_type && e.sender_type !== 'customer').length;
   }, [emails]);
 
   return (
@@ -465,15 +484,22 @@ export default function Support() {
       <Card>
         <CardHeader className="py-3">
           <div className="flex items-center justify-between">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Mail className="h-4 w-4" />
-              {activeInbox === 'emma' ? 'Emma Sales' : activeInbox === 'support' ? 'Support' : 'All'} Emails
-              <Badge variant="secondary">{filteredEmails.length}</Badge>
-            </CardTitle>
+            <div className="flex items-center gap-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Mail className="h-4 w-4" />
+                {activeInbox === 'emma' ? 'Emma Sales' : activeInbox === 'support' ? 'Support' : 'All'} Emails
+                <Badge variant="secondary">{filteredEmails.length}</Badge>
+              </CardTitle>
+              {supplierCount > 0 && !search && (
+                <span className="text-xs text-slate-400">
+                  ({supplierCount} supplier/auto emails hidden)
+                </span>
+              )}
+            </div>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
               <Input
-                placeholder="Search..."
+                placeholder="Search (shows all)..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-[200px] pl-9 h-8"
@@ -514,8 +540,11 @@ export default function Support() {
                     onClick={() => openEmailDetail(email)}
                   >
                     <TableCell>
-                      <div className="flex flex-col">
-                        <span className="font-medium truncate max-w-[180px]">{email.customer_name || 'Unknown'}</span>
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium truncate max-w-[150px]">{email.customer_name || 'Unknown'}</span>
+                          {getSenderBadge(email.sender_type)}
+                        </div>
                         <span className="text-xs text-slate-500 truncate max-w-[180px]">{email.customer_email}</span>
                       </div>
                     </TableCell>

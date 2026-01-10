@@ -30,6 +30,87 @@ MIRAI_DATABASE_URL = os.getenv("MIRAI_DATABASE_URL", "").strip()
 MIRAI_DASHBOARD_URL = os.getenv("MIRAI_DASHBOARD_URL", "https://mirai-managment-dashboard.onrender.com").strip()
 MIRAI_API_TOKEN = os.getenv("MIRAI_API_TOKEN", "").strip()
 
+# Known supplier/non-customer email patterns (skip AI draft for these)
+SUPPLIER_EMAIL_PATTERNS = [
+    "@korealy.com",
+    "@korealy.co",
+    "noreply@",
+    "no-reply@",
+    "notifications@",
+    "support@shopify.com",
+    "mailer-daemon@",
+    "postmaster@",
+    "@klaviyo.com",
+    "@mailchimp.com",
+    "@sendgrid.net",
+    "automated@",
+    "system@",
+    "@googlemail.com" if False else None,  # Placeholder
+]
+SUPPLIER_EMAIL_PATTERNS = [p for p in SUPPLIER_EMAIL_PATTERNS if p]  # Remove None
+
+# Keywords that indicate supplier/business email (not customer)
+SUPPLIER_SUBJECT_KEYWORDS = [
+    "invoice",
+    "payment received",
+    "order confirmation from",  # From suppliers, not TO customers
+    "shipping notification from",
+    "wholesale",
+    "b2b",
+    "supplier",
+    "vendor",
+    "inventory update",
+    "stock update",
+    "price list",
+    "catalog",
+]
+
+def is_customer_email(email_address: str, subject: str = "", content: str = "") -> dict:
+    """
+    Determine if an email is from a real customer vs supplier/automated.
+
+    Returns: {
+        'is_customer': bool,
+        'sender_type': 'customer' | 'supplier' | 'automated' | 'internal',
+        'reason': str
+    }
+    """
+    email_lower = email_address.lower()
+    subject_lower = subject.lower()
+
+    # Check against known supplier patterns
+    for pattern in SUPPLIER_EMAIL_PATTERNS:
+        if pattern.lower() in email_lower:
+            return {
+                'is_customer': False,
+                'sender_type': 'supplier' if 'korealy' in pattern.lower() else 'automated',
+                'reason': f'Matched pattern: {pattern}'
+            }
+
+    # Check subject for supplier keywords
+    for keyword in SUPPLIER_SUBJECT_KEYWORDS:
+        if keyword.lower() in subject_lower:
+            return {
+                'is_customer': False,
+                'sender_type': 'supplier',
+                'reason': f'Subject contains: {keyword}'
+            }
+
+    # Check if it's an internal email (from our own domain)
+    if '@miraiskin.com' in email_lower or '@mirai' in email_lower:
+        return {
+            'is_customer': False,
+            'sender_type': 'internal',
+            'reason': 'Internal email'
+        }
+
+    # Default: assume it's a customer
+    return {
+        'is_customer': True,
+        'sender_type': 'customer',
+        'reason': 'No supplier patterns matched'
+    }
+
 # SQLAlchemy setup (only if DATABASE_URL is provided)
 _engine = None
 _Session = None
@@ -353,7 +434,8 @@ def update_email_draft(
     ai_draft: str,
     classification: Optional[str] = None,
     intent: Optional[str] = None,
-    priority: Optional[str] = None
+    priority: Optional[str] = None,
+    sender_type: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Update an email with AI-generated draft and classification.
@@ -361,6 +443,7 @@ def update_email_draft(
     classification: 'support', 'sales', 'support_sales'
     intent: 'tracking', 'return', 'product_question', 'complaint', etc.
     priority: 'low', 'medium', 'high'
+    sender_type: 'customer', 'supplier', 'automated', 'internal'
     """
     if not MIRAI_DASHBOARD_URL:
         return {"success": False, "error": "MIRAI_DASHBOARD_URL not configured"}
@@ -375,6 +458,8 @@ def update_email_draft(
             payload["intent"] = intent
         if priority:
             payload["priority"] = priority
+        if sender_type:
+            payload["sender_type"] = sender_type
 
         response = requests.patch(url, json=payload, headers=_api_headers(), timeout=30)
 
@@ -469,14 +554,24 @@ def process_incoming_email(
 ) -> Dict[str, Any]:
     """
     Full pipeline for processing an incoming email:
-    1. Push to dashboard
-    2. Classify the email
-    3. Generate AI draft response
-    4. Update dashboard with draft and classification
+    1. Check if email is from a real customer
+    2. Push to dashboard
+    3. Classify the email
+    4. Generate AI draft response (only for customers)
+    5. Update dashboard with draft and classification
 
     Returns: {"success": True, "email_id": id, "classification": {...}, "draft": "..."}
     """
-    # Step 1: Push to dashboard
+    # Step 0: Check if this is a customer email (not supplier/automated)
+    sender_check = is_customer_email(customer_email, subject, content)
+    sender_type = sender_check.get('sender_type', 'customer')
+    is_customer = sender_check.get('is_customer', True)
+
+    print(f"[dashboard_bridge] Email from {customer_email}: sender_type={sender_type}, is_customer={is_customer}")
+    if not is_customer:
+        print(f"[dashboard_bridge] Skipping AI draft for non-customer: {sender_check.get('reason')}")
+
+    # Step 1: Push to dashboard (always push, even for suppliers)
     push_result = push_email_to_dashboard(
         thread_id=thread_id,
         customer_email=customer_email,
@@ -493,12 +588,14 @@ def process_incoming_email(
 
     email_id = push_result.get("id")
 
-    # Step 2: Classify
+    # Step 2: Classify (with sender type info)
     classification = classify_email(content, subject)
+    classification['sender_type'] = sender_type
+    classification['is_customer'] = is_customer
 
-    # Step 3: Generate draft (using Emma)
+    # Step 3: Generate draft (using Emma) - ONLY for real customers
     ai_draft = None
-    if generate_draft:
+    if generate_draft and is_customer:
         try:
             print(f"[dashboard_bridge] Generating Emma draft for email_id={email_id}...")
             from emma_agent import respond_as_emma
@@ -539,13 +636,14 @@ def process_incoming_email(
 
     # Step 4: Update dashboard with classification and draft
     if email_id and (ai_draft or classification):
-        print(f"[dashboard_bridge] Updating email_id={email_id} with classification={classification.get('classification')}, draft={len(ai_draft) if ai_draft else 0} chars")
+        print(f"[dashboard_bridge] Updating email_id={email_id} with classification={classification.get('classification')}, sender_type={sender_type}, draft={len(ai_draft) if ai_draft else 0} chars")
         update_result = update_email_draft(
             email_id=email_id,
             ai_draft=ai_draft or "",
             classification=classification.get("classification"),
             intent=classification.get("intent"),
-            priority=classification.get("priority")
+            priority=classification.get("priority"),
+            sender_type=sender_type
         )
         print(f"[dashboard_bridge] Update result: {update_result}")
 
