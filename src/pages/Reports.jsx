@@ -8,7 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Input } from '@/components/ui/input';
-import { CalendarIcon, TrendingUp, TrendingDown, DollarSign, ShoppingCart, Target, Percent, Package, Users, Globe, Clock, ArrowUpDown, Star } from 'lucide-react';
+import { CalendarIcon, TrendingUp, TrendingDown, DollarSign, ShoppingCart, Target, Percent, Package, Users, Globe, Clock, ArrowUpDown, Star, RefreshCw, ChevronDown, ChevronRight } from 'lucide-react';
 import { format, subDays, startOfMonth, endOfMonth, subMonths, startOfDay, endOfDay } from 'date-fns';
 import { cn } from '@/lib/utils';
 
@@ -29,6 +29,8 @@ export default function Reports() {
     from: subDays(new Date(), 7),
     to: new Date()
   });
+  const [expandedOrders, setExpandedOrders] = useState({});
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // Cache key for localStorage
   const getCacheKey = () => {
@@ -153,6 +155,30 @@ export default function Reports() {
     }
   };
 
+  // Force refresh - clears cache and refetches
+  const handleRefreshDaily = async () => {
+    setIsRefreshing(true);
+    // Clear cache for this date range
+    const cacheKey = getCacheKey();
+    localStorage.removeItem(cacheKey);
+    await fetchReportData();
+    setIsRefreshing(false);
+  };
+
+  const handleRefreshOrders = async () => {
+    setIsRefreshing(true);
+    await fetchOrderData();
+    setIsRefreshing(false);
+  };
+
+  // Toggle order expansion to show line items
+  const toggleOrderExpansion = (orderId) => {
+    setExpandedOrders(prev => ({
+      ...prev,
+      [orderId]: !prev[orderId]
+    }));
+  };
+
   // Filter orders by search
   const filteredOrders = useMemo(() => {
     if (!orderSearch.trim()) return orderData.orders || [];
@@ -172,8 +198,9 @@ export default function Reports() {
       totalGross: acc.totalGross + (day.gross || 0),
       totalNet: acc.totalNet + (day.net || 0),
       totalSpend: acc.totalSpend + (day.total_spend || 0),
-      totalProfit: acc.totalProfit + (day.operational_profit || 0),
-    }), { totalOrders: 0, totalGross: 0, totalNet: 0, totalSpend: 0, totalProfit: 0 });
+      totalProfit: acc.totalProfit + (day.margin || day.operational || 0),
+      totalPsp: acc.totalPsp + (day.psp_usd || 0),
+    }), { totalOrders: 0, totalGross: 0, totalNet: 0, totalSpend: 0, totalProfit: 0, totalPsp: 0 });
   }, [reportData]);
 
   const avgMargin = useMemo(() => {
@@ -423,10 +450,23 @@ export default function Reports() {
       {/* Detailed Daily Report Table */}
       <Card>
         <CardHeader>
-          <CardTitle>Daily Performance Breakdown</CardTitle>
-          <CardDescription>
-            Detailed metrics for each day in the selected range
-          </CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Daily Performance Breakdown</CardTitle>
+              <CardDescription>
+                Detailed metrics for each day in the selected range
+              </CardDescription>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRefreshDaily}
+              disabled={isRefreshing || loading}
+            >
+              <RefreshCw className={cn("h-4 w-4 mr-2", isRefreshing && "animate-spin")} />
+              Refresh
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -448,15 +488,16 @@ export default function Reports() {
                     <TableHead className="text-right">Orders</TableHead>
                     <TableHead className="text-right">Net Sales</TableHead>
                     <TableHead className="text-right">COGS</TableHead>
-                    <TableHead className="text-right">Shipping Charged</TableHead>
-                    <TableHead className="text-right">Est Shipping</TableHead>
+                    <TableHead className="text-right">Ship Charged</TableHead>
+                    <TableHead className="text-right">Est Ship Cost</TableHead>
+                    <TableHead className="text-right">PSP Fee</TableHead>
                     <TableHead className="text-right">Ad Spend</TableHead>
-                    <TableHead className="text-right">Operational Profit</TableHead>
+                    <TableHead className="text-right">Operational</TableHead>
                     <TableHead className="text-right">Margin $</TableHead>
                     <TableHead className="text-right">Margin %</TableHead>
                     <TableHead className="text-right">AOV</TableHead>
                     <TableHead className="text-right">CPA</TableHead>
-                    <TableHead className="text-right">Return Customers</TableHead>
+                    <TableHead className="text-right">Return Cust</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -470,19 +511,20 @@ export default function Reports() {
                       <TableCell className="text-right">{formatCurrency(day.cogs)}</TableCell>
                       <TableCell className="text-right">{formatCurrency(day.shipping_charged)}</TableCell>
                       <TableCell className="text-right">{formatCurrency(day.shipping_cost)}</TableCell>
+                      <TableCell className="text-right">{formatCurrency(day.psp_usd)}</TableCell>
                       <TableCell className="text-right">{formatCurrency(day.total_spend)}</TableCell>
                       <TableCell className="text-right">
-                        <span className={day.operational_profit >= 0 ? 'text-green-600' : 'text-red-600'}>
-                          {formatCurrency(day.operational_profit)}
+                        <span className={(day.operational || 0) >= 0 ? 'text-green-600' : 'text-red-600'}>
+                          {formatCurrency(day.operational)}
                         </span>
                       </TableCell>
                       <TableCell className="text-right">
-                        <span className={day.net_margin >= 0 ? 'text-green-600' : 'text-red-600'}>
-                          {formatCurrency(day.net_margin)}
+                        <span className={(day.margin || 0) >= 0 ? 'text-green-600' : 'text-red-600'}>
+                          {formatCurrency(day.margin)}
                         </span>
                       </TableCell>
                       <TableCell className="text-right">
-                        <Badge variant={day.margin_pct >= 20 ? 'default' : day.margin_pct >= 10 ? 'secondary' : 'destructive'}>
+                        <Badge variant={(day.margin_pct || 0) >= 0.20 ? 'default' : (day.margin_pct || 0) >= 0.10 ? 'secondary' : 'destructive'}>
                           {formatPercent(day.margin_pct)}
                         </Badge>
                       </TableCell>
@@ -628,12 +670,23 @@ export default function Reports() {
                         {filteredOrders.length} orders in selected date range
                       </CardDescription>
                     </div>
-                    <Input
-                      placeholder="Search orders..."
-                      value={orderSearch}
-                      onChange={(e) => setOrderSearch(e.target.value)}
-                      className="w-[250px]"
-                    />
+                    <div className="flex items-center gap-2">
+                      <Input
+                        placeholder="Search orders..."
+                        value={orderSearch}
+                        onChange={(e) => setOrderSearch(e.target.value)}
+                        className="w-[250px]"
+                      />
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleRefreshOrders}
+                        disabled={isRefreshing || loading}
+                      >
+                        <RefreshCw className={cn("h-4 w-4 mr-2", isRefreshing && "animate-spin")} />
+                        Refresh
+                      </Button>
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent>
@@ -642,18 +695,21 @@ export default function Reports() {
                       No orders found for the selected date range
                     </div>
                   ) : (
-                    <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
+                    <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
                       <Table>
-                        <TableHeader className="sticky top-0 bg-white">
+                        <TableHeader className="sticky top-0 bg-white z-10">
                           <TableRow>
+                            <TableHead className="w-8"></TableHead>
                             <TableHead>Order</TableHead>
                             <TableHead>Date/Time</TableHead>
                             <TableHead>Customer</TableHead>
                             <TableHead>Channel</TableHead>
                             <TableHead>Country</TableHead>
                             <TableHead className="text-right">Gross</TableHead>
+                            <TableHead className="text-right">Ship</TableHead>
                             <TableHead className="text-right">Net</TableHead>
                             <TableHead className="text-right">COGS</TableHead>
+                            <TableHead className="text-right">PSP</TableHead>
                             <TableHead className="text-right">Profit</TableHead>
                             <TableHead className="text-right">Margin</TableHead>
                             <TableHead className="text-right">Items</TableHead>
@@ -661,45 +717,94 @@ export default function Reports() {
                         </TableHeader>
                         <TableBody>
                           {filteredOrders.slice(0, 100).map((order) => (
-                            <TableRow key={order.order_id} className={order.is_cancelled ? 'opacity-50' : ''}>
-                              <TableCell className="font-medium">
-                                {order.order_name}
-                                {order.is_cancelled && <Badge variant="destructive" className="ml-2 text-xs">Cancelled</Badge>}
-                              </TableCell>
-                              <TableCell className="text-sm">
-                                <div>{order.date}</div>
-                                <div className="text-xs text-slate-500">{order.time}</div>
-                              </TableCell>
-                              <TableCell>
-                                <div className="text-sm">{order.customer_name}</div>
-                                {order.is_returning && (
-                                  <Badge variant="outline" className="text-xs">Returning</Badge>
-                                )}
-                              </TableCell>
-                              <TableCell>
-                                <Badge variant={
-                                  order.channel === 'google' ? 'default' :
-                                  order.channel === 'meta' ? 'secondary' : 'outline'
-                                }>
-                                  {order.channel}
-                                </Badge>
-                              </TableCell>
-                              <TableCell>{order.country}</TableCell>
-                              <TableCell className="text-right">{formatCurrency(order.gross)}</TableCell>
-                              <TableCell className="text-right">{formatCurrency(order.net)}</TableCell>
-                              <TableCell className="text-right">{formatCurrency(order.cogs)}</TableCell>
-                              <TableCell className="text-right">
-                                <span className={order.profit >= 0 ? 'text-green-600' : 'text-red-600'}>
-                                  {formatCurrency(order.profit)}
-                                </span>
-                              </TableCell>
-                              <TableCell className="text-right">
-                                <Badge variant={order.margin_pct >= 20 ? 'default' : order.margin_pct >= 10 ? 'secondary' : 'destructive'}>
-                                  {order.margin_pct?.toFixed(1)}%
-                                </Badge>
-                              </TableCell>
-                              <TableCell className="text-right">{order.items_count}</TableCell>
-                            </TableRow>
+                            <React.Fragment key={order.order_id}>
+                              <TableRow className={cn(order.is_cancelled ? 'opacity-50' : '', expandedOrders[order.order_id] ? 'bg-slate-50' : '')}>
+                                <TableCell className="w-8">
+                                  {order.items && order.items.length > 0 && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-6 w-6 p-0"
+                                      onClick={() => toggleOrderExpansion(order.order_id)}
+                                    >
+                                      {expandedOrders[order.order_id] ? (
+                                        <ChevronDown className="h-4 w-4" />
+                                      ) : (
+                                        <ChevronRight className="h-4 w-4" />
+                                      )}
+                                    </Button>
+                                  )}
+                                </TableCell>
+                                <TableCell className="font-medium">
+                                  {order.order_name}
+                                  {order.is_cancelled && <Badge variant="destructive" className="ml-2 text-xs">Cancelled</Badge>}
+                                </TableCell>
+                                <TableCell className="text-sm">
+                                  <div>{order.date}</div>
+                                  <div className="text-xs text-slate-500">{order.time}</div>
+                                </TableCell>
+                                <TableCell>
+                                  <div className="text-sm">{order.customer_name}</div>
+                                  <Badge
+                                    variant={order.is_returning ? 'default' : 'outline'}
+                                    className={cn("text-xs", order.is_returning ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800')}
+                                  >
+                                    {order.is_returning ? 'Return' : 'First Time'}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell>
+                                  <Badge variant={
+                                    order.channel === 'google' ? 'default' :
+                                    order.channel === 'meta' ? 'secondary' :
+                                    order.channel === 'klaviyo' ? 'outline' : 'outline'
+                                  }>
+                                    {order.channel}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell>{order.country}</TableCell>
+                                <TableCell className="text-right">{formatCurrency(order.gross)}</TableCell>
+                                <TableCell className="text-right">{formatCurrency(order.shipping)}</TableCell>
+                                <TableCell className="text-right">{formatCurrency(order.net)}</TableCell>
+                                <TableCell className="text-right">{formatCurrency(order.cogs)}</TableCell>
+                                <TableCell className="text-right">{formatCurrency(order.psp_fee)}</TableCell>
+                                <TableCell className="text-right">
+                                  <span className={(order.profit || 0) >= 0 ? 'text-green-600' : 'text-red-600'}>
+                                    {formatCurrency(order.profit)}
+                                  </span>
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <Badge variant={(order.margin_pct || 0) >= 20 ? 'default' : (order.margin_pct || 0) >= 10 ? 'secondary' : 'destructive'}>
+                                    {order.margin_pct?.toFixed(1)}%
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="text-right font-medium">{order.items_count}</TableCell>
+                              </TableRow>
+                              {/* Expanded Items Row */}
+                              {expandedOrders[order.order_id] && order.items && order.items.length > 0 && (
+                                <TableRow className="bg-slate-100">
+                                  <TableCell colSpan={14} className="p-0">
+                                    <div className="px-8 py-3">
+                                      <div className="text-xs font-semibold text-slate-600 mb-2">Line Items:</div>
+                                      <div className="space-y-1">
+                                        {order.items.map((item, idx) => (
+                                          <div key={idx} className="flex items-center justify-between text-sm bg-white p-2 rounded border">
+                                            <div className="flex-1">
+                                              <span className="font-medium">{item.name || 'Unknown Item'}</span>
+                                              {item.sku && <span className="text-slate-500 ml-2">(SKU: {item.sku})</span>}
+                                            </div>
+                                            <div className="flex items-center gap-4 text-slate-600">
+                                              <span>Qty: {item.quantity}</span>
+                                              <span>Gross: {formatCurrency(item.gross)}</span>
+                                              <span>COGS: {formatCurrency(item.total_cogs)}</span>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                            </React.Fragment>
                           ))}
                         </TableBody>
                       </Table>

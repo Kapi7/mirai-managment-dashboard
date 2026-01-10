@@ -1478,10 +1478,11 @@ async def google_login(req: GoogleAuthRequest):
         if DB_SERVICE_AVAILABLE:
             from database.connection import get_db
             from database.models import User
-            from sqlalchemy import select
+            from sqlalchemy import select, func
 
             async with get_db() as db:
-                result = await db.execute(select(User).where(User.email == email))
+                # Case-insensitive email lookup
+                result = await db.execute(select(User).where(func.lower(User.email) == email.lower().strip()))
                 user = result.scalar_one_or_none()
 
                 if not user:
@@ -1619,26 +1620,31 @@ async def add_user(req: AddUserRequest, user: dict = Depends(require_admin)):
 
     from database.connection import get_db
     from database.models import User
-    from sqlalchemy import select
+    from sqlalchemy import select, func
+
+    email_clean = req.email.strip().lower()
 
     async with get_db() as db:
-        # Check if user already exists
-        result = await db.execute(select(User).where(User.email == req.email))
+        # Check if user already exists (case-insensitive)
+        result = await db.execute(select(User).where(func.lower(User.email) == email_clean))
         existing = result.scalar_one_or_none()
 
         if existing:
             raise HTTPException(status_code=400, detail="User already exists")
 
         # Create user (they'll complete profile on first login)
+        # Store email in lowercase for consistent lookup
         new_user = User(
-            email=req.email.strip(),
+            email=email_clean,
             is_admin=req.is_admin,
             is_active=True
         )
         db.add(new_user)
         await db.commit()
 
-        return {"success": True, "message": f"User {req.email} added successfully"}
+        print(f"✅ Added new user: {email_clean} (admin={req.is_admin})")
+
+        return {"success": True, "message": f"User {email_clean} added successfully"}
 
 
 @app.delete("/auth/users/{user_id}")
