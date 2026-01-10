@@ -57,7 +57,8 @@ def _get_active_accounts() -> List[Dict[str, Any]]:
     return accounts
 
 POLL_SECONDS  = int(os.getenv("INBOUND_POLL_SECONDS") or os.getenv("IMAP_POLL_SECONDS") or "20")
-WEBHOOK_URL   = os.getenv("INBOUND_WEBHOOK_URL", "http://localhost:5001/webhook/inbound-reply")
+# Legacy webhook - disabled by default, only enable if explicitly set
+WEBHOOK_URL   = os.getenv("INBOUND_WEBHOOK_URL", "")
 
 _state = {
     "running": False,
@@ -91,6 +92,9 @@ def _clean_subject(s):
     return out
 
 def _post_webhook(payload: dict):
+    """Legacy webhook - only posts if INBOUND_WEBHOOK_URL is explicitly set"""
+    if not WEBHOOK_URL:
+        return  # Skip legacy webhook, use dashboard_bridge instead
     try:
         r = requests.post(WEBHOOK_URL, json=payload, timeout=15)
         print(f"[gmail-poller] → posted {r.status_code} {payload.get('email','')} subj='{(payload.get('subject') or '')[:60]}'")

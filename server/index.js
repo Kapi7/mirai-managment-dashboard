@@ -816,6 +816,46 @@ app.put('/api/auth/users/:userId/toggle-admin', async (req, res) => {
   }
 });
 
+// ==================== WEBHOOKS (internal services) ====================
+
+// Webhook - Create support email (from Emma poller)
+app.post('/webhook/support-email', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/webhook/support-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body),
+      signal: AbortSignal.timeout(30000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Webhook support-email error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Webhook - Update support email (from Emma)
+app.patch('/webhook/support-email/:emailId', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/webhook/support-email/${req.params.emailId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body),
+      signal: AbortSignal.timeout(30000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Webhook support-email update error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ==================== SUPPORT INBOX ====================
 
 // Support - Get emails list
