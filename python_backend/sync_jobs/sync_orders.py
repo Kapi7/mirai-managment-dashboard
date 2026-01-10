@@ -284,6 +284,70 @@ class SyncOrders(BaseSyncJob):
 
             print(f"  ✅ Synced {self.records_synced} orders for {store_key}")
 
+        # Also sync PSP fees for the same date range
+        await self._sync_psp_fees()
+
+    async def _sync_psp_fees(self):
+        """Sync PSP fees from Shopify Payments for the same date range as orders"""
+        from datetime import date
+        from database.models import DailyPspFee
+
+        try:
+            # Import PSP fee fetcher
+            import sys
+            import os
+            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from psp_fee import get_psp_fees_daily
+
+            end_date = date.today()
+            start_date = end_date - timedelta(days=self.days_back)
+
+            print(f"💳 Syncing PSP fees: {start_date} to {end_date}")
+
+            psp_fees = get_psp_fees_daily(start_date, end_date)
+
+            if not psp_fees:
+                print("  ⚠️ No PSP fees found")
+                return
+
+            print(f"  Found {len(psp_fees)} days with PSP fees")
+
+            async with get_db() as db:
+                for fee_date, fee_amount in psp_fees.items():
+                    try:
+                        # Check if record exists
+                        result = await db.execute(
+                            select(DailyPspFee).where(
+                                DailyPspFee.date == fee_date,
+                                DailyPspFee.store_id == self.store_id
+                            )
+                        )
+                        existing = result.scalar_one_or_none()
+
+                        if existing:
+                            existing.fee_amount = fee_amount
+                            existing.created_at = datetime.utcnow()
+                        else:
+                            psp_record = DailyPspFee(
+                                date=fee_date,
+                                store_id=self.store_id,
+                                fee_amount=fee_amount,
+                                currency='USD'
+                            )
+                            db.add(psp_record)
+                    except Exception as e:
+                        print(f"  ⚠️ Error processing PSP fee {fee_date}: {e}")
+                        continue
+
+                await db.commit()
+
+            print(f"  ✅ Synced {len(psp_fees)} PSP fee records")
+
+        except Exception as e:
+            print(f"  ⚠️ PSP fee sync failed: {e}")
+            import traceback
+            traceback.print_exc()
+
 
 if __name__ == "__main__":
     import argparse
