@@ -1349,9 +1349,12 @@ def run_gpt_with_tools(messages: List[Dict[str,str]], geo: Optional[str]=None) -
 # Public API
 # ──────────────────────────────────────────────────────────────────────────────
 def respond_as_emma(first_name: str, cart_items: List[str], customer_msg: str,
-                    history: List[Dict[str, Any]] = [], first_contact: bool=False,
+                    history: Optional[List[Dict[str, Any]]] = None, first_contact: bool=False,
                     geo: Optional[str]=None, style_mode: Optional[str]=None,
                     customer_email: Optional[str]=None) -> str:
+    # Fix mutable default argument
+    if history is None:
+        history = []
     inferred_geo = infer_geo_from_text(customer_msg, fallback=geo or "EU")
     set_geo(inferred_geo)
 
