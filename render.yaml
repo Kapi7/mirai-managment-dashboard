@@ -30,6 +30,40 @@ services:
       - key: GMAIL_USER_EMAIL
         sync: false
 
+  # Emma AI Sales & Support Agent
+  - type: web
+    name: emma-service
+    env: python
+    buildCommand: cd emma_service && pip install --no-cache-dir -r requirements.txt
+    startCommand: cd emma_service && uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11
+      # OpenAI for Emma AI
+      - key: OPENAI_API_KEY
+        sync: false
+      # Mirai Dashboard connection
+      - key: MIRAI_DATABASE_URL
+        fromDatabase:
+          name: mirai-db
+          property: connectionString
+      - key: MIRAI_DASHBOARD_URL
+        value: https://mirai-managment-dashboard.onrender.com
+      # Gmail IMAP for email polling
+      - key: INBOUND_EMAIL_USER
+        sync: false
+      - key: INBOUND_EMAIL_PASS
+        sync: false
+      - key: INBOUND_IMAP_HOST
+        value: imap.gmail.com
+      - key: INBOUND_POLL_SECONDS
+        value: "30"
+      # Shopify for customer context
+      - key: SHOPIFY_STORE_DOMAIN
+        sync: false
+      - key: SHOPIFY_ADMIN_TOKEN
+        sync: false
+
 # Database
 databases:
   - name: mirai-db
