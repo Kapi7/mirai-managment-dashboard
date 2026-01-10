@@ -319,7 +319,7 @@ def push_email_to_dashboard(
         return {"success": False, "error": "MIRAI_DASHBOARD_URL not configured"}
 
     try:
-        url = f"{MIRAI_DASHBOARD_URL}/api/support/emails"
+        url = f"{MIRAI_DASHBOARD_URL}/support/emails"
         payload = {
             "thread_id": thread_id,
             "message_id": message_id,
@@ -364,7 +364,7 @@ def update_email_draft(
         return {"success": False, "error": "MIRAI_DASHBOARD_URL not configured"}
 
     try:
-        url = f"{MIRAI_DASHBOARD_URL}/api/support/emails/{email_id}"
+        url = f"{MIRAI_DASHBOARD_URL}/support/emails/{email_id}"
         payload = {"ai_draft": ai_draft}
 
         if classification:
