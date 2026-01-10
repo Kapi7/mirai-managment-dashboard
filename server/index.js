@@ -816,6 +816,128 @@ app.put('/api/auth/users/:userId/toggle-admin', async (req, res) => {
   }
 });
 
+// ==================== SUPPORT INBOX ====================
+
+// Support - Get emails list
+app.get('/api/support/emails', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const queryString = new URLSearchParams(req.query).toString();
+    const response = await fetch(`${pythonBackendUrl}/support/emails${queryString ? '?' + queryString : ''}`, {
+      headers: {
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(15000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Support emails fetch error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Support - Get single email
+app.get('/api/support/emails/:emailId', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/support/emails/${req.params.emailId}`, {
+      headers: {
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Support email detail error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Support - Update email (PATCH)
+app.patch('/api/support/emails/:emailId', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/support/emails/${req.params.emailId}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': req.headers.authorization || ''
+      },
+      body: JSON.stringify(req.body),
+      signal: AbortSignal.timeout(10000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Support email update error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Support - Approve email
+app.post('/api/support/emails/:emailId/approve', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/support/emails/${req.params.emailId}/approve`, {
+      method: 'POST',
+      headers: {
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Support email approve error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Support - Reject email
+app.post('/api/support/emails/:emailId/reject', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/support/emails/${req.params.emailId}/reject`, {
+      method: 'POST',
+      headers: {
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Support email reject error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Support - Get stats
+app.get('/api/support/stats', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/support/stats`, {
+      headers: {
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Support stats error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
