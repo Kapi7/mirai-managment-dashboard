@@ -32,25 +32,73 @@ MIRAI_API_TOKEN = os.getenv("MIRAI_API_TOKEN", "").strip()
 
 # Known supplier/non-customer email patterns (skip AI draft for these)
 SUPPLIER_EMAIL_PATTERNS = [
+    # Suppliers
     "@korealy.com",
     "@korealy.co",
+
+    # Generic automated
     "noreply@",
     "no-reply@",
+    "donotreply@",
+    "do-not-reply@",
     "notifications@",
-    "support@shopify.com",
+    "notification@",
+    "alert@",
+    "alerts@",
+    "automated@",
+    "system@",
     "mailer-daemon@",
     "postmaster@",
+
+    # Social Media (NOT customers)
+    "@pinterest.com",
+    "@pin.pinterest.com",
+    "@facebookmail.com",
+    "@facebook.com",
+    "@instagram.com",
+    "@tiktok.com",
+    "@twitter.com",
+    "@x.com",
+    "@linkedin.com",
+    "@youtube.com",
+
+    # Marketing platforms
     "@klaviyo.com",
     "@mailchimp.com",
     "@sendgrid.net",
-    "automated@",
-    "system@",
-    "@googlemail.com" if False else None,  # Placeholder
+    "@mailgun.net",
+    "@constantcontact.com",
+    "@hubspot.com",
+    "@salesforce.com",
+
+    # E-commerce platforms
+    "support@shopify.com",
+    "@shopify.com",
+    "@bigcommerce.com",
+    "@wix.com",
+
+    # Payment processors
+    "@paypal.com",
+    "@stripe.com",
+    "@square.com",
+
+    # Google services
+    "@google.com",
+    "@googlemail.com",
+    "@googlecommerce.com",
+    "calendar-notification@",
+
+    # Other automated services
+    "@zendesk.com",
+    "@intercom.com",
+    "@freshdesk.com",
+    "@helpscout.com",
 ]
 SUPPLIER_EMAIL_PATTERNS = [p for p in SUPPLIER_EMAIL_PATTERNS if p]  # Remove None
 
 # Keywords that indicate supplier/business email (not customer)
 SUPPLIER_SUBJECT_KEYWORDS = [
+    # Supplier/B2B
     "invoice",
     "payment received",
     "order confirmation from",  # From suppliers, not TO customers
@@ -63,6 +111,31 @@ SUPPLIER_SUBJECT_KEYWORDS = [
     "stock update",
     "price list",
     "catalog",
+
+    # Social media notifications
+    "someone saved your pin",
+    "your pin was saved",
+    "new follower",
+    "mentioned you",
+    "tagged you",
+    "commented on your",
+    "liked your",
+    "shared your",
+    "new message on facebook",
+    "new connection",
+
+    # Marketing/Platform
+    "your weekly stats",
+    "your monthly report",
+    "analytics report",
+    "performance report",
+    "verify your email",
+    "confirm your email",
+    "password reset",
+    "security alert",
+    "sign-in attempt",
+    "two-factor",
+    "2fa code",
 ]
 
 def is_customer_email(email_address: str, subject: str = "", content: str = "") -> dict:
@@ -324,6 +397,105 @@ def get_customer_orders(email: str, limit: int = 10) -> List[Dict[str, Any]]:
         return []
     finally:
         session.close()
+
+
+def get_order_with_tracking(order_name: str) -> Optional[Dict[str, Any]]:
+    """
+    Get order details including tracking info from Shopify.
+    This makes a direct Shopify API call to get fulfillment/tracking data.
+    """
+    import os
+
+    shopify_token = os.getenv("SHOPIFY_ACCESS_TOKEN") or os.getenv("SHOPIFY_ADMIN_TOKEN")
+    shopify_store = os.getenv("SHOPIFY_STORE_URL") or os.getenv("SHOPIFY_STORE")
+
+    if not shopify_token or not shopify_store:
+        # Fall back to database lookup
+        order = get_order_by_name(order_name)
+        if order:
+            order["tracking_info"] = None
+            order["tracking_message"] = "Tracking lookup requires Shopify API configuration"
+        return order
+
+    # Clean up store URL
+    store_domain = shopify_store.replace("https://", "").replace("http://", "").split("/")[0]
+    if not store_domain.endswith(".myshopify.com"):
+        store_domain = f"{store_domain}.myshopify.com"
+
+    # Normalize order name
+    if not order_name.startswith("#"):
+        order_name = f"#{order_name}"
+    order_number = order_name.replace("#", "")
+
+    try:
+        # Search for order by name
+        url = f"https://{store_domain}/admin/api/2024-01/orders.json"
+        params = {"name": order_name, "status": "any"}
+        headers = {"X-Shopify-Access-Token": shopify_token}
+
+        response = requests.get(url, params=params, headers=headers, timeout=15)
+
+        if not response.ok:
+            print(f"[dashboard_bridge] Shopify order lookup failed: {response.status_code}")
+            return get_order_by_name(order_name)
+
+        data = response.json()
+        orders = data.get("orders", [])
+
+        if not orders:
+            return get_order_by_name(order_name)
+
+        order = orders[0]
+
+        # Extract tracking info from fulfillments
+        fulfillments = order.get("fulfillments", [])
+        tracking_info = None
+        tracking_numbers = []
+        tracking_urls = []
+
+        for f in fulfillments:
+            if f.get("tracking_number"):
+                tracking_numbers.append(f.get("tracking_number"))
+            if f.get("tracking_url"):
+                tracking_urls.append(f.get("tracking_url"))
+            if f.get("tracking_numbers"):
+                tracking_numbers.extend(f.get("tracking_numbers", []))
+            if f.get("tracking_urls"):
+                tracking_urls.extend(f.get("tracking_urls", []))
+
+        if tracking_numbers:
+            tracking_info = {
+                "tracking_numbers": list(set(tracking_numbers)),
+                "tracking_urls": list(set(tracking_urls)),
+                "carrier": fulfillments[0].get("tracking_company") if fulfillments else None,
+                "fulfillment_status": order.get("fulfillment_status"),
+                "shipped_at": fulfillments[0].get("created_at") if fulfillments else None
+            }
+
+        return {
+            "order_name": order.get("name"),
+            "order_id": order.get("id"),
+            "created_at": order.get("created_at"),
+            "financial_status": order.get("financial_status"),
+            "fulfillment_status": order.get("fulfillment_status"),
+            "total_price": order.get("total_price"),
+            "currency": order.get("currency"),
+            "customer_email": order.get("email"),
+            "customer_name": f"{order.get('customer', {}).get('first_name', '')} {order.get('customer', {}).get('last_name', '')}".strip(),
+            "shipping_address": {
+                "city": order.get("shipping_address", {}).get("city"),
+                "country": order.get("shipping_address", {}).get("country"),
+            } if order.get("shipping_address") else None,
+            "tracking_info": tracking_info,
+            "line_items": [
+                {"title": item.get("title"), "quantity": item.get("quantity")}
+                for item in order.get("line_items", [])[:5]  # First 5 items
+            ]
+        }
+
+    except Exception as e:
+        print(f"[dashboard_bridge] get_order_with_tracking error: {e}")
+        return get_order_by_name(order_name)
 
 
 def get_order_by_name(order_name: str) -> Optional[Dict[str, Any]]:

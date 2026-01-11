@@ -703,20 +703,201 @@ def tool_get_order_details(order_name: str) -> Dict[str, Any]:
         return {"found": False, "error": str(e)}
 
 
+def tool_get_customer_profile(email: str) -> Dict[str, Any]:
+    """
+    Get complete customer profile from Shopify.
+    Returns order history, total spent, location, loyalty status.
+    """
+    try:
+        from dashboard_bridge import get_customer_orders
+
+        # Get order history
+        orders = get_customer_orders(email, limit=10)
+
+        if not orders:
+            return {
+                "found": False,
+                "is_new_customer": True,
+                "message": "No order history found - this might be a new customer",
+                "guidance": "Welcome them warmly, be educational, answer questions patiently"
+            }
+
+        # Calculate customer insights
+        total_orders = len(orders)
+        total_spent = sum(o.get("gross", 0) for o in orders)
+        countries = list(set(o.get("country") for o in orders if o.get("country")))
+        is_returning = any(o.get("is_returning") for o in orders)
+
+        # Determine loyalty status
+        if total_orders >= 5 or total_spent >= 500:
+            loyalty_status = "VIP"
+            loyalty_guidance = "This is a VIP customer! Show extra appreciation, consider offering exclusive deals"
+        elif total_orders >= 3 or total_spent >= 200:
+            loyalty_status = "Loyal"
+            loyalty_guidance = "Loyal customer - they trust us. Thank them for their continued support"
+        elif total_orders >= 2:
+            loyalty_status = "Returning"
+            loyalty_guidance = "They came back! Acknowledge their return, make them feel valued"
+        else:
+            loyalty_status = "New"
+            loyalty_guidance = "First-time customer. Make a great impression, be helpful and welcoming"
+
+        # Get most recent order details
+        latest = orders[0]
+        latest_products = []  # Would need to fetch from order details
+
+        return {
+            "found": True,
+            "email": email,
+            "total_orders": total_orders,
+            "total_spent": round(total_spent, 2),
+            "loyalty_status": loyalty_status,
+            "loyalty_guidance": loyalty_guidance,
+            "is_returning_customer": is_returning,
+            "countries": countries,
+            "latest_order": {
+                "order_name": latest.get("order_name"),
+                "date": latest.get("created_at", "")[:10] if latest.get("created_at") else None,
+                "amount": latest.get("gross")
+            },
+            "all_orders": [
+                {
+                    "order_name": o.get("order_name"),
+                    "date": o.get("created_at", "")[:10] if o.get("created_at") else None,
+                    "amount": o.get("gross"),
+                    "country": o.get("country")
+                }
+                for o in orders[:5]  # Last 5 orders
+            ]
+        }
+
+    except Exception as e:
+        return {"found": False, "error": str(e)}
+
+
+def tool_track_package(tracking_number: str, carrier: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Track a package using tracking number.
+    Uses multiple tracking services to get real-time status.
+    """
+    import os
+    import requests
+
+    # Try different tracking methods
+    result = {
+        "tracking_number": tracking_number,
+        "carrier": carrier,
+        "status": "unknown",
+        "status_detail": "",
+        "location": "",
+        "events": []
+    }
+
+    # Method 1: Try 17track API (if configured)
+    api_key_17track = os.getenv("TRACK17_API_KEY")
+    if api_key_17track:
+        try:
+            response = requests.post(
+                "https://api.17track.net/track/v2/gettracklist",
+                headers={"17token": api_key_17track},
+                json=[{"number": tracking_number, "carrier": 0}],
+                timeout=10
+            )
+            if response.ok:
+                data = response.json()
+                if data.get("data") and data["data"].get("accepted"):
+                    track_info = data["data"]["accepted"][0]
+                    result["status"] = track_info.get("track", {}).get("z", "in_transit")
+                    result["status_detail"] = track_info.get("track", {}).get("z1", "")
+                    events = track_info.get("track", {}).get("z2", [])
+                    if events:
+                        result["events"] = events[:5]
+                        result["location"] = events[0].get("a", "") if events else ""
+                    return result
+        except Exception as e:
+            print(f"[track_package] 17track error: {e}")
+
+    # Method 2: Try AfterShip API (if configured)
+    api_key_aftership = os.getenv("AFTERSHIP_API_KEY")
+    if api_key_aftership:
+        try:
+            response = requests.get(
+                f"https://api.aftership.com/v4/trackings/{tracking_number}",
+                headers={"aftership-api-key": api_key_aftership},
+                timeout=10
+            )
+            if response.ok:
+                data = response.json()
+                tracking = data.get("data", {}).get("tracking", {})
+                result["status"] = tracking.get("tag", "InTransit")
+                result["status_detail"] = tracking.get("subtag_message", "")
+                result["carrier"] = tracking.get("slug", carrier)
+                checkpoints = tracking.get("checkpoints", [])
+                if checkpoints:
+                    latest = checkpoints[-1]
+                    result["location"] = latest.get("city", "") or latest.get("location", "")
+                    result["events"] = [
+                        {"date": c.get("checkpoint_time"), "status": c.get("message"), "location": c.get("location")}
+                        for c in checkpoints[-5:]
+                    ]
+                return result
+        except Exception as e:
+            print(f"[track_package] AfterShip error: {e}")
+
+    # Method 3: Return guidance if no tracking API configured
+    # Determine likely carrier from tracking number format
+    if not carrier:
+        if tracking_number.startswith("RR") or tracking_number.startswith("RB"):
+            carrier = "Korea Post (EMS)"
+        elif tracking_number.startswith("1Z"):
+            carrier = "UPS"
+        elif len(tracking_number) == 10 and tracking_number.isdigit():
+            carrier = "DHL"
+        else:
+            carrier = "International carrier"
+
+    result["carrier"] = carrier
+    result["status"] = "tracking_available"
+    result["status_detail"] = "Real-time tracking not available. Customer can track at carrier website."
+    result["tracking_url"] = _get_tracking_url(tracking_number, carrier)
+    result["guidance"] = "Provide the tracking number and URL to customer. They can check status directly."
+
+    return result
+
+
+def _get_tracking_url(tracking_number: str, carrier: str) -> str:
+    """Get tracking URL for common carriers."""
+    carrier_lower = carrier.lower() if carrier else ""
+
+    if "korea post" in carrier_lower or "ems" in carrier_lower:
+        return f"https://service.epost.go.kr/trace.RetrieveEmsRi498Int.parcel?POST_CODE={tracking_number}"
+    elif "dhl" in carrier_lower:
+        return f"https://www.dhl.com/en/express/tracking.html?AWB={tracking_number}"
+    elif "ups" in carrier_lower:
+        return f"https://www.ups.com/track?tracknum={tracking_number}"
+    elif "fedex" in carrier_lower:
+        return f"https://www.fedex.com/fedextrack/?tracknumbers={tracking_number}"
+    else:
+        # Universal tracker
+        return f"https://parcelsapp.com/en/tracking/{tracking_number}"
+
+
 def tool_check_order_status(email: str, order_name: Optional[str] = None) -> Dict[str, Any]:
     """
     Check order status and provide guidance on expected timeline.
-    This is a smarter version of get_customer_orders that includes
-    timeline calculations and appropriate response guidance.
+    This is a smarter version that includes:
+    - Timeline calculations
+    - Tracking info from Shopify
+    - Appropriate response guidance
     """
-    from datetime import datetime, timedelta
+    from datetime import datetime
 
     try:
-        from dashboard_bridge import get_customer_orders, get_order_by_name
+        from dashboard_bridge import get_customer_orders, get_order_with_tracking
 
-        # If specific order provided, look it up
+        # If specific order provided, look it up with tracking
         if order_name:
-            order = get_order_by_name(order_name)
+            order = get_order_with_tracking(order_name)
             if order:
                 orders = [order]
             else:
@@ -772,7 +953,20 @@ def tool_check_order_status(email: str, order_name: Optional[str] = None) -> Dic
             except Exception as e:
                 guidance = "Could not calculate order timeline. Please check order details manually."
 
-        return {
+        # Include tracking info if available (from Shopify lookup)
+        tracking_info = latest.get("tracking_info")
+        tracking_guidance = None
+
+        if tracking_info:
+            tracking_numbers = tracking_info.get("tracking_numbers", [])
+            if tracking_numbers:
+                tracking_guidance = f"Tracking available! Number(s): {', '.join(tracking_numbers)}"
+                # If we have tracking, the order has shipped
+                if order_status in ["processing", "likely_shipped"]:
+                    order_status = "shipped"
+                    guidance = "Order has shipped! Share the tracking number with the customer."
+
+        result = {
             "found": True,
             "order_count": len(orders),
             "latest_order": {
@@ -780,16 +974,17 @@ def tool_check_order_status(email: str, order_name: Optional[str] = None) -> Dic
                 "created_at": order_date_str,
                 "days_since_order": days_since_order,
                 "gross": latest.get("gross"),
-                "country": latest.get("country")
+                "country": latest.get("country"),
+                "fulfillment_status": latest.get("fulfillment_status"),
+                "line_items": latest.get("line_items", [])
             },
             "order_status": order_status,
             "guidance": guidance,
-            "policy_reminder": {
-                "processing_time": "3-5 business days",
-                "shipping_time": "7-14 business days",
-                "total_expected": "10-19 business days"
-            }
+            "tracking_info": tracking_info,
+            "tracking_guidance": tracking_guidance
         }
+
+        return result
 
     except Exception as e:
         return {"found": False, "error": str(e)}
@@ -960,6 +1155,19 @@ TOOLS = [
             "order_name":{"type":"string","description":"Optional specific order number if provided"}
         }, "required":["email"]}
     }},
+    {"type":"function","function":{
+        "name":"get_customer_profile","description":"ALWAYS USE THIS FIRST! Get complete customer profile from Shopify - order history, total spent, location, past issues, loyalty status. Essential for understanding who you're talking to.",
+        "parameters":{"type":"object","properties":{
+            "email":{"type":"string","description":"Customer's email address"}
+        }, "required":["email"]}
+    }},
+    {"type":"function","function":{
+        "name":"track_package","description":"Track a package using the tracking number. Returns real-time status: in transit, customs, delivered, etc. Use this to ACTUALLY check where the package is instead of just telling them to wait.",
+        "parameters":{"type":"object","properties":{
+            "tracking_number":{"type":"string","description":"Tracking number from the shipment"},
+            "carrier":{"type":"string","description":"Optional carrier name if known (e.g., 'Korea Post', 'DHL', 'EMS')"}
+        }, "required":["tracking_number"]}
+    }},
 
     # EXPERTISE TOOLS
     {"type":"function","function":{
@@ -1110,50 +1318,62 @@ You know the Mirai Skin catalog intimately. When recommending products:
 - Suggest how to use it in their routine
 - Pair with complementary products that enhance results
 
-## SUPPORT EXCELLENCE - POLICY-BASED RESPONSES
+## SUPPORT EXCELLENCE - BE HUMAN, NOT A BOT
 
-**ALWAYS REFERENCE ACTUAL COMPANY POLICIES when handling support issues:**
+**CRITICAL: You're having a conversation with a real person, not filling out a form.**
 
-### For "Where is my order?" / Tracking Questions:
-1. Look up their order using get_customer_orders with their email
-2. Check when the order was placed
-3. **EXPLAIN THE TIMELINE:**
-   - Processing: 3-5 business days
-   - Shipping: 7-14 business days after dispatch
-   - Total: 10-19 business days is NORMAL
-4. If order is WITHIN the expected window (under 19 days):
-   - Reassure them this is within our normal timeframe
-   - Explain they should receive tracking email within 5 business days of ordering
-   - Ask them to check spam folder for tracking email
-5. If order is OUTSIDE the window (over 19-20 days):
-   - Apologize for the delay
-   - Tell them you'll escalate to check with the warehouse
-   - Provide support email for direct follow-up
+### HUMAN COMMUNICATION RULES:
+1. **DON'T INFO-DUMP** - Never list all policies at once. Answer ONLY what they asked.
+2. **BE CONVERSATIONAL** - Write like you're texting a friend, not reading a manual.
+3. **KNOW YOUR CUSTOMER** - Use get_customer_profile to understand who they are FIRST
+4. **ACTUALLY HELP** - If they ask about tracking, USE track_package to check it, don't just tell them to wait.
+5. **ONE THING AT A TIME** - Solve their immediate concern, then offer more help.
 
-### For Return/Refund Questions:
-- Emphasize the generous 180-day return policy!
-- Item must be unopened and unused
-- Customer must email support@mirai-skin.com FIRST for approval
-- Customer pays return shipping
-- Refund processed within 10 business days after we receive the item
+### BAD vs GOOD Examples:
 
-### For Damaged/Wrong Item:
-- Express genuine concern
-- Ask for photos of the damage
-- Offer clear options: FREE replacement OR full refund
-- Mirai covers all costs for these cases
+**BAD (Robotic):**
+"I see your order #2242 was placed on December 30, 2025. Our processing time is 3-5 business days, followed by 7-14 business days for international shipping from our South Korea warehouse. Total delivery time is 10-19 business days. Free shipping is available on orders over $80..."
 
-### For Customs/Duties Questions:
-- Be transparent: duties are customer's responsibility
-- This is standard for international orders
-- We cannot predict or pay customs fees
-- Advise checking local customs regulations
+**GOOD (Human):**
+"Hey Tuyen! I just checked on your order - it's on its way! Let me grab the tracking for you... [checks tracking] It's currently in transit and should arrive within the next few days. Want me to send you the tracking link so you can follow it?"
 
-### NEVER:
-- Make promises we can't keep (like "it will arrive tomorrow")
-- Give shipping timelines shorter than our actual policy
-- Say we'll refund customs duties (we won't)
-- Approve returns without directing them to email support first
+### For Tracking Questions:
+1. First, get their customer profile to understand their history
+2. Use track_package to ACTUALLY CHECK where their order is
+3. Give them real info: "It's in customs" or "It shipped yesterday" or "It's out for delivery"
+4. If tracking shows delay, apologize genuinely and offer to help
+
+### For Returns:
+- Don't recite the policy. Ask what happened and help.
+- "Oh no, what's wrong with it? Let me see how I can help."
+- Then guide them naturally through the process.
+
+### For Damaged Items:
+- Show genuine concern first: "I'm so sorry that happened!"
+- Offer the solution immediately: "We'll get you a replacement right away"
+- Make it easy: "Just send me a quick photo and I'll sort this out for you"
+
+### For Product Questions:
+- FIRST understand what they need (skin concern, current routine)
+- THEN recommend based on their actual situation
+- Don't just list products - explain why THIS product for THEM
+
+### KNOW YOUR CUSTOMER:
+Before responding, use get_customer_profile to know:
+- Are they a first-time buyer or loyal customer?
+- What have they bought before?
+- Where are they located?
+- Have they had any issues before?
+
+**Loyal customers = extra appreciation & maybe special offers**
+**New customers = welcoming, educational**
+**Customer with past issues = extra care and attention**
+
+### POLICIES (Know them, but don't recite them):
+- Shipping: ~2-3 weeks total (say "a couple of weeks" naturally)
+- Returns: 180 days (generous! mention if relevant)
+- Damaged: We fix it, no hassle
+- Customs: Customer pays (only mention if they specifically ask)
 
 ## SALES APPROACH (Helpful, Not Pushy)
 - **Recommend based on needs**, not just to upsell
@@ -1551,6 +1771,10 @@ def run_gpt_with_tools(messages: List[Dict[str,str]], geo: Optional[str]=None) -
                 data = tool_get_order_details(order_name=args.get("order_name", ""))
             elif name == "check_order_status":
                 data = tool_check_order_status(email=args.get("email", ""), order_name=args.get("order_name"))
+            elif name == "get_customer_profile":
+                data = tool_get_customer_profile(email=args.get("email", ""))
+            elif name == "track_package":
+                data = tool_track_package(tracking_number=args.get("tracking_number", ""), carrier=args.get("carrier"))
             # EXPERTISE TOOLS
             elif name == "get_skincare_advice":
                 data = tool_get_skincare_advice(concern=args.get("concern", ""), skin_type=args.get("skin_type"))
