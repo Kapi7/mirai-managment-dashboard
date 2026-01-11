@@ -82,11 +82,11 @@ SUPPLIER_EMAIL_PATTERNS = [
     "@stripe.com",
     "@square.com",
 
-    # Google services
-    "@google.com",
-    "@googlemail.com",
+    # Google services (be specific - googlemail.com is used by real customers!)
+    "noreply@google.com",
+    "no-reply@google.com",
     "@googlecommerce.com",
-    "calendar-notification@",
+    "calendar-notification@google.com",
 
     # Other automated services
     "@zendesk.com",
