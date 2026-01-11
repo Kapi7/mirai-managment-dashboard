@@ -656,6 +656,8 @@ def has_mentioned_welcome(history: List[Dict[str, Any]]) -> bool:
     needle1 = (WELCOME_LABEL or "").strip().lower()
     needle2 = (WELCOME_CODE or "").strip().lower() if WELCOME_CODE else None
     for h in (history or []):
+        if not isinstance(h, dict):
+            continue
         role = (h.get("role") or h.get("sender") or "").lower()
         if role != "emma": continue
         text = (h.get("message") or h.get("content") or h.get("text") or "").lower()
@@ -1219,6 +1221,9 @@ Customer needs QUICK help:
         msgs.append({"role":"system","content":"This is a SUPPORT query. If customer email is available, use get_customer_orders to look up their order history. Be helpful and solution-oriented."})
 
     for h in (history or [])[-10:]:
+        # Skip non-dict items in history
+        if not isinstance(h, dict):
+            continue
         role = (h.get("role") or h.get("sender") or "user").lower()
         content = h.get("message","") or h.get("content","") or h.get("text","")
         if not content: continue

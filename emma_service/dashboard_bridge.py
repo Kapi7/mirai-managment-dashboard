@@ -537,6 +537,20 @@ Priority guide:
 
         import json
         result = json.loads(response.choices[0].message.content)
+
+        # Ensure result is a dict with required fields
+        if not isinstance(result, dict):
+            print(f"[dashboard_bridge] classify_email returned non-dict: {type(result)}")
+            result = {"classification": "support"}
+
+        # Ensure required fields exist
+        if "classification" not in result:
+            result["classification"] = "support"
+        if "intent" not in result:
+            result["intent"] = "general"
+        if "priority" not in result:
+            result["priority"] = "medium"
+
         return result
 
     except Exception as e:
