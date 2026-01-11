@@ -73,6 +73,7 @@ export default function Support() {
   const [manualResponse, setManualResponse] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [showAllEmails, setShowAllEmails] = useState(false);
 
   // Fetch emails
   const fetchEmails = async () => {
@@ -355,13 +356,13 @@ export default function Support() {
         e.customer_name?.toLowerCase().includes(s) ||
         e.subject?.toLowerCase().includes(s)
       );
-    } else {
-      // If not searching, hide supplier/automated emails by default
+    } else if (!showAllEmails) {
+      // If not searching and not showing all, hide supplier/automated emails
       result = result.filter(e => !e.sender_type || e.sender_type === 'customer');
     }
 
     return result;
-  }, [emails, search]);
+  }, [emails, search, showAllEmails]);
 
   // Count including hidden supplier emails
   const supplierCount = useMemo(() => {
@@ -374,12 +375,31 @@ export default function Support() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-slate-900">Email Inbox</h1>
-          <p className="text-slate-500 mt-1">Manage Emma Sales and Support emails</p>
+          <p className="text-slate-500 mt-1">
+            Manage Emma Sales and Support emails
+            {emails.length > 0 && (
+              <span className="ml-2 text-xs">
+                ({filteredEmails.length} shown, {emails.length} total)
+              </span>
+            )}
+          </p>
         </div>
-        <Button onClick={handleRefresh} disabled={isRefreshing}>
-          <RefreshCw className={cn("h-4 w-4 mr-2", isRefreshing && "animate-spin")} />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          {supplierCount > 0 && (
+            <Button
+              variant={showAllEmails ? "default" : "outline"}
+              size="sm"
+              onClick={() => setShowAllEmails(!showAllEmails)}
+              className="text-xs"
+            >
+              {showAllEmails ? 'Hide' : 'Show'} {supplierCount} hidden
+            </Button>
+          )}
+          <Button onClick={handleRefresh} disabled={isRefreshing}>
+            <RefreshCw className={cn("h-4 w-4 mr-2", isRefreshing && "animate-spin")} />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {/* Inbox Selector Tabs */}
