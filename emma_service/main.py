@@ -143,6 +143,101 @@ async def analyze_emotion(message: str):
     return detect_emotional_state(message)
 
 
+# ==================== EMAIL DRAFT GENERATION ====================
+
+class EmailDraftRequest(BaseModel):
+    email_id: int
+    customer_email: str
+    customer_name: Optional[str] = None
+    subject: str
+    content: str
+
+
+@app.post("/generate-email-draft")
+async def generate_email_draft(req: EmailDraftRequest):
+    """
+    Generate an AI draft for a support email.
+    Called by the dashboard to regenerate AI responses on demand.
+    """
+    try:
+        from dashboard_bridge import update_email_draft, get_customer_orders
+
+        # Check OpenAI API key
+        openai_key = os.getenv("OPENAI_API_KEY")
+        if not openai_key:
+            # Update status to failed
+            update_email_draft(
+                email_id=req.email_id,
+                ai_draft="",
+                status="draft_failed",
+                draft_error="OPENAI_API_KEY not configured"
+            )
+            return {"success": False, "error": "OPENAI_API_KEY not configured"}
+
+        # Get customer context
+        customer_orders = get_customer_orders(req.customer_email, limit=3)
+
+        # Build history context for Emma
+        history = []
+        if customer_orders:
+            order_summary = f"Previous orders: {len(customer_orders)}. "
+            if customer_orders[0]:
+                order_summary += f"Last order: {customer_orders[0].get('order_name')} on {customer_orders[0].get('created_at', '')[:10]}"
+            history.append({"role": "system", "content": order_summary})
+
+        # Extract first name
+        first_name = ""
+        if req.customer_name:
+            first_name = req.customer_name.split()[0]
+
+        # Generate Emma response
+        ai_draft = respond_as_emma(
+            first_name=first_name,
+            cart_items=[],
+            customer_msg=req.content,
+            history=history,
+            first_contact=False,
+            geo=None,
+            style_mode="soft",
+            customer_email=req.customer_email
+        )
+
+        if ai_draft:
+            # Update the email with the draft
+            update_email_draft(
+                email_id=req.email_id,
+                ai_draft=ai_draft,
+                status="draft_ready"
+            )
+            return {"success": True, "draft_length": len(ai_draft)}
+        else:
+            update_email_draft(
+                email_id=req.email_id,
+                ai_draft="",
+                status="draft_empty",
+                draft_error="Emma returned empty response"
+            )
+            return {"success": False, "error": "Emma returned empty response"}
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+
+        # Try to update status to failed
+        try:
+            from dashboard_bridge import update_email_draft
+            update_email_draft(
+                email_id=req.email_id,
+                ai_draft="",
+                status="draft_failed",
+                draft_error=str(e)
+            )
+        except:
+            pass
+
+        return {"success": False, "error": str(e)}
+
+
 # ==================== STARTUP ====================
 
 @app.on_event("startup")

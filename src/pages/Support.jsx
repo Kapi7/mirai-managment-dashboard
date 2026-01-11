@@ -211,6 +211,33 @@ export default function Support() {
     }
   };
 
+  // Regenerate AI response
+  const [isRegenerating, setIsRegenerating] = useState(false);
+  const handleRegenerateAI = async () => {
+    if (!selectedEmail) return;
+    setIsRegenerating(true);
+    try {
+      const response = await fetch(`${API_URL}/support/emails/${selectedEmail.id}/regenerate`, {
+        method: 'POST'
+      });
+      const data = await response.json();
+      if (data.success) {
+        // Wait a moment then refresh to see the new draft
+        setTimeout(() => {
+          fetchEmailDetail(selectedEmail.id);
+          handleRefresh();
+        }, 2000);
+      } else {
+        console.error('Failed to regenerate:', data.error);
+        alert(`Failed to generate AI response: ${data.error || 'Unknown error'}`);
+      }
+    } catch (err) {
+      console.error('Failed to regenerate:', err);
+      alert('Failed to generate AI response. Please try again.');
+    }
+    setIsRegenerating(false);
+  };
+
   // Status badge
   const getStatusBadge = (status) => {
     const variants = {
@@ -694,10 +721,18 @@ export default function Support() {
                     Awaiting AI Draft
                   </h4>
                   <p className="text-sm text-yellow-700">
-                    AI is processing. You can wait or write a manual response.
+                    AI draft not yet generated. Click below to generate or write a manual response.
                   </p>
+                  <Button
+                    onClick={handleRegenerateAI}
+                    disabled={isRegenerating}
+                    className="w-full bg-purple-600 hover:bg-purple-700"
+                  >
+                    <Sparkles className="h-4 w-4 mr-2" />
+                    {isRegenerating ? 'Generating...' : 'Generate AI Response'}
+                  </Button>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Manual response:</label>
+                    <label className="text-sm font-medium">Or write a manual response:</label>
                     <Textarea
                       value={manualResponse}
                       onChange={(e) => setManualResponse(e.target.value)}
@@ -716,10 +751,19 @@ export default function Support() {
                     AI Draft Generation Failed
                   </h4>
                   <p className="text-sm text-red-700">
-                    The AI couldn't generate a draft for this email. Please write a manual response.
+                    The AI couldn't generate a draft for this email. Try again or write a manual response.
                   </p>
+                  <Button
+                    onClick={handleRegenerateAI}
+                    disabled={isRegenerating}
+                    variant="outline"
+                    className="w-full border-red-300 text-red-700 hover:bg-red-100"
+                  >
+                    <Sparkles className="h-4 w-4 mr-2" />
+                    {isRegenerating ? 'Retrying...' : 'Retry AI Generation'}
+                  </Button>
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Manual response:</label>
+                    <label className="text-sm font-medium">Or write a manual response:</label>
                     <Textarea
                       value={manualResponse}
                       onChange={(e) => setManualResponse(e.target.value)}

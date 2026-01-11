@@ -2189,6 +2189,85 @@ async def reject_support_email(email_id: int, user: dict = Depends(get_current_u
         return {"success": True, "message": "Email rejected"}
 
 
+@app.post("/support/emails/{email_id}/regenerate")
+async def regenerate_ai_response(email_id: int, user: dict = Depends(get_current_user)):
+    """Regenerate AI draft for an email by calling Emma service"""
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    import httpx
+    from database.connection import get_db
+    from database.models import SupportEmail, SupportMessage
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    async with get_db() as db:
+        result = await db.execute(
+            select(SupportEmail)
+            .options(selectinload(SupportEmail.messages))
+            .where(SupportEmail.id == email_id)
+        )
+        email = result.scalar_one_or_none()
+
+        if not email:
+            raise HTTPException(status_code=404, detail="Email not found")
+
+        # Get the latest inbound message
+        inbound_msgs = [m for m in email.messages if m.direction == "inbound"]
+        if not inbound_msgs:
+            raise HTTPException(status_code=400, detail="No inbound message to respond to")
+
+        latest_msg = inbound_msgs[-1]
+
+        # Set status to pending while generating
+        email.status = "pending"
+        await db.commit()
+
+    # Call Emma service to regenerate the AI response
+    emma_url = os.getenv("EMMA_SERVICE_URL", "https://emma-service.onrender.com")
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"{emma_url}/generate-email-draft",
+                json={
+                    "email_id": email_id,
+                    "customer_email": email.customer_email,
+                    "customer_name": email.customer_name,
+                    "subject": email.subject,
+                    "content": latest_msg.content
+                }
+            )
+
+            if response.status_code == 200:
+                return {"success": True, "message": "AI response generation started"}
+            else:
+                # Update status to failed
+                async with get_db() as db:
+                    result = await db.execute(
+                        select(SupportEmail).where(SupportEmail.id == email_id)
+                    )
+                    email = result.scalar_one_or_none()
+                    if email:
+                        email.status = "draft_failed"
+                        await db.commit()
+
+                return {"success": False, "error": f"Emma service error: {response.status_code}"}
+
+    except Exception as e:
+        # Update status to failed
+        async with get_db() as db:
+            result = await db.execute(
+                select(SupportEmail).where(SupportEmail.id == email_id)
+            )
+            email = result.scalar_one_or_none()
+            if email:
+                email.status = "draft_failed"
+                await db.commit()
+
+        return {"success": False, "error": str(e)}
+
+
 @app.get("/support/stats")
 async def get_support_stats(user: dict = Depends(get_current_user)):
     """Get support dashboard statistics with detailed analytics"""
