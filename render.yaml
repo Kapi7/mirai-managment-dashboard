@@ -63,6 +63,9 @@ services:
         sync: false
       - key: SHOPIFY_ADMIN_TOKEN
         sync: false
+      # AfterShip for package tracking
+      - key: AFTERSHIP_API_KEY
+        sync: false
 
 # Database
 databases:
