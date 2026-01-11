@@ -1753,7 +1753,10 @@ async def list_support_emails(
     user: dict = Depends(get_current_user)
 ):
     """List support emails with optional filters"""
+    print(f"📧 [support/emails] DB_SERVICE_AVAILABLE={DB_SERVICE_AVAILABLE}, status={status}, inbox_type={inbox_type}")
+
     if not DB_SERVICE_AVAILABLE:
+        print("📧 [support/emails] Database service not available")
         return {"emails": [], "total": 0, "message": "Database not available"}
 
     from database.connection import get_db
@@ -1761,67 +1764,77 @@ async def list_support_emails(
     from sqlalchemy import select, func, desc
     from sqlalchemy.orm import selectinload
 
-    async with get_db() as db:
-        # Build query
-        query = select(SupportEmail).options(
-            selectinload(SupportEmail.messages)
-        ).order_by(desc(SupportEmail.received_at))
+    try:
+        async with get_db() as db:
+            # Build query
+            query = select(SupportEmail).options(
+                selectinload(SupportEmail.messages)
+            ).order_by(desc(SupportEmail.received_at))
 
-        # Apply filters
-        if status:
-            query = query.where(SupportEmail.status == status)
-        if classification:
-            query = query.where(SupportEmail.classification == classification)
-        if inbox_type:
-            query = query.where(SupportEmail.inbox_type == inbox_type)
+            # Apply filters
+            if status:
+                query = query.where(SupportEmail.status == status)
+            if classification:
+                query = query.where(SupportEmail.classification == classification)
+            if inbox_type:
+                query = query.where(SupportEmail.inbox_type == inbox_type)
 
-        # Get total count
-        count_query = select(func.count(SupportEmail.id))
-        if status:
-            count_query = count_query.where(SupportEmail.status == status)
-        if classification:
-            count_query = count_query.where(SupportEmail.classification == classification)
-        if inbox_type:
-            count_query = count_query.where(SupportEmail.inbox_type == inbox_type)
-        total_result = await db.execute(count_query)
-        total = total_result.scalar() or 0
+            # Get total count
+            count_query = select(func.count(SupportEmail.id))
+            if status:
+                count_query = count_query.where(SupportEmail.status == status)
+            if classification:
+                count_query = count_query.where(SupportEmail.classification == classification)
+            if inbox_type:
+                count_query = count_query.where(SupportEmail.inbox_type == inbox_type)
+            total_result = await db.execute(count_query)
+            total = total_result.scalar() or 0
 
-        # Apply pagination
-        query = query.offset(offset).limit(limit)
+            # Apply pagination
+            query = query.offset(offset).limit(limit)
 
-        result = await db.execute(query)
-        emails = result.scalars().all()
+            result = await db.execute(query)
+            emails = result.scalars().all()
 
-        return {
-            "emails": [
-                {
-                    "id": e.id,
-                    "thread_id": e.thread_id,
-                    "customer_email": e.customer_email,
-                    "customer_name": e.customer_name,
-                    "subject": e.subject,
-                    "status": e.status,
-                    "classification": e.classification,
-                    "intent": e.intent,
-                    "priority": e.priority,
-                    "sales_opportunity": e.sales_opportunity,
-                    "inbox_type": e.inbox_type,
-                    "sender_type": getattr(e, 'sender_type', 'customer'),
-                    "ai_confidence": float(e.ai_confidence) if e.ai_confidence else None,
-                    "received_at": e.received_at.isoformat() if e.received_at else None,
-                    "messages_count": len(e.messages),
-                    "latest_message": e.messages[-1].content[:200] if e.messages else None,
-                    "ai_draft": e.messages[-1].ai_draft if e.messages and e.messages[-1].ai_draft else None
-                }
-                for e in emails
-            ],
-            "total": total
-        }
+            print(f"📧 [support/emails] Found {len(emails)} emails, total={total}")
+
+            return {
+                "emails": [
+                    {
+                        "id": e.id,
+                        "thread_id": e.thread_id,
+                        "customer_email": e.customer_email,
+                        "customer_name": e.customer_name,
+                        "subject": e.subject,
+                        "status": e.status,
+                        "classification": e.classification,
+                        "intent": e.intent,
+                        "priority": e.priority,
+                        "sales_opportunity": e.sales_opportunity,
+                        "inbox_type": e.inbox_type,
+                        "sender_type": getattr(e, 'sender_type', 'customer'),
+                        "ai_confidence": float(e.ai_confidence) if e.ai_confidence else None,
+                        "received_at": e.received_at.isoformat() if e.received_at else None,
+                        "messages_count": len(e.messages),
+                        "latest_message": e.messages[-1].content[:200] if e.messages else None,
+                        "ai_draft": e.messages[-1].ai_draft if e.messages and e.messages[-1].ai_draft else None
+                    }
+                    for e in emails
+                ],
+                "total": total
+            }
+    except Exception as e:
+        print(f"❌ [support/emails] Database error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"emails": [], "total": 0, "error": str(e)}
 
 
 @app.get("/support/emails/{email_id}")
 async def get_support_email(email_id: int, user: dict = Depends(get_current_user)):
     """Get a single support email with all messages"""
+    print(f"📧 [support/emails/{email_id}] DB_SERVICE_AVAILABLE={DB_SERVICE_AVAILABLE}")
+
     if not DB_SERVICE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
@@ -1830,47 +1843,57 @@ async def get_support_email(email_id: int, user: dict = Depends(get_current_user
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
 
-    async with get_db() as db:
-        result = await db.execute(
-            select(SupportEmail)
-            .options(selectinload(SupportEmail.messages))
-            .where(SupportEmail.id == email_id)
-        )
-        email = result.scalar_one_or_none()
+    try:
+        async with get_db() as db:
+            result = await db.execute(
+                select(SupportEmail)
+                .options(selectinload(SupportEmail.messages))
+                .where(SupportEmail.id == email_id)
+            )
+            email = result.scalar_one_or_none()
 
-        if not email:
-            raise HTTPException(status_code=404, detail="Email not found")
+            print(f"📧 [support/emails/{email_id}] Found email: {email is not None}")
 
-        return {
-            "id": email.id,
-            "thread_id": email.thread_id,
-            "customer_email": email.customer_email,
-            "customer_name": email.customer_name,
-            "subject": email.subject,
-            "status": email.status,
-            "classification": email.classification,
-            "intent": email.intent,
-            "priority": email.priority,
-            "sales_opportunity": email.sales_opportunity,
-            "ai_confidence": float(email.ai_confidence) if email.ai_confidence else None,
-            "received_at": email.received_at.isoformat() if email.received_at else None,
-            "created_at": email.created_at.isoformat() if email.created_at else None,
-            "messages": [
-                {
-                    "id": m.id,
-                    "direction": m.direction,
-                    "sender_email": m.sender_email,
-                    "sender_name": m.sender_name,
-                    "content": m.content,
-                    "ai_draft": m.ai_draft,
-                    "ai_reasoning": m.ai_reasoning,
-                    "final_content": m.final_content,
-                    "sent_at": m.sent_at.isoformat() if m.sent_at else None,
-                    "created_at": m.created_at.isoformat() if m.created_at else None
-                }
-                for m in email.messages
-            ]
-        }
+            if not email:
+                raise HTTPException(status_code=404, detail="Email not found")
+
+            return {
+                "id": email.id,
+                "thread_id": email.thread_id,
+                "customer_email": email.customer_email,
+                "customer_name": email.customer_name,
+                "subject": email.subject,
+                "status": email.status,
+                "classification": email.classification,
+                "intent": email.intent,
+                "priority": email.priority,
+                "sales_opportunity": email.sales_opportunity,
+                "ai_confidence": float(email.ai_confidence) if email.ai_confidence else None,
+                "received_at": email.received_at.isoformat() if email.received_at else None,
+                "created_at": email.created_at.isoformat() if email.created_at else None,
+                "messages": [
+                    {
+                        "id": m.id,
+                        "direction": m.direction,
+                        "sender_email": m.sender_email,
+                        "sender_name": m.sender_name,
+                        "content": m.content,
+                        "ai_draft": m.ai_draft,
+                        "ai_reasoning": m.ai_reasoning,
+                        "final_content": m.final_content,
+                        "sent_at": m.sent_at.isoformat() if m.sent_at else None,
+                        "created_at": m.created_at.isoformat() if m.created_at else None
+                    }
+                    for m in email.messages
+                ]
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ [support/emails/{email_id}] Database error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/webhook/support-email")
