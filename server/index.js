@@ -959,6 +959,26 @@ app.post('/api/support/emails/:emailId/reject', async (req, res) => {
   }
 });
 
+// Support - Regenerate AI response
+app.post('/api/support/emails/:emailId/regenerate', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/support/emails/${req.params.emailId}/regenerate`, {
+      method: 'POST',
+      headers: {
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(60000)  // 60s timeout for AI generation
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Support email regenerate error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Support - Get stats
 app.get('/api/support/stats', async (req, res) => {
   try {

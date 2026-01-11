@@ -126,6 +126,19 @@ export default function Support() {
     setIsRefreshing(false);
   };
 
+  // Fetch email detail (refresh without opening dialog)
+  const fetchEmailDetail = async (emailId) => {
+    try {
+      const response = await fetch(`${API_URL}/support/emails/${emailId}`);
+      if (!response.ok) throw new Error('Failed to fetch email details');
+      const data = await response.json();
+      setSelectedEmail(data);
+      setEditDraft(data.messages?.find(m => m.ai_draft)?.ai_draft || '');
+    } catch (err) {
+      console.error('Failed to fetch email:', err);
+    }
+  };
+
   // Open email detail
   const openEmailDetail = async (email) => {
     try {
