@@ -73,36 +73,30 @@ databases:
 
 # Cron Jobs for database sync
 cron:
-  # Sync orders every 3 minutes
-  - name: sync-orders
-    schedule: "*/3 * * * *"
+  # Unified sync (orders, products, Google Ads, Meta Ads) every 5 minutes
+  - name: sync-all
+    schedule: "*/5 * * * *"
     buildCommand: |
       cd python_backend
       pip install --no-cache-dir -r requirements.txt
-    startCommand: cd python_backend && python sync_jobs/sync_orders.py
+    startCommand: cd python_backend && python sync_jobs/sync_all.py
     envVars:
       - key: DATABASE_URL
         fromDatabase:
           name: mirai-db
           property: connectionString
+      # Main store (Mirai Skin)
       - key: SHOPIFY_STORE
         sync: false
       - key: SHOPIFY_ACCESS_TOKEN
         sync: false
-
-  # Sync products every hour
-  - name: sync-products
-    schedule: "0 * * * *"
-    buildCommand: |
-      cd python_backend
-      pip install --no-cache-dir -r requirements.txt
-    startCommand: cd python_backend && python sync_jobs/sync_products.py
-    envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: mirai-db
-          property: connectionString
-      - key: SHOPIFY_STORE
+      # Second store (Cosmetics) - optional
+      - key: SHOPIFY_STORE_2
         sync: false
-      - key: SHOPIFY_ACCESS_TOKEN
+      - key: SHOPIFY_ACCESS_TOKEN_2
+        sync: false
+      # Google Ads
+      - key: GOOGLE_ADS_CONFIG
+        sync: false
+      - key: GOOGLE_ADS_CUSTOMER_IDS
         sync: false

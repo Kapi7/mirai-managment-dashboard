@@ -789,14 +789,15 @@ def clear_competitor_data() -> None:
 
 
 # ================== COMPETITOR SCAN HISTORY ==================
-def log_competitor_scan(variant_id: str, item: str, scan_result: Dict[str, Any]) -> None:
+def log_competitor_scan(variant_id: str, item: str, scan_result: Dict[str, Any], country: str = "US") -> None:
     """
-    Log a competitor scan to history
+    Log a competitor scan to history (JSON file + database)
 
     Args:
         variant_id: The variant ID that was scanned
         item: Product name
         scan_result: Dict with comp_low, comp_avg, comp_high, etc.
+        country: Country code for the scan (default: US)
     """
     from datetime import datetime
 
@@ -804,6 +805,7 @@ def log_competitor_scan(variant_id: str, item: str, scan_result: Dict[str, Any])
         "timestamp": datetime.utcnow().isoformat() + "Z",
         "variant_id": str(variant_id),
         "item": item,
+        "country": country,
         "comp_low": scan_result.get("comp_low"),
         "comp_avg": scan_result.get("comp_avg"),
         "comp_high": scan_result.get("comp_high"),
@@ -814,13 +816,52 @@ def log_competitor_scan(variant_id: str, item: str, scan_result: Dict[str, Any])
         "top_sellers": scan_result.get("top_sellers", []),
     }
 
+    # Save to JSON file (legacy)
     _SCAN_HISTORY.append(record)
 
-    # Keep only last 1000 records
+    # Keep only last 1000 records in JSON
     if len(_SCAN_HISTORY) > 1000:
         _SCAN_HISTORY.pop(0)
 
     _save_scan_history()
+
+    # Also save to database (async)
+    _save_scan_to_db(variant_id, country, scan_result)
+
+
+def _save_scan_to_db(variant_id: str, country: str, scan_result: Dict[str, Any]) -> None:
+    """Save scan result to database asynchronously"""
+    try:
+        from database.connection import is_db_configured
+        if not is_db_configured():
+            return
+
+        import asyncio
+        from database.service import db_service
+
+        async def save():
+            await db_service.save_scan_result(
+                variant_id=str(variant_id),
+                country=country,
+                comp_low=scan_result.get("comp_low") or 0,
+                comp_avg=scan_result.get("comp_avg") or 0,
+                comp_high=scan_result.get("comp_high") or 0,
+                raw_count=scan_result.get("raw_count", 0),
+                trusted_count=scan_result.get("trusted_count", 0),
+                filtered_count=scan_result.get("filtered_count", 0),
+                top_sellers=scan_result.get("top_sellers", [])
+            )
+
+        # Try to run in existing event loop, or create new one
+        try:
+            loop = asyncio.get_running_loop()
+            asyncio.ensure_future(save())
+        except RuntimeError:
+            # No running loop, create a new one for this task
+            asyncio.run(save())
+
+    except Exception as e:
+        print(f"⚠️ Could not save scan to database: {e}")
 
 
 def get_scan_history(limit: int = 100) -> List[Dict[str, Any]]:

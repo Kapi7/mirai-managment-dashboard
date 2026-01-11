@@ -724,5 +724,126 @@ class DatabaseService:
             }
 
 
+    # ==================== SCAN HISTORY ====================
+
+    @staticmethod
+    async def get_scan_history(limit: int = 100) -> Optional[List[Dict[str, Any]]]:
+        """
+        Get competitor scan history from database
+        Returns list of scan records, newest first
+        """
+        if not is_db_configured():
+            return None
+
+        try:
+            async with get_db() as db:
+                query = (
+                    select(CompetitorScan)
+                    .join(Variant, CompetitorScan.variant_id == Variant.id)
+                    .join(Product, Variant.product_id == Product.id)
+                    .order_by(desc(CompetitorScan.scanned_at))
+                    .limit(limit)
+                )
+
+                result = await db.execute(query)
+                scans = result.scalars().all()
+
+                history = []
+                for scan in scans:
+                    # Get variant and product info
+                    variant_query = await db.execute(
+                        select(Variant, Product)
+                        .join(Product, Variant.product_id == Product.id)
+                        .where(Variant.id == scan.variant_id)
+                    )
+                    variant_data = variant_query.first()
+
+                    variant = variant_data[0] if variant_data else None
+                    product = variant_data[1] if variant_data else None
+
+                    item_name = ""
+                    variant_id_str = ""
+                    if variant:
+                        variant_id_str = variant.variant_id
+                        if product:
+                            item_name = f"{product.title} — {variant.title}"
+                        else:
+                            item_name = variant.title or variant.sku or ""
+
+                    history.append({
+                        "timestamp": scan.scanned_at.isoformat() if scan.scanned_at else "",
+                        "variant_id": variant_id_str,
+                        "item": item_name,
+                        "country": scan.country or "US",
+                        "comp_low": _decimal_to_float(scan.comp_low),
+                        "comp_avg": _decimal_to_float(scan.comp_avg),
+                        "comp_high": _decimal_to_float(scan.comp_high),
+                        "raw_count": scan.raw_count or 0,
+                        "trusted_count": scan.trusted_count or 0,
+                        "filtered_count": scan.filtered_count or 0,
+                        "top_sellers": scan.top_sellers or []
+                    })
+
+                return history
+
+        except Exception as e:
+            print(f"❌ Database error in get_scan_history: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    @staticmethod
+    async def save_scan_result(
+        variant_id: str,
+        country: str,
+        comp_low: float,
+        comp_avg: float,
+        comp_high: float,
+        raw_count: int = 0,
+        trusted_count: int = 0,
+        filtered_count: int = 0,
+        top_sellers: list = None
+    ) -> bool:
+        """
+        Save a competitor scan result to database
+        """
+        if not is_db_configured():
+            return False
+
+        try:
+            async with get_db() as db:
+                # Find variant by variant_id string
+                result = await db.execute(
+                    select(Variant).where(Variant.variant_id == str(variant_id))
+                )
+                variant = result.scalar_one_or_none()
+
+                if not variant:
+                    print(f"⚠️ Variant {variant_id} not found in database")
+                    return False
+
+                # Create new scan record
+                scan = CompetitorScan(
+                    variant_id=variant.id,
+                    scanned_at=datetime.utcnow(),
+                    country=country,
+                    comp_low=comp_low,
+                    comp_avg=comp_avg,
+                    comp_high=comp_high,
+                    raw_count=raw_count,
+                    trusted_count=trusted_count,
+                    filtered_count=filtered_count,
+                    top_sellers=top_sellers or []
+                )
+                db.add(scan)
+                await db.commit()
+
+                return True
+
+        except Exception as e:
+            print(f"❌ Database error saving scan result: {e}")
+            return False
+
+
 # Global service instance
 db_service = DatabaseService()

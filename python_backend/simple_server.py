@@ -1106,13 +1106,22 @@ async def get_korealy_reconciliation():
 @app.get("/pricing/scan-history")
 async def get_scan_history(limit: int = 100):
     """
-    Get competitor scan history
+    Get competitor scan history - tries database first, falls back to JSON file
     Query param: ?limit=100
     """
     try:
+        # Try database first for faster loading
+        if DB_SERVICE_AVAILABLE:
+            from database.service import db_service
+            db_data = await db_service.get_scan_history(limit=limit)
+            if db_data is not None and len(db_data) > 0:
+                print(f"  📊 Scan history from database: {len(db_data)} records")
+                return {"data": db_data, "source": "database"}
+
+        # Fallback to JSON file
         from pricing_logic import get_scan_history as fetch_history
         data = fetch_history(limit=limit)
-        return {"data": data}
+        return {"data": data, "source": "json"}
     except Exception as e:
         return {"error": str(e), "data": []}
 
@@ -1730,6 +1739,7 @@ class SupportEmailUpdate(BaseModel):
     priority: Optional[str] = None
     sender_type: Optional[str] = None  # 'customer', 'supplier', 'automated', 'internal'
     ai_draft: Optional[str] = None
+    draft_error: Optional[str] = None  # Error message if draft generation failed
     final_content: Optional[str] = None
 
 
@@ -1947,9 +1957,7 @@ async def webhook_update_support_email(email_id: int, req: SupportEmailUpdate):
         if not email:
             raise HTTPException(status_code=404, detail="Email not found")
 
-        # Update fields
-        if req.status:
-            email.status = req.status
+        # Update classification fields
         if req.classification:
             email.classification = req.classification
         if req.intent:
@@ -1960,10 +1968,20 @@ async def webhook_update_support_email(email_id: int, req: SupportEmailUpdate):
             email.sender_type = req.sender_type
 
         # Update AI draft on latest message
-        if req.ai_draft:
-            inbound_msgs = [m for m in email.messages if m.direction == "inbound"]
-            if inbound_msgs:
-                inbound_msgs[-1].ai_draft = req.ai_draft
+        inbound_msgs = [m for m in email.messages if m.direction == "inbound"]
+        if inbound_msgs:
+            latest_msg = inbound_msgs[-1]
+            # Set AI draft if provided (even empty string to clear it)
+            if req.ai_draft is not None:
+                latest_msg.ai_draft = req.ai_draft if req.ai_draft else None
+            # Store draft error in ai_reasoning field if provided
+            if req.draft_error:
+                latest_msg.ai_reasoning = f"[ERROR] {req.draft_error}"
+
+        # Set status - use explicit status if provided, otherwise infer from ai_draft
+        if req.status:
+            email.status = req.status
+        elif req.ai_draft:  # Only auto-set draft_ready if there's actual content
             email.status = "draft_ready"
 
         await db.commit()

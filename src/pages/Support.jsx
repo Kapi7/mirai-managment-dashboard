@@ -218,7 +218,11 @@ export default function Support() {
       draft_ready: { icon: Bot, label: 'AI Ready', color: 'text-blue-600 bg-blue-50' },
       approved: { icon: CheckCircle, label: 'Approved', color: 'text-green-600 bg-green-50' },
       sent: { icon: Send, label: 'Sent', color: 'text-indigo-600 bg-indigo-50' },
-      rejected: { icon: XCircle, label: 'Rejected', color: 'text-red-600 bg-red-50' }
+      rejected: { icon: XCircle, label: 'Rejected', color: 'text-red-600 bg-red-50' },
+      draft_failed: { icon: AlertCircle, label: 'Draft Failed', color: 'text-red-600 bg-red-50' },
+      draft_empty: { icon: AlertCircle, label: 'No Draft', color: 'text-orange-600 bg-orange-50' },
+      not_customer: { icon: User, label: 'Not Customer', color: 'text-gray-600 bg-gray-50' },
+      draft_skipped: { icon: Clock, label: 'Skipped', color: 'text-gray-600 bg-gray-50' }
     };
     const config = variants[status] || variants.pending;
     const Icon = config.icon;
@@ -704,6 +708,52 @@ export default function Support() {
                   </div>
                 </div>
               )}
+
+              {selectedEmail.status === 'draft_failed' && (
+                <div className="space-y-4 p-4 bg-red-50 rounded-lg border border-red-200">
+                  <h4 className="font-semibold flex items-center gap-2 text-red-800">
+                    <AlertCircle className="h-4 w-4" />
+                    AI Draft Generation Failed
+                  </h4>
+                  <p className="text-sm text-red-700">
+                    The AI couldn't generate a draft for this email. Please write a manual response.
+                  </p>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Manual response:</label>
+                    <Textarea
+                      value={manualResponse}
+                      onChange={(e) => setManualResponse(e.target.value)}
+                      rows={6}
+                      placeholder="Type your response..."
+                      className="bg-white"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {(selectedEmail.status === 'not_customer' || selectedEmail.status === 'draft_skipped') && (
+                <div className="space-y-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                  <h4 className="font-semibold flex items-center gap-2 text-gray-800">
+                    <User className="h-4 w-4" />
+                    {selectedEmail.status === 'not_customer' ? 'Non-Customer Email' : 'Draft Skipped'}
+                  </h4>
+                  <p className="text-sm text-gray-700">
+                    {selectedEmail.status === 'not_customer'
+                      ? 'This email is from a supplier or automated source. No AI draft was generated.'
+                      : 'AI draft generation was skipped for this email.'}
+                  </p>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Manual response (optional):</label>
+                    <Textarea
+                      value={manualResponse}
+                      onChange={(e) => setManualResponse(e.target.value)}
+                      rows={6}
+                      placeholder="Type your response..."
+                      className="bg-white"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -729,7 +779,7 @@ export default function Support() {
               </>
             )}
 
-            {selectedEmail?.status === 'pending' && (
+            {['pending', 'draft_failed', 'draft_empty', 'not_customer', 'draft_skipped'].includes(selectedEmail?.status) && (
               <>
                 <Button variant="destructive" onClick={handleReject} disabled={isSending}>
                   <XCircle className="h-4 w-4 mr-2" />

@@ -438,7 +438,9 @@ def update_email_draft(
     classification: Optional[str] = None,
     intent: Optional[str] = None,
     priority: Optional[str] = None,
-    sender_type: Optional[str] = None
+    sender_type: Optional[str] = None,
+    status: Optional[str] = None,
+    draft_error: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Update an email with AI-generated draft and classification.
@@ -447,13 +449,15 @@ def update_email_draft(
     intent: 'tracking', 'return', 'product_question', 'complaint', etc.
     priority: 'low', 'medium', 'high'
     sender_type: 'customer', 'supplier', 'automated', 'internal'
+    status: 'pending', 'draft_ready', 'draft_failed', 'not_customer', etc.
+    draft_error: Error message if draft generation failed
     """
     if not MIRAI_DASHBOARD_URL:
         return {"success": False, "error": "MIRAI_DASHBOARD_URL not configured"}
 
     try:
         url = f"{MIRAI_DASHBOARD_URL}/webhook/support-email/{email_id}"
-        payload = {"ai_draft": ai_draft}
+        payload = {"ai_draft": ai_draft or ""}
 
         if classification:
             payload["classification"] = classification
@@ -463,6 +467,10 @@ def update_email_draft(
             payload["priority"] = priority
         if sender_type:
             payload["sender_type"] = sender_type
+        if status:
+            payload["status"] = status
+        if draft_error:
+            payload["draft_error"] = draft_error
 
         response = requests.patch(url, json=payload, headers=_api_headers(), timeout=30)
 
@@ -600,55 +608,81 @@ def process_incoming_email(
 
     # Step 3: Generate draft (using Emma) - ONLY for real customers
     ai_draft = None
-    if generate_draft and is_customer:
-        try:
-            print(f"[dashboard_bridge] Generating Emma draft for email_id={email_id}...")
-            from emma_agent import respond_as_emma
+    draft_status = "pending"
+    draft_error = None
 
-            # Get customer context
-            customer_orders = get_customer_orders(customer_email, limit=3)
+    if not generate_draft:
+        draft_status = "draft_skipped"
+        print(f"[dashboard_bridge] Skipping draft generation (generate_draft=False)")
+    elif not is_customer:
+        draft_status = "not_customer"
+        print(f"[dashboard_bridge] Skipping draft - not a customer email (sender_type={sender_type})")
+    else:
+        # Check if OpenAI API key is available
+        openai_key = os.getenv("OPENAI_API_KEY")
+        if not openai_key:
+            draft_status = "draft_failed"
+            draft_error = "OPENAI_API_KEY not configured"
+            print(f"[dashboard_bridge] Cannot generate draft - OPENAI_API_KEY not set")
+        else:
+            try:
+                print(f"[dashboard_bridge] Generating Emma draft for email_id={email_id}...")
+                print(f"[dashboard_bridge] Customer: {customer_email}, Subject: {subject[:50]}...")
+                from emma_agent import respond_as_emma
 
-            # Build history context for Emma
-            history = []
-            if customer_orders:
-                order_summary = f"Previous orders: {len(customer_orders)}. "
-                if customer_orders[0]:
-                    order_summary += f"Last order: {customer_orders[0].get('order_name')} on {customer_orders[0].get('created_at', '')[:10]}"
-                history.append({"role": "system", "content": order_summary})
-                print(f"[dashboard_bridge] Customer has {len(customer_orders)} previous orders")
+                # Get customer context
+                customer_orders = get_customer_orders(customer_email, limit=3)
 
-            # Extract first name from customer_name
-            first_name = ""
-            if customer_name:
-                first_name = customer_name.split()[0] if customer_name else ""
+                # Build history context for Emma
+                history = []
+                if customer_orders:
+                    order_summary = f"Previous orders: {len(customer_orders)}. "
+                    if customer_orders[0]:
+                        order_summary += f"Last order: {customer_orders[0].get('order_name')} on {customer_orders[0].get('created_at', '')[:10]}"
+                    history.append({"role": "system", "content": order_summary})
+                    print(f"[dashboard_bridge] Customer has {len(customer_orders)} previous orders")
 
-            ai_draft = respond_as_emma(
-                first_name=first_name,
-                cart_items=[],  # No cart items from email
-                customer_msg=content,
-                history=history,
-                first_contact=False,
-                geo=None,
-                style_mode="soft",
-                customer_email=customer_email
-            )
-            print(f"[dashboard_bridge] Emma draft generated: {len(ai_draft) if ai_draft else 0} chars")
-        except Exception as e:
-            import traceback
-            print(f"[dashboard_bridge] Emma draft generation failed: {e}")
-            traceback.print_exc()
-            ai_draft = None
+                # Extract first name from customer_name
+                first_name = ""
+                if customer_name:
+                    first_name = customer_name.split()[0] if customer_name else ""
+
+                ai_draft = respond_as_emma(
+                    first_name=first_name,
+                    cart_items=[],  # No cart items from email
+                    customer_msg=content,
+                    history=history,
+                    first_contact=False,
+                    geo=None,
+                    style_mode="soft",
+                    customer_email=customer_email
+                )
+                if ai_draft:
+                    draft_status = "draft_ready"
+                    print(f"[dashboard_bridge] Emma draft generated: {len(ai_draft)} chars")
+                else:
+                    draft_status = "draft_empty"
+                    print(f"[dashboard_bridge] Emma returned empty draft")
+            except Exception as e:
+                import traceback
+                draft_status = "draft_failed"
+                draft_error = str(e)
+                print(f"[dashboard_bridge] Emma draft generation failed: {e}")
+                traceback.print_exc()
+                ai_draft = None
 
     # Step 4: Update dashboard with classification and draft
-    if email_id and (ai_draft or classification):
-        print(f"[dashboard_bridge] Updating email_id={email_id} with classification={classification.get('classification')}, sender_type={sender_type}, draft={len(ai_draft) if ai_draft else 0} chars")
+    if email_id:
+        print(f"[dashboard_bridge] Updating email_id={email_id} with status={draft_status}, classification={classification.get('classification')}, sender_type={sender_type}, draft={len(ai_draft) if ai_draft else 0} chars")
         update_result = update_email_draft(
             email_id=email_id,
             ai_draft=ai_draft or "",
             classification=classification.get("classification"),
             intent=classification.get("intent"),
             priority=classification.get("priority"),
-            sender_type=sender_type
+            sender_type=sender_type,
+            status=draft_status,
+            draft_error=draft_error
         )
         print(f"[dashboard_bridge] Update result: {update_result}")
 
