@@ -151,6 +151,7 @@ class EmailDraftRequest(BaseModel):
     customer_name: Optional[str] = None
     subject: str
     content: str
+    user_hints: Optional[str] = None  # Manager guidance for Emma
 
 
 @app.post("/generate-email-draft")
@@ -158,6 +159,14 @@ async def generate_email_draft(req: EmailDraftRequest):
     """
     Generate an AI draft for a support email.
     Called by the dashboard to regenerate AI responses on demand.
+
+    Args in request body:
+        email_id: ID of the email to generate draft for
+        customer_email: Customer's email address (for order lookup)
+        customer_name: Customer's name
+        subject: Email subject
+        content: Email content
+        user_hints: Optional manager guidance on how Emma should respond
     """
     try:
         from dashboard_bridge import update_email_draft, get_customer_orders
@@ -190,7 +199,11 @@ async def generate_email_draft(req: EmailDraftRequest):
         if req.customer_name:
             first_name = req.customer_name.split()[0]
 
-        # Generate Emma response
+        # Log if user hints are provided
+        if req.user_hints:
+            print(f"[generate-email-draft] Manager hints provided: {req.user_hints[:100]}...")
+
+        # Generate Emma response with optional user hints
         ai_draft = respond_as_emma(
             first_name=first_name,
             cart_items=[],
@@ -199,7 +212,8 @@ async def generate_email_draft(req: EmailDraftRequest):
             first_contact=False,
             geo=None,
             style_mode="soft",
-            customer_email=req.customer_email
+            customer_email=req.customer_email,
+            user_hints=req.user_hints
         )
 
         if ai_draft:

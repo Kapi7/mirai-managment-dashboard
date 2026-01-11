@@ -2212,9 +2212,22 @@ async def reject_support_email(email_id: int, user: dict = Depends(get_current_u
         return {"success": True, "message": "Email rejected"}
 
 
+class RegenerateRequest(BaseModel):
+    user_hints: Optional[str] = None  # Manager guidance for Emma
+
+
 @app.post("/support/emails/{email_id}/regenerate")
-async def regenerate_ai_response(email_id: int, user: dict = Depends(get_current_user)):
-    """Regenerate AI draft for an email by calling Emma service"""
+async def regenerate_ai_response(
+    email_id: int,
+    req: Optional[RegenerateRequest] = None,
+    user: dict = Depends(get_current_user)
+):
+    """
+    Regenerate AI draft for an email by calling Emma service.
+
+    Optional request body:
+        user_hints: Manager guidance on how Emma should respond (e.g., "Offer a 10% discount", "Be more apologetic")
+    """
     if not DB_SERVICE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
@@ -2249,17 +2262,27 @@ async def regenerate_ai_response(email_id: int, user: dict = Depends(get_current
     # Call Emma service to regenerate the AI response
     emma_url = os.getenv("EMMA_SERVICE_URL", "https://emma-service.onrender.com")
 
+    # Extract user hints if provided
+    user_hints = req.user_hints if req else None
+    if user_hints:
+        print(f"📧 [regenerate] Manager hints provided: {user_hints[:100]}...")
+
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
+            payload = {
+                "email_id": email_id,
+                "customer_email": email.customer_email,
+                "customer_name": email.customer_name,
+                "subject": email.subject,
+                "content": latest_msg.content
+            }
+            # Add user hints if provided
+            if user_hints:
+                payload["user_hints"] = user_hints
+
             response = await client.post(
                 f"{emma_url}/generate-email-draft",
-                json={
-                    "email_id": email_id,
-                    "customer_email": email.customer_email,
-                    "customer_name": email.customer_name,
-                    "subject": email.subject,
-                    "content": latest_msg.content
-                }
+                json=payload
             )
 
             if response.status_code == 200:

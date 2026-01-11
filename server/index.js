@@ -959,15 +959,17 @@ app.post('/api/support/emails/:emailId/reject', async (req, res) => {
   }
 });
 
-// Support - Regenerate AI response
+// Support - Regenerate AI response with optional hints
 app.post('/api/support/emails/:emailId/regenerate', async (req, res) => {
   try {
     const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
     const response = await fetch(`${pythonBackendUrl}/support/emails/${req.params.emailId}/regenerate`, {
       method: 'POST',
       headers: {
+        'Content-Type': 'application/json',
         'Authorization': req.headers.authorization || ''
       },
+      body: JSON.stringify(req.body || {}),  // Pass user_hints if provided
       signal: AbortSignal.timeout(60000)  // 60s timeout for AI generation
     });
 

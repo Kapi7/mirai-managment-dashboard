@@ -703,6 +703,98 @@ def tool_get_order_details(order_name: str) -> Dict[str, Any]:
         return {"found": False, "error": str(e)}
 
 
+def tool_check_order_status(email: str, order_name: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Check order status and provide guidance on expected timeline.
+    This is a smarter version of get_customer_orders that includes
+    timeline calculations and appropriate response guidance.
+    """
+    from datetime import datetime, timedelta
+
+    try:
+        from dashboard_bridge import get_customer_orders, get_order_by_name
+
+        # If specific order provided, look it up
+        if order_name:
+            order = get_order_by_name(order_name)
+            if order:
+                orders = [order]
+            else:
+                return {
+                    "found": False,
+                    "message": f"Order {order_name} not found",
+                    "guidance": "Ask customer to verify the order number or check the email used for ordering"
+                }
+        else:
+            # Get most recent orders
+            orders = get_customer_orders(email, limit=3)
+
+        if not orders:
+            return {
+                "found": False,
+                "message": "No orders found for this email",
+                "guidance": "Ask customer to verify they're using the same email they ordered with"
+            }
+
+        # Analyze the most recent order
+        latest = orders[0]
+        order_date_str = latest.get("created_at", "")
+
+        # Calculate days since order
+        days_since_order = None
+        order_status = "unknown"
+        guidance = ""
+
+        if order_date_str:
+            try:
+                # Parse ISO format date
+                order_date = datetime.fromisoformat(order_date_str.replace("Z", "+00:00"))
+                now = datetime.now(order_date.tzinfo) if order_date.tzinfo else datetime.now()
+                days_since_order = (now - order_date).days
+
+                # Determine status based on timeline
+                if days_since_order <= 5:
+                    order_status = "processing"
+                    guidance = f"Order is only {days_since_order} days old. Still within 3-5 day processing window. Tracking will be sent once shipped."
+                elif days_since_order <= 10:
+                    order_status = "likely_shipped"
+                    guidance = f"Order is {days_since_order} days old. Should be shipped by now. Ask customer to check email (including spam) for tracking info."
+                elif days_since_order <= 19:
+                    order_status = "in_transit"
+                    guidance = f"Order is {days_since_order} days old. Within normal 10-19 day delivery window. Package is likely in transit."
+                elif days_since_order <= 25:
+                    order_status = "potentially_delayed"
+                    guidance = f"Order is {days_since_order} days old. Slightly outside normal window. May be in customs or experiencing delivery delay. Offer to check with warehouse."
+                else:
+                    order_status = "needs_investigation"
+                    guidance = f"Order is {days_since_order} days old. This exceeds normal delivery time. Apologize and offer to investigate immediately with the warehouse."
+
+            except Exception as e:
+                guidance = "Could not calculate order timeline. Please check order details manually."
+
+        return {
+            "found": True,
+            "order_count": len(orders),
+            "latest_order": {
+                "order_name": latest.get("order_name"),
+                "created_at": order_date_str,
+                "days_since_order": days_since_order,
+                "gross": latest.get("gross"),
+                "country": latest.get("country")
+            },
+            "order_status": order_status,
+            "guidance": guidance,
+            "policy_reminder": {
+                "processing_time": "3-5 business days",
+                "shipping_time": "7-14 business days",
+                "total_expected": "10-19 business days"
+            }
+        }
+
+    except Exception as e:
+        return {"found": False, "error": str(e)}
+
+
 def tool_get_skincare_advice(concern: str, skin_type: Optional[str] = None) -> Dict[str, Any]:
     """
     Get personalized skincare advice based on concern and skin type.
@@ -861,6 +953,13 @@ TOOLS = [
             "order_name":{"type":"string","description":"Order number like #1234 or just 1234"}
         }, "required":["order_name"]}
     }},
+    {"type":"function","function":{
+        "name":"check_order_status","description":"Check order status and provide appropriate response based on order date. Use for tracking inquiries. Returns order details plus guidance on expected timeline.",
+        "parameters":{"type":"object","properties":{
+            "email":{"type":"string","description":"Customer's email address"},
+            "order_name":{"type":"string","description":"Optional specific order number if provided"}
+        }, "required":["email"]}
+    }},
 
     # EXPERTISE TOOLS
     {"type":"function","function":{
@@ -871,6 +970,63 @@ TOOLS = [
         }, "required":["concern"]}
     }},
 ]
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Company Policies - Emma's Knowledge Base
+# ──────────────────────────────────────────────────────────────────────────────
+COMPANY_POLICIES = """
+## MIRAI SKIN COMPANY POLICIES
+
+### SHIPPING POLICY
+- **Processing Time**: 3-5 business days for order processing and tracking number generation
+- **Delivery Time**: 7-14 business days for standard international delivery (after dispatch)
+- **Total Expected Time**: 10-19 business days from order to delivery
+- **Free Shipping**: All orders above $80 qualify for free shipping
+- **Shipping Origin**: All products ship directly from our warehouse in South Korea
+- **Worldwide Shipping**: We ship to North America, Europe, Asia, Australia, Middle East, and Latin America
+- **Remote Areas**: Additional delivery time may apply for remote locations
+
+### CUSTOMS & DUTIES
+- International orders may be subject to import duties, taxes, or customs fees
+- These charges are NOT included in product prices or shipping fees
+- The customer is fully responsible for any customs duties, VAT, or related charges
+- **US Orders**: May be subject to import duties or handling fees per US Customs regulations
+- Mirai Skin will NOT refund orders returned, seized, or delayed due to unpaid customs
+
+### TRACKING
+- Tracking number is sent via email within 3-5 business days after ordering
+- If no tracking after 5 business days, customer should contact support
+- Tracking updates may take 24-48 hours to appear after shipment
+
+### RETURN POLICY (180 Days!)
+- **Eligibility**: 180-day return window from delivery date
+- **Condition**: Item must be unopened, unused, and in original packaging
+- **Process**: Customer must email support@mirai-skin.com for return approval FIRST
+- **Return Shipping**: Customer pays return shipping costs
+- **Refund**: Issued to original payment method after item received and inspected
+- **Processing Time**: Refunds within 10 business days of receiving returned item
+
+### DAMAGED/DEFECTIVE ITEMS
+- Contact support@mirai-skin.com immediately with photos
+- Customer can choose: Free replacement OR full refund
+- Mirai Skin covers all costs for damaged/defective replacements
+- Note: Cosmetic damage to outer packaging alone is NOT considered a defect
+
+### NON-RETURNABLE
+- Opened or used items
+- Personalized or customized items
+
+### CONTACT INFORMATION
+- **Email**: support@mirai-skin.com
+- **Phone**: +357 94 003969
+- **Hours**: Monday to Friday, 9:00 AM – 5:00 PM (Cyprus time)
+- **Address**: Elpidas 8, Pyrgos, Limassol, 4534, Cyprus
+- **Company**: Cloudsteam AI Ltd | Reg. HE471549
+
+### PRODUCT AUTHENTICITY
+- All products are 100% authentic
+- Supplied directly through verified Korean distributors
+"""
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Persona & style - SUPER AGENT
@@ -954,13 +1110,50 @@ You know the Mirai Skin catalog intimately. When recommending products:
 - Suggest how to use it in their routine
 - Pair with complementary products that enhance results
 
-## SUPPORT EXCELLENCE
-For order issues, tracking, returns, complaints:
-- Check order history using get_customer_orders if email is provided
-- Always apologize sincerely for any inconvenience
-- Provide specific solutions, not generic responses
-- Follow up: "Is there anything else I can help you with?"
-- Turn problems into opportunities — a well-handled complaint creates loyalty
+## SUPPORT EXCELLENCE - POLICY-BASED RESPONSES
+
+**ALWAYS REFERENCE ACTUAL COMPANY POLICIES when handling support issues:**
+
+### For "Where is my order?" / Tracking Questions:
+1. Look up their order using get_customer_orders with their email
+2. Check when the order was placed
+3. **EXPLAIN THE TIMELINE:**
+   - Processing: 3-5 business days
+   - Shipping: 7-14 business days after dispatch
+   - Total: 10-19 business days is NORMAL
+4. If order is WITHIN the expected window (under 19 days):
+   - Reassure them this is within our normal timeframe
+   - Explain they should receive tracking email within 5 business days of ordering
+   - Ask them to check spam folder for tracking email
+5. If order is OUTSIDE the window (over 19-20 days):
+   - Apologize for the delay
+   - Tell them you'll escalate to check with the warehouse
+   - Provide support email for direct follow-up
+
+### For Return/Refund Questions:
+- Emphasize the generous 180-day return policy!
+- Item must be unopened and unused
+- Customer must email support@mirai-skin.com FIRST for approval
+- Customer pays return shipping
+- Refund processed within 10 business days after we receive the item
+
+### For Damaged/Wrong Item:
+- Express genuine concern
+- Ask for photos of the damage
+- Offer clear options: FREE replacement OR full refund
+- Mirai covers all costs for these cases
+
+### For Customs/Duties Questions:
+- Be transparent: duties are customer's responsibility
+- This is standard for international orders
+- We cannot predict or pay customs fees
+- Advise checking local customs regulations
+
+### NEVER:
+- Make promises we can't keep (like "it will arrive tomorrow")
+- Give shipping timelines shorter than our actual policy
+- Say we'll refund customs duties (we won't)
+- Approve returns without directing them to email support first
 
 ## SALES APPROACH (Helpful, Not Pushy)
 - **Recommend based on needs**, not just to upsell
@@ -1160,9 +1353,20 @@ def promotions_context() -> str:
 def build_messages(first_name: str, cart_items: List[str], customer_msg: str,
                    history: List[Dict[str, Any]], extra_system: Optional[str]=None,
                    geo: Optional[str]=None, style_mode: Optional[str]=None,
-                   customer_email: Optional[str]=None) -> List[Dict[str,str]]:
+                   customer_email: Optional[str]=None,
+                   user_hints: Optional[str]=None) -> List[Dict[str,str]]:
     msgs: List[Dict[str,str]] = [{"role":"system","content":EMMA_SYSTEM}]
+    # Add company policies as core knowledge
+    msgs.append({"role":"system","content":COMPANY_POLICIES})
     if extra_system: msgs.append({"role":"system","content":extra_system})
+    # Add user hints if provided (manager guidance)
+    if user_hints and user_hints.strip():
+        msgs.append({"role":"system","content":f"""
+## MANAGER GUIDANCE (Follow these specific instructions):
+{user_hints}
+
+These instructions come from a manager reviewing this conversation. Follow them carefully while maintaining Emma's helpful personality.
+"""})
 
     # Detect emotional state for adaptive response
     emotion = detect_emotional_state(customer_msg)
@@ -1345,6 +1549,8 @@ def run_gpt_with_tools(messages: List[Dict[str,str]], geo: Optional[str]=None) -
                 data = tool_get_customer_orders(email=args.get("email", ""), limit=args.get("limit", 5))
             elif name == "get_order_details":
                 data = tool_get_order_details(order_name=args.get("order_name", ""))
+            elif name == "check_order_status":
+                data = tool_check_order_status(email=args.get("email", ""), order_name=args.get("order_name"))
             # EXPERTISE TOOLS
             elif name == "get_skincare_advice":
                 data = tool_get_skincare_advice(concern=args.get("concern", ""), skin_type=args.get("skin_type"))
@@ -1361,7 +1567,25 @@ def run_gpt_with_tools(messages: List[Dict[str,str]], geo: Optional[str]=None) -
 def respond_as_emma(first_name: str, cart_items: List[str], customer_msg: str,
                     history: Optional[List[Dict[str, Any]]] = None, first_contact: bool=False,
                     geo: Optional[str]=None, style_mode: Optional[str]=None,
-                    customer_email: Optional[str]=None) -> str:
+                    customer_email: Optional[str]=None,
+                    user_hints: Optional[str]=None) -> str:
+    """
+    Generate Emma's response to a customer message.
+
+    Args:
+        first_name: Customer's first name
+        cart_items: Items in customer's cart (for sales context)
+        customer_msg: The customer's message to respond to
+        history: Previous conversation messages
+        first_contact: If True, generates a soft opener instead of full response
+        geo: Customer's country code (US, EU, etc.)
+        style_mode: Response style - 'soft', 'direct', 'empathetic'
+        customer_email: Customer's email for order lookup
+        user_hints: Optional guidance from manager on how to respond
+
+    Returns:
+        Emma's response as a string
+    """
     # Fix mutable default argument
     if history is None:
         history = []
@@ -1369,11 +1593,12 @@ def respond_as_emma(first_name: str, cart_items: List[str], customer_msg: str,
     set_geo(inferred_geo)
 
     if first_contact:
-        # Gentle first touch; explain why you’re reaching out; no prices.
+        # Gentle first touch; explain why you're reaching out; no prices.
         return deterministic_opener(first_name, cart_items)
 
     msgs = build_messages(first_name, cart_items, customer_msg, history, extra_system=None,
-                          geo=inferred_geo, style_mode=style_mode, customer_email=customer_email)
+                          geo=inferred_geo, style_mode=style_mode, customer_email=customer_email,
+                          user_hints=user_hints)
     out = run_gpt_with_tools(msgs, geo=inferred_geo)
     try:
         save_message(email="", role="emma", content=out)

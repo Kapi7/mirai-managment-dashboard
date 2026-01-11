@@ -224,17 +224,29 @@ export default function Support() {
     }
   };
 
-  // Regenerate AI response
+  // Regenerate AI response with optional hints
   const [isRegenerating, setIsRegenerating] = useState(false);
-  const handleRegenerateAI = async () => {
+  const [userHints, setUserHints] = useState('');
+
+  const handleRegenerateAI = async (withHints = false) => {
     if (!selectedEmail) return;
     setIsRegenerating(true);
     try {
+      const requestBody = withHints && userHints.trim()
+        ? { user_hints: userHints.trim() }
+        : {};
+
       const response = await fetch(`${API_URL}/support/emails/${selectedEmail.id}/regenerate`, {
-        method: 'POST'
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
       });
       const data = await response.json();
       if (data.success) {
+        // Clear hints after successful generation
+        if (withHints) setUserHints('');
         // Wait a moment then refresh to see the new draft
         setTimeout(() => {
           fetchEmailDetail(selectedEmail.id);
@@ -660,12 +672,28 @@ export default function Support() {
                 )}
               </div>
 
-              {/* Messages */}
+              {/* Conversation - Manager-friendly display */}
               <div className="space-y-4">
                 <h4 className="font-semibold flex items-center gap-2">
                   <MessageSquare className="h-4 w-4" />
                   Conversation
                 </h4>
+
+                {/* Customer Context Summary */}
+                {selectedEmail.messages?.length > 0 && (
+                  <div className="p-3 bg-slate-100 rounded-lg border text-sm">
+                    <div className="font-medium text-slate-700 mb-1">Quick Summary:</div>
+                    <div className="text-slate-600">
+                      <span className="font-medium">{selectedEmail.customer_name || selectedEmail.customer_email}</span>
+                      {' - '}
+                      <span className="capitalize">{selectedEmail.intent || 'General inquiry'}</span>
+                      {selectedEmail.classification && (
+                        <span className="text-xs ml-2 text-slate-500">({selectedEmail.classification})</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {selectedEmail.messages?.map((msg, idx) => (
                   <div
                     key={idx}
@@ -712,7 +740,7 @@ export default function Support() {
                     Ready to Send
                   </h4>
                   <p className="text-sm text-green-700">
-                    Review the AI draft above. You can approve it, edit it, or reject it.
+                    Review the AI draft above. You can approve it, edit it, regenerate with guidance, or reject it.
                   </p>
                   <div className="space-y-2">
                     <label className="text-sm font-medium">Edit draft (optional):</label>
@@ -723,6 +751,31 @@ export default function Support() {
                       placeholder="Edit the AI draft here..."
                       className="bg-white"
                     />
+                  </div>
+
+                  {/* Regenerate with hints option */}
+                  <div className="pt-3 border-t border-green-200">
+                    <label className="text-sm font-medium text-green-800 block mb-2">
+                      Not happy with the draft? Regenerate with guidance:
+                    </label>
+                    <div className="flex gap-2">
+                      <Textarea
+                        value={userHints}
+                        onChange={(e) => setUserHints(e.target.value)}
+                        rows={1}
+                        placeholder="e.g., 'Be more apologetic', 'Offer discount', 'Focus on return policy'..."
+                        className="bg-white text-sm flex-1"
+                      />
+                      <Button
+                        onClick={() => handleRegenerateAI(userHints.trim() ? true : false)}
+                        disabled={isRegenerating}
+                        variant="outline"
+                        className="border-green-400 text-green-700 hover:bg-green-100 whitespace-nowrap"
+                      >
+                        <Sparkles className="h-4 w-4 mr-1" />
+                        {isRegenerating ? 'Regenerating...' : 'Regenerate'}
+                      </Button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -736,14 +789,45 @@ export default function Support() {
                   <p className="text-sm text-yellow-700">
                     AI draft not yet generated. Click below to generate or write a manual response.
                   </p>
-                  <Button
-                    onClick={handleRegenerateAI}
-                    disabled={isRegenerating}
-                    className="w-full bg-purple-600 hover:bg-purple-700"
-                  >
-                    <Sparkles className="h-4 w-4 mr-2" />
-                    {isRegenerating ? 'Generating...' : 'Generate AI Response'}
-                  </Button>
+
+                  {/* Hints input for Emma */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-yellow-800">
+                      Guide Emma (optional):
+                    </label>
+                    <Textarea
+                      value={userHints}
+                      onChange={(e) => setUserHints(e.target.value)}
+                      rows={2}
+                      placeholder="e.g., 'Offer 10% discount', 'Be more apologetic', 'Focus on shipping timeline'..."
+                      className="bg-white text-sm"
+                    />
+                    <p className="text-xs text-yellow-600">
+                      Provide hints to guide Emma's response style or content
+                    </p>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={() => handleRegenerateAI(false)}
+                      disabled={isRegenerating}
+                      className="flex-1 bg-purple-600 hover:bg-purple-700"
+                    >
+                      <Sparkles className="h-4 w-4 mr-2" />
+                      {isRegenerating ? 'Generating...' : 'Generate AI Response'}
+                    </Button>
+                    {userHints.trim() && (
+                      <Button
+                        onClick={() => handleRegenerateAI(true)}
+                        disabled={isRegenerating}
+                        variant="outline"
+                        className="border-purple-300 text-purple-700 hover:bg-purple-50"
+                      >
+                        With Hints
+                      </Button>
+                    )}
+                  </div>
+
                   <div className="space-y-2">
                     <label className="text-sm font-medium">Or write a manual response:</label>
                     <Textarea
@@ -766,15 +850,42 @@ export default function Support() {
                   <p className="text-sm text-red-700">
                     The AI couldn't generate a draft for this email. Try again or write a manual response.
                   </p>
-                  <Button
-                    onClick={handleRegenerateAI}
-                    disabled={isRegenerating}
-                    variant="outline"
-                    className="w-full border-red-300 text-red-700 hover:bg-red-100"
-                  >
-                    <Sparkles className="h-4 w-4 mr-2" />
-                    {isRegenerating ? 'Retrying...' : 'Retry AI Generation'}
-                  </Button>
+
+                  {/* Hints input for Emma */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-red-800">
+                      Guide Emma (optional):
+                    </label>
+                    <Textarea
+                      value={userHints}
+                      onChange={(e) => setUserHints(e.target.value)}
+                      rows={2}
+                      placeholder="e.g., 'Be more apologetic', 'Mention 180-day return policy'..."
+                      className="bg-white text-sm"
+                    />
+                  </div>
+
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={() => handleRegenerateAI(false)}
+                      disabled={isRegenerating}
+                      variant="outline"
+                      className="flex-1 border-red-300 text-red-700 hover:bg-red-100"
+                    >
+                      <Sparkles className="h-4 w-4 mr-2" />
+                      {isRegenerating ? 'Retrying...' : 'Retry AI Generation'}
+                    </Button>
+                    {userHints.trim() && (
+                      <Button
+                        onClick={() => handleRegenerateAI(true)}
+                        disabled={isRegenerating}
+                        className="bg-red-600 hover:bg-red-700 text-white"
+                      >
+                        With Hints
+                      </Button>
+                    )}
+                  </div>
+
                   <div className="space-y-2">
                     <label className="text-sm font-medium">Or write a manual response:</label>
                     <Textarea
