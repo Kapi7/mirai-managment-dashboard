@@ -159,7 +159,12 @@ def _derive_geo_rules_from_zones(zones: Dict[str, Any]) -> Dict[str, Dict[str, A
         free_over = None
         for r in price_rates:
             price = _f(r.get("price"))
-            min_sub = _f((r.get("min_order_subtotal") or {}).get("amount"))
+            # Handle min_order_subtotal as either dict with 'amount' or direct value
+            min_sub_raw = r.get("min_order_subtotal")
+            if isinstance(min_sub_raw, dict):
+                min_sub = _f(min_sub_raw.get("amount"))
+            else:
+                min_sub = _f(min_sub_raw)
             if (min_sub is None or min_sub == 0) and price is not None:
                 base = price if base is None else min(base, price)
             if price is not None and price == 0 and min_sub is not None:
