@@ -1022,6 +1022,127 @@ app.get('/api/support/stats', async (req, res) => {
   }
 });
 
+// ==================== TRACKING DASHBOARD ====================
+
+// Tracking - List shipments
+app.get('/api/tracking/shipments', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const queryString = new URLSearchParams(req.query).toString();
+    const response = await fetch(`${pythonBackendUrl}/tracking/shipments?${queryString}`, {
+      headers: {
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(30000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Tracking shipments error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Tracking - Get stats
+app.get('/api/tracking/stats', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/tracking/stats`, {
+      headers: {
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Tracking stats error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Tracking - Sync from Shopify
+app.post('/api/tracking/sync', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/tracking/sync`, {
+      method: 'POST',
+      headers: {
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(120000)  // 2 min for sync
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Tracking sync error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Tracking - Check single tracking
+app.post('/api/tracking/check/:trackingNumber', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/tracking/check/${req.params.trackingNumber}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(30000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Tracking check error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Tracking - Check all active
+app.post('/api/tracking/check-all', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/tracking/check-all`, {
+      method: 'POST',
+      headers: {
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(30000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Tracking check-all error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Tracking - Mark followup sent
+app.post('/api/tracking/mark-followup-sent/:trackingId', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/tracking/mark-followup-sent/${req.params.trackingId}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Tracking mark followup error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

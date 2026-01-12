@@ -11,7 +11,8 @@ import {
   DollarSign,
   Users,
   LogOut,
-  MessageSquare
+  MessageSquare,
+  Truck
 } from "lucide-react";
 import {
   Sidebar,
@@ -57,6 +58,7 @@ const navigationSections = [
     label: "Sales & Support",
     items: [
       { title: "Support Inbox", url: createPageUrl("Support"), icon: MessageSquare },
+      { title: "Tracking", url: createPageUrl("Tracking"), icon: Truck },
     ]
   },
   {

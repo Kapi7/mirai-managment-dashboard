@@ -2484,6 +2484,366 @@ async def get_support_stats(user: dict = Depends(get_current_user)):
         }
 
 
+# ==================== TRACKING DASHBOARD ====================
+
+@app.get("/tracking/shipments")
+async def list_shipments(
+    status: Optional[str] = None,
+    delayed_only: bool = False,
+    followup_pending: bool = False,
+    limit: int = 100,
+    user: dict = Depends(get_current_user)
+):
+    """List all tracked shipments with status."""
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import ShipmentTracking
+    from sqlalchemy import select, desc
+
+    async with get_db() as db:
+        query = select(ShipmentTracking).order_by(desc(ShipmentTracking.shipped_at))
+
+        if status:
+            query = query.where(ShipmentTracking.status == status)
+        if delayed_only:
+            query = query.where(ShipmentTracking.delay_detected == True)
+        if followup_pending:
+            query = query.where(
+                ShipmentTracking.status == "delivered",
+                ShipmentTracking.delivery_followup_sent == False
+            )
+
+        query = query.limit(limit)
+        result = await db.execute(query)
+        shipments = result.scalars().all()
+
+        return {
+            "shipments": [
+                {
+                    "id": s.id,
+                    "order_id": s.order_id,
+                    "order_number": s.order_number,
+                    "customer_email": s.customer_email,
+                    "customer_name": s.customer_name,
+                    "tracking_number": s.tracking_number,
+                    "carrier": s.carrier,
+                    "status": s.status,
+                    "status_detail": s.status_detail,
+                    "last_checkpoint": s.last_checkpoint,
+                    "last_checkpoint_time": s.last_checkpoint_time.isoformat() if s.last_checkpoint_time else None,
+                    "shipped_at": s.shipped_at.isoformat() if s.shipped_at else None,
+                    "estimated_delivery": s.estimated_delivery.isoformat() if s.estimated_delivery else None,
+                    "delivered_at": s.delivered_at.isoformat() if s.delivered_at else None,
+                    "delay_detected": s.delay_detected,
+                    "delay_days": s.delay_days,
+                    "delivery_followup_sent": s.delivery_followup_sent,
+                    "last_checked": s.last_checked.isoformat() if s.last_checked else None,
+                }
+                for s in shipments
+            ],
+            "total": len(shipments)
+        }
+
+
+@app.get("/tracking/stats")
+async def get_tracking_stats(user: dict = Depends(get_current_user)):
+    """Get tracking dashboard statistics."""
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import ShipmentTracking
+    from sqlalchemy import select, func
+
+    async with get_db() as db:
+        # Count by status
+        status_query = select(
+            ShipmentTracking.status,
+            func.count(ShipmentTracking.id)
+        ).group_by(ShipmentTracking.status)
+        status_result = await db.execute(status_query)
+        status_counts = dict(status_result.all())
+
+        # Count delayed
+        delayed_result = await db.execute(
+            select(func.count(ShipmentTracking.id))
+            .where(ShipmentTracking.delay_detected == True)
+        )
+        delayed_count = delayed_result.scalar() or 0
+
+        # Count pending followups
+        followup_result = await db.execute(
+            select(func.count(ShipmentTracking.id))
+            .where(
+                ShipmentTracking.status == "delivered",
+                ShipmentTracking.delivery_followup_sent == False
+            )
+        )
+        followup_pending = followup_result.scalar() or 0
+
+        # Average delivery time for delivered packages
+        avg_delivery_result = await db.execute(
+            select(func.avg(
+                func.extract('epoch', ShipmentTracking.delivered_at) -
+                func.extract('epoch', ShipmentTracking.shipped_at)
+            ) / 86400)  # Convert seconds to days
+            .where(
+                ShipmentTracking.status == "delivered",
+                ShipmentTracking.delivered_at.isnot(None),
+                ShipmentTracking.shipped_at.isnot(None)
+            )
+        )
+        avg_delivery_days = avg_delivery_result.scalar()
+
+        return {
+            "total": sum(status_counts.values()),
+            "pending": status_counts.get("pending", 0),
+            "in_transit": status_counts.get("in_transit", 0),
+            "out_for_delivery": status_counts.get("out_for_delivery", 0),
+            "delivered": status_counts.get("delivered", 0),
+            "exception": status_counts.get("exception", 0),
+            "delayed": delayed_count,
+            "followup_pending": followup_pending,
+            "avg_delivery_days": round(avg_delivery_days, 1) if avg_delivery_days else None,
+        }
+
+
+@app.post("/tracking/sync")
+async def sync_shipments_from_shopify(user: dict = Depends(get_current_user)):
+    """Sync shipments from Shopify fulfillments."""
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import ShipmentTracking
+    from sqlalchemy import select
+
+    shopify_store = os.getenv("SHOPIFY_STORE")
+    shopify_token = os.getenv("SHOPIFY_ACCESS_TOKEN") or os.getenv("SHOPIFY_TOKEN")
+
+    if not shopify_store or not shopify_token:
+        raise HTTPException(status_code=500, detail="Shopify credentials not configured")
+
+    # Import tracking service
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'emma_service'))
+    try:
+        from tracking_service import sync_shipments_from_shopify as sync_shopify, check_tracking_aftership
+    except ImportError:
+        raise HTTPException(status_code=500, detail="Tracking service not available")
+
+    # Sync from Shopify
+    shopify_shipments = sync_shopify(shopify_store, shopify_token, days_back=30)
+
+    synced = 0
+    updated = 0
+
+    async with get_db() as db:
+        for shipment in shopify_shipments:
+            # Check if already exists
+            result = await db.execute(
+                select(ShipmentTracking)
+                .where(ShipmentTracking.tracking_number == shipment["tracking_number"])
+            )
+            existing = result.scalar_one_or_none()
+
+            if existing:
+                # Update if needed
+                updated += 1
+            else:
+                # Create new
+                new_shipment = ShipmentTracking(
+                    order_id=shipment.get("order_id"),
+                    order_number=shipment.get("order_number"),
+                    customer_email=shipment.get("customer_email"),
+                    customer_name=shipment.get("customer_name"),
+                    tracking_number=shipment.get("tracking_number"),
+                    carrier=shipment.get("carrier"),
+                    shipped_at=datetime.fromisoformat(shipment["shipped_at"].replace("Z", "+00:00")) if shipment.get("shipped_at") else None,
+                    delivery_address_city=shipment.get("delivery_address_city"),
+                    delivery_address_country=shipment.get("delivery_address_country"),
+                    status="pending",
+                )
+                db.add(new_shipment)
+                synced += 1
+
+        await db.commit()
+
+    return {
+        "success": True,
+        "synced": synced,
+        "updated": updated,
+        "total_from_shopify": len(shopify_shipments)
+    }
+
+
+@app.post("/tracking/check/{tracking_number}")
+async def check_single_tracking(tracking_number: str, user: dict = Depends(get_current_user)):
+    """Check tracking status for a single package via AfterShip."""
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import ShipmentTracking
+    from sqlalchemy import select
+
+    # Import tracking service
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'emma_service'))
+    try:
+        from tracking_service import check_tracking_aftership, detect_delays
+    except ImportError:
+        raise HTTPException(status_code=500, detail="Tracking service not available")
+
+    # Get from AfterShip
+    result = check_tracking_aftership(tracking_number)
+
+    if not result.get("success"):
+        return {"success": False, "error": result.get("error", "Unknown error")}
+
+    # Update database if exists
+    async with get_db() as db:
+        db_result = await db.execute(
+            select(ShipmentTracking)
+            .where(ShipmentTracking.tracking_number == tracking_number)
+        )
+        shipment = db_result.scalar_one_or_none()
+
+        if shipment:
+            shipment.status = result.get("status", "unknown")
+            shipment.status_detail = result.get("status_detail")
+            shipment.last_checkpoint = result.get("last_checkpoint")
+            if result.get("last_checkpoint_time"):
+                try:
+                    shipment.last_checkpoint_time = datetime.fromisoformat(
+                        result["last_checkpoint_time"].replace("Z", "+00:00")
+                    )
+                except:
+                    pass
+            if result.get("estimated_delivery"):
+                try:
+                    shipment.estimated_delivery = datetime.fromisoformat(
+                        result["estimated_delivery"].replace("Z", "+00:00")
+                    )
+                except:
+                    pass
+            if result.get("delivered_at"):
+                try:
+                    shipment.delivered_at = datetime.fromisoformat(
+                        result["delivered_at"].replace("Z", "+00:00")
+                    )
+                except:
+                    pass
+
+            # Check for delays
+            delay_info = detect_delays(
+                shipment.shipped_at,
+                shipment.estimated_delivery,
+                result.get("status")
+            )
+            shipment.delay_detected = delay_info.get("delayed", False)
+            shipment.delay_days = delay_info.get("delay_days", 0)
+
+            shipment.last_checked = datetime.utcnow()
+            await db.commit()
+
+    return {
+        "success": True,
+        "tracking_number": tracking_number,
+        **result
+    }
+
+
+@app.post("/tracking/check-all")
+async def check_all_active_trackings(background_tasks: BackgroundTasks, user: dict = Depends(get_current_user)):
+    """Queue check for all active (non-delivered) shipments."""
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import ShipmentTracking
+    from sqlalchemy import select
+
+    async with get_db() as db:
+        result = await db.execute(
+            select(ShipmentTracking.tracking_number)
+            .where(ShipmentTracking.status.notin_(["delivered", "expired"]))
+        )
+        tracking_numbers = [r[0] for r in result.all()]
+
+    # Queue background check
+    background_tasks.add_task(check_trackings_background, tracking_numbers)
+
+    return {
+        "success": True,
+        "message": f"Checking {len(tracking_numbers)} active shipments in background",
+        "count": len(tracking_numbers)
+    }
+
+
+async def check_trackings_background(tracking_numbers: List[str]):
+    """Background task to check multiple trackings."""
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'emma_service'))
+    from tracking_service import check_tracking_aftership, detect_delays
+    from database.connection import get_db
+    from database.models import ShipmentTracking
+    from sqlalchemy import select
+    import asyncio
+
+    for tracking_number in tracking_numbers:
+        try:
+            result = check_tracking_aftership(tracking_number)
+
+            if result.get("success"):
+                async with get_db() as db:
+                    db_result = await db.execute(
+                        select(ShipmentTracking)
+                        .where(ShipmentTracking.tracking_number == tracking_number)
+                    )
+                    shipment = db_result.scalar_one_or_none()
+
+                    if shipment:
+                        shipment.status = result.get("status", "unknown")
+                        shipment.status_detail = result.get("status_detail")
+                        shipment.last_checkpoint = result.get("last_checkpoint")
+                        shipment.last_checked = datetime.utcnow()
+                        await db.commit()
+
+            # Rate limit - AfterShip has limits
+            await asyncio.sleep(0.5)
+
+        except Exception as e:
+            print(f"[tracking] Error checking {tracking_number}: {e}")
+
+
+@app.post("/tracking/mark-followup-sent/{tracking_id}")
+async def mark_followup_sent(tracking_id: int, user: dict = Depends(get_current_user)):
+    """Mark a delivered shipment as having followup sent."""
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import ShipmentTracking
+    from sqlalchemy import select
+
+    async with get_db() as db:
+        result = await db.execute(
+            select(ShipmentTracking).where(ShipmentTracking.id == tracking_id)
+        )
+        shipment = result.scalar_one_or_none()
+
+        if not shipment:
+            raise HTTPException(status_code=404, detail="Shipment not found")
+
+        shipment.delivery_followup_sent = True
+        await db.commit()
+
+    return {"success": True, "message": "Marked as followup sent"}
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8080))
