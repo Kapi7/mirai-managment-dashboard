@@ -3079,23 +3079,36 @@ async def check_single_tracking(tracking_number: str, user: dict = Depends(get_c
             shipment.last_checkpoint = result.get("last_checkpoint")
             if result.get("last_checkpoint_time"):
                 try:
-                    shipment.last_checkpoint_time = datetime.fromisoformat(
+                    dt = datetime.fromisoformat(
                         result["last_checkpoint_time"].replace("Z", "+00:00")
                     )
+                    # Convert to naive UTC for database
+                    if dt.tzinfo:
+                        shipment.last_checkpoint_time = dt.astimezone(pytz.UTC).replace(tzinfo=None)
+                    else:
+                        shipment.last_checkpoint_time = dt
                 except:
                     pass
             if result.get("estimated_delivery"):
                 try:
-                    shipment.estimated_delivery = datetime.fromisoformat(
+                    dt = datetime.fromisoformat(
                         result["estimated_delivery"].replace("Z", "+00:00")
                     )
+                    if dt.tzinfo:
+                        shipment.estimated_delivery = dt.astimezone(pytz.UTC).replace(tzinfo=None)
+                    else:
+                        shipment.estimated_delivery = dt
                 except:
                     pass
             if result.get("delivered_at"):
                 try:
-                    shipment.delivered_at = datetime.fromisoformat(
+                    dt = datetime.fromisoformat(
                         result["delivered_at"].replace("Z", "+00:00")
                     )
+                    if dt.tzinfo:
+                        shipment.delivered_at = dt.astimezone(pytz.UTC).replace(tzinfo=None)
+                    else:
+                        shipment.delivered_at = dt
                 except:
                     pass
 
