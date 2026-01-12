@@ -2937,16 +2937,65 @@ async def get_tracking_stats(user: dict = Depends(get_current_user)):
         )
         avg_delivery_days = avg_delivery_result.scalar()
 
+        # Count followups sent
+        followup_sent_result = await db.execute(
+            select(func.count(ShipmentTracking.id))
+            .where(
+                ShipmentTracking.status == "delivered",
+                ShipmentTracking.delivery_followup_sent == True
+            )
+        )
+        followup_sent = followup_sent_result.scalar() or 0
+
+        # Stats by destination country (top 5)
+        country_result = await db.execute(
+            select(
+                ShipmentTracking.delivery_address_country,
+                func.count(ShipmentTracking.id)
+            )
+            .where(ShipmentTracking.delivery_address_country.isnot(None))
+            .group_by(ShipmentTracking.delivery_address_country)
+            .order_by(func.count(ShipmentTracking.id).desc())
+            .limit(5)
+        )
+        by_country = [{"country": c, "count": n} for c, n in country_result.all() if c]
+
+        # Stats by carrier
+        carrier_result = await db.execute(
+            select(
+                ShipmentTracking.carrier,
+                func.count(ShipmentTracking.id)
+            )
+            .where(ShipmentTracking.carrier.isnot(None))
+            .group_by(ShipmentTracking.carrier)
+            .order_by(func.count(ShipmentTracking.id).desc())
+            .limit(5)
+        )
+        by_carrier = [{"carrier": c or "Unknown", "count": n} for c, n in carrier_result.all()]
+
+        # Active shipments (in transit + out for delivery)
+        active_count = status_counts.get("in_transit", 0) + status_counts.get("out_for_delivery", 0) + status_counts.get("pending", 0)
+
+        # Calculate delivery rate
+        total = sum(status_counts.values())
+        delivered = status_counts.get("delivered", 0)
+        delivery_rate = round((delivered / total) * 100, 1) if total > 0 else 0
+
         return {
-            "total": sum(status_counts.values()),
+            "total": total,
             "pending": status_counts.get("pending", 0),
             "in_transit": status_counts.get("in_transit", 0),
             "out_for_delivery": status_counts.get("out_for_delivery", 0),
-            "delivered": status_counts.get("delivered", 0),
+            "delivered": delivered,
             "exception": status_counts.get("exception", 0),
             "delayed": delayed_count,
             "followup_pending": followup_pending,
+            "followup_sent": followup_sent,
             "avg_delivery_days": round(avg_delivery_days, 1) if avg_delivery_days else None,
+            "delivery_rate": delivery_rate,
+            "active_shipments": active_count,
+            "by_country": by_country,
+            "by_carrier": by_carrier,
         }
 
 

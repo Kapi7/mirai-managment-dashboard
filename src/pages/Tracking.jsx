@@ -60,7 +60,12 @@ export default function Tracking() {
     exception: 0,
     delayed: 0,
     followup_pending: 0,
+    followup_sent: 0,
     avg_delivery_days: null,
+    delivery_rate: 0,
+    active_shipments: 0,
+    by_country: [],
+    by_carrier: [],
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -410,6 +415,60 @@ export default function Tracking() {
     return `https://track.aftership.com/${trackingNumber}`;
   };
 
+  // Get country flag emoji
+  const getCountryFlag = (country) => {
+    const flags = {
+      'United States': '🇺🇸', 'US': '🇺🇸', 'USA': '🇺🇸',
+      'United Kingdom': '🇬🇧', 'UK': '🇬🇧', 'GB': '🇬🇧',
+      'Australia': '🇦🇺', 'AU': '🇦🇺',
+      'Canada': '🇨🇦', 'CA': '🇨🇦',
+      'Germany': '🇩🇪', 'DE': '🇩🇪',
+      'France': '🇫🇷', 'FR': '🇫🇷',
+      'Japan': '🇯🇵', 'JP': '🇯🇵',
+      'South Korea': '🇰🇷', 'Korea': '🇰🇷', 'KR': '🇰🇷',
+      'China': '🇨🇳', 'CN': '🇨🇳',
+      'Singapore': '🇸🇬', 'SG': '🇸🇬',
+      'Netherlands': '🇳🇱', 'NL': '🇳🇱',
+      'Spain': '🇪🇸', 'ES': '🇪🇸',
+      'Italy': '🇮🇹', 'IT': '🇮🇹',
+      'Brazil': '🇧🇷', 'BR': '🇧🇷',
+      'Mexico': '🇲🇽', 'MX': '🇲🇽',
+      'India': '🇮🇳', 'IN': '🇮🇳',
+      'New Zealand': '🇳🇿', 'NZ': '🇳🇿',
+      'Sweden': '🇸🇪', 'SE': '🇸🇪',
+      'Norway': '🇳🇴', 'NO': '🇳🇴',
+      'Denmark': '🇩🇰', 'DK': '🇩🇰',
+      'Finland': '🇫🇮', 'FI': '🇫🇮',
+      'Switzerland': '🇨🇭', 'CH': '🇨🇭',
+      'Austria': '🇦🇹', 'AT': '🇦🇹',
+      'Belgium': '🇧🇪', 'BE': '🇧🇪',
+      'Ireland': '🇮🇪', 'IE': '🇮🇪',
+      'Portugal': '🇵🇹', 'PT': '🇵🇹',
+      'Poland': '🇵🇱', 'PL': '🇵🇱',
+      'Israel': '🇮🇱', 'IL': '🇮🇱',
+      'United Arab Emirates': '🇦🇪', 'UAE': '🇦🇪',
+      'Thailand': '🇹🇭', 'TH': '🇹🇭',
+      'Malaysia': '🇲🇾', 'MY': '🇲🇾',
+      'Philippines': '🇵🇭', 'PH': '🇵🇭',
+      'Vietnam': '🇻🇳', 'VN': '🇻🇳',
+      'Indonesia': '🇮🇩', 'ID': '🇮🇩',
+      'Taiwan': '🇹🇼', 'TW': '🇹🇼',
+      'Hong Kong': '🇭🇰', 'HK': '🇭🇰',
+      'Russia': '🇷🇺', 'RU': '🇷🇺',
+      'South Africa': '🇿🇦', 'ZA': '🇿🇦',
+      'Argentina': '🇦🇷', 'AR': '🇦🇷',
+      'Chile': '🇨🇱', 'CL': '🇨🇱',
+      'Colombia': '🇨🇴', 'CO': '🇨🇴',
+      'Greece': '🇬🇷', 'GR': '🇬🇷',
+      'Czech Republic': '🇨🇿', 'CZ': '🇨🇿',
+      'Hungary': '🇭🇺', 'HU': '🇭🇺',
+      'Romania': '🇷🇴', 'RO': '🇷🇴',
+      'Turkey': '🇹🇷', 'TR': '🇹🇷',
+      'Cyprus': '🇨🇾', 'CY': '🇨🇾',
+    };
+    return flags[country] || '🌍';
+  };
+
   if (loading) {
     return (
       <div className="p-6 space-y-6">
@@ -463,27 +522,28 @@ export default function Tracking() {
       </div>
 
       {/* Summary Dashboard */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Main Status Summary */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        {/* Key Metrics */}
         <Card className="lg:col-span-2">
           <CardContent className="pt-5">
             <div className="flex items-start justify-between mb-4">
               <div>
-                <h3 className="text-lg font-semibold text-slate-900">Shipment Overview</h3>
+                <h3 className="text-lg font-semibold text-slate-900">Delivery Performance</h3>
                 <p className="text-sm text-slate-500">
-                  {stats.in_transit + stats.out_for_delivery + stats.pending > 0
-                    ? `${stats.in_transit + stats.out_for_delivery + stats.pending} packages on the way`
-                    : 'All packages delivered'}
+                  {stats.active_shipments > 0
+                    ? `${stats.active_shipments} active shipments being tracked`
+                    : 'No active shipments'}
                 </p>
               </div>
-              <Badge className="bg-slate-100 text-slate-700">
-                {stats.total} Total Shipments
-              </Badge>
+              <div className="text-right">
+                <div className="text-3xl font-bold text-green-600">{stats.delivery_rate}%</div>
+                <div className="text-xs text-slate-500">Delivery Rate</div>
+              </div>
             </div>
 
             {/* Visual Progress Bar */}
             <div className="mb-4">
-              <div className="flex h-3 rounded-full overflow-hidden bg-slate-100">
+              <div className="flex h-4 rounded-full overflow-hidden bg-slate-100">
                 {stats.delivered > 0 && (
                   <div
                     className="bg-green-500 transition-all"
@@ -513,46 +573,40 @@ export default function Tracking() {
                   />
                 )}
               </div>
-              <div className="flex justify-between mt-2 text-xs text-slate-500">
-                <div className="flex items-center gap-4">
-                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500" /> Delivered ({stats.delivered})</span>
-                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-500" /> Out for Delivery ({stats.out_for_delivery})</span>
-                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500" /> In Transit ({stats.in_transit})</span>
-                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-slate-300" /> Pending ({stats.pending})</span>
-                </div>
+              <div className="flex flex-wrap gap-3 mt-2 text-xs text-slate-600">
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500" /> Delivered ({stats.delivered})</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-purple-500" /> Out for Delivery ({stats.out_for_delivery})</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500" /> In Transit ({stats.in_transit})</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-slate-300" /> Pending ({stats.pending})</span>
               </div>
             </div>
 
             {/* Quick Stats Row */}
-            <div className="grid grid-cols-4 gap-3 pt-3 border-t">
+            <div className="grid grid-cols-4 gap-2 pt-3 border-t">
+              <div
+                className="text-center p-2 rounded-lg bg-slate-50 cursor-pointer hover:bg-slate-100 transition-colors"
+                onClick={() => setStatusFilter('all')}
+              >
+                <div className="text-2xl font-bold text-slate-700">{stats.total}</div>
+                <div className="text-xs text-slate-500">Total</div>
+              </div>
               <div
                 className="text-center p-2 rounded-lg bg-blue-50 cursor-pointer hover:bg-blue-100 transition-colors"
                 onClick={() => setStatusFilter('in_transit')}
               >
-                <Truck className="h-5 w-5 text-blue-600 mx-auto mb-1" />
-                <div className="text-xl font-bold text-blue-700">{stats.in_transit}</div>
+                <div className="text-2xl font-bold text-blue-700">{stats.in_transit}</div>
                 <div className="text-xs text-blue-600">In Transit</div>
-              </div>
-              <div
-                className="text-center p-2 rounded-lg bg-purple-50 cursor-pointer hover:bg-purple-100 transition-colors"
-                onClick={() => setStatusFilter('out_for_delivery')}
-              >
-                <Package className="h-5 w-5 text-purple-600 mx-auto mb-1" />
-                <div className="text-xl font-bold text-purple-700">{stats.out_for_delivery}</div>
-                <div className="text-xs text-purple-600">Out for Delivery</div>
               </div>
               <div
                 className="text-center p-2 rounded-lg bg-green-50 cursor-pointer hover:bg-green-100 transition-colors"
                 onClick={() => setStatusFilter('delivered')}
               >
-                <CheckCircle className="h-5 w-5 text-green-600 mx-auto mb-1" />
-                <div className="text-xl font-bold text-green-700">{stats.delivered}</div>
+                <div className="text-2xl font-bold text-green-700">{stats.delivered}</div>
                 <div className="text-xs text-green-600">Delivered</div>
               </div>
               <div className="text-center p-2 rounded-lg bg-slate-50">
-                <Timer className="h-5 w-5 text-slate-600 mx-auto mb-1" />
-                <div className="text-xl font-bold text-slate-700">{stats.avg_delivery_days || '-'}</div>
-                <div className="text-xs text-slate-600">Avg Days</div>
+                <div className="text-2xl font-bold text-slate-700">{stats.avg_delivery_days || '-'}</div>
+                <div className="text-xs text-slate-500">Avg Days</div>
               </div>
             </div>
           </CardContent>
@@ -563,104 +617,118 @@ export default function Tracking() {
           (stats.delayed > 0 || stats.exception > 0 || stats.followup_pending > 0) && "border-amber-200"
         )}>
           <CardContent className="pt-5">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-slate-900">Attention Needed</h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold text-slate-900">Attention Needed</h3>
               {(stats.delayed + stats.exception + stats.followup_pending) > 0 ? (
                 <Badge className="bg-amber-100 text-amber-700">
-                  {stats.delayed + stats.exception + stats.followup_pending} Items
+                  {stats.delayed + stats.exception + stats.followup_pending}
                 </Badge>
               ) : (
-                <Badge className="bg-green-100 text-green-700">All Good</Badge>
+                <Badge className="bg-green-100 text-green-700">OK</Badge>
               )}
             </div>
 
-            <div className="space-y-3">
-              {/* Delayed */}
+            <div className="space-y-2">
               <div
                 className={cn(
-                  "flex items-center justify-between p-3 rounded-lg cursor-pointer transition-colors",
+                  "flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors",
                   stats.delayed > 0 ? "bg-red-50 hover:bg-red-100" : "bg-slate-50"
                 )}
                 onClick={() => setStatusFilter('delayed')}
               >
-                <div className="flex items-center gap-3">
-                  <div className={cn(
-                    "w-10 h-10 rounded-full flex items-center justify-center",
-                    stats.delayed > 0 ? "bg-red-100" : "bg-slate-100"
-                  )}>
-                    <AlertTriangle className={cn(
-                      "h-5 w-5",
-                      stats.delayed > 0 ? "text-red-600" : "text-slate-400"
-                    )} />
-                  </div>
-                  <div>
-                    <div className="font-medium text-slate-900">Delayed Packages</div>
-                    <div className="text-xs text-slate-500">Taking longer than expected</div>
-                  </div>
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className={cn("h-4 w-4", stats.delayed > 0 ? "text-red-600" : "text-slate-400")} />
+                  <span className="text-sm">Delayed</span>
                 </div>
-                <span className={cn(
-                  "text-2xl font-bold",
-                  stats.delayed > 0 ? "text-red-600" : "text-slate-400"
-                )}>{stats.delayed}</span>
+                <span className={cn("text-lg font-bold", stats.delayed > 0 ? "text-red-600" : "text-slate-400")}>{stats.delayed}</span>
               </div>
 
-              {/* Exceptions */}
               <div
                 className={cn(
-                  "flex items-center justify-between p-3 rounded-lg cursor-pointer transition-colors",
+                  "flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors",
                   stats.exception > 0 ? "bg-orange-50 hover:bg-orange-100" : "bg-slate-50"
                 )}
                 onClick={() => setStatusFilter('exception')}
               >
-                <div className="flex items-center gap-3">
-                  <div className={cn(
-                    "w-10 h-10 rounded-full flex items-center justify-center",
-                    stats.exception > 0 ? "bg-orange-100" : "bg-slate-100"
-                  )}>
-                    <AlertCircle className={cn(
-                      "h-5 w-5",
-                      stats.exception > 0 ? "text-orange-600" : "text-slate-400"
-                    )} />
-                  </div>
-                  <div>
-                    <div className="font-medium text-slate-900">Exceptions</div>
-                    <div className="text-xs text-slate-500">Issues with delivery</div>
-                  </div>
+                <div className="flex items-center gap-2">
+                  <AlertCircle className={cn("h-4 w-4", stats.exception > 0 ? "text-orange-600" : "text-slate-400")} />
+                  <span className="text-sm">Exceptions</span>
                 </div>
-                <span className={cn(
-                  "text-2xl font-bold",
-                  stats.exception > 0 ? "text-orange-600" : "text-slate-400"
-                )}>{stats.exception}</span>
+                <span className={cn("text-lg font-bold", stats.exception > 0 ? "text-orange-600" : "text-slate-400")}>{stats.exception}</span>
               </div>
 
-              {/* Followup Pending */}
               <div
                 className={cn(
-                  "flex items-center justify-between p-3 rounded-lg cursor-pointer transition-colors",
+                  "flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors",
                   stats.followup_pending > 0 ? "bg-amber-50 hover:bg-amber-100" : "bg-slate-50"
                 )}
                 onClick={() => setStatusFilter('followup')}
               >
-                <div className="flex items-center gap-3">
-                  <div className={cn(
-                    "w-10 h-10 rounded-full flex items-center justify-center",
-                    stats.followup_pending > 0 ? "bg-amber-100" : "bg-slate-100"
-                  )}>
-                    <Send className={cn(
-                      "h-5 w-5",
-                      stats.followup_pending > 0 ? "text-amber-600" : "text-slate-400"
-                    )} />
-                  </div>
-                  <div>
-                    <div className="font-medium text-slate-900">Followup Emails</div>
-                    <div className="text-xs text-slate-500">Delivered, awaiting upsell</div>
-                  </div>
+                <div className="flex items-center gap-2">
+                  <Send className={cn("h-4 w-4", stats.followup_pending > 0 ? "text-amber-600" : "text-slate-400")} />
+                  <span className="text-sm">Followup Pending</span>
                 </div>
-                <span className={cn(
-                  "text-2xl font-bold",
-                  stats.followup_pending > 0 ? "text-amber-600" : "text-slate-400"
-                )}>{stats.followup_pending}</span>
+                <span className={cn("text-lg font-bold", stats.followup_pending > 0 ? "text-amber-600" : "text-slate-400")}>{stats.followup_pending}</span>
               </div>
+
+              {/* Followup sent stats */}
+              <div className="flex items-center justify-between p-2 rounded-lg bg-green-50">
+                <div className="flex items-center gap-2">
+                  <Mail className="h-4 w-4 text-green-600" />
+                  <span className="text-sm">Followups Sent</span>
+                </div>
+                <span className="text-lg font-bold text-green-600">{stats.followup_sent || 0}</span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Shipments by Region */}
+        <Card>
+          <CardContent className="pt-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold text-slate-900">By Destination</h3>
+              <Globe className="h-4 w-4 text-slate-400" />
+            </div>
+
+            {stats.by_country && stats.by_country.length > 0 ? (
+              <div className="space-y-2">
+                {stats.by_country.map((item, i) => (
+                  <div key={i} className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">{getCountryFlag(item.country)}</span>
+                      <span className="text-sm text-slate-700">{item.country}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-16 h-2 bg-slate-100 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-blue-500 rounded-full"
+                          style={{ width: `${(item.count / stats.total) * 100}%` }}
+                        />
+                      </div>
+                      <span className="text-sm font-medium text-slate-600 w-8 text-right">{item.count}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-sm text-slate-500 text-center py-4">No data yet</div>
+            )}
+
+            {/* Carrier stats */}
+            <div className="mt-4 pt-3 border-t">
+              <div className="text-xs text-slate-500 mb-2">Top Carriers</div>
+              {stats.by_carrier && stats.by_carrier.length > 0 ? (
+                <div className="flex flex-wrap gap-1">
+                  {stats.by_carrier.slice(0, 3).map((item, i) => (
+                    <Badge key={i} variant="outline" className="text-xs">
+                      {item.carrier}: {item.count}
+                    </Badge>
+                  ))}
+                </div>
+              ) : (
+                <span className="text-xs text-slate-400">No carrier data</span>
+              )}
             </div>
           </CardContent>
         </Card>
