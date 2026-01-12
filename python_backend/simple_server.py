@@ -1493,7 +1493,7 @@ async def google_login(req: GoogleAuthRequest):
 
         # Check if user exists in database
         if DB_SERVICE_AVAILABLE:
-            from database.connection import get_db
+            from database.connection import get_db, is_db_configured
             from database.models import User
             from sqlalchemy import select, func
 
@@ -1604,7 +1604,7 @@ async def list_users(user: dict = Depends(require_admin)):
     if not DB_SERVICE_AVAILABLE:
         return {"users": [], "message": "Database not available"}
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import User
     from sqlalchemy import select
 
@@ -1635,7 +1635,7 @@ async def add_user(req: AddUserRequest, user: dict = Depends(require_admin)):
     if not DB_SERVICE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import User
     from sqlalchemy import select, func
 
@@ -1670,7 +1670,7 @@ async def delete_user(user_id: int, user: dict = Depends(require_admin)):
     if not DB_SERVICE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import User
     from sqlalchemy import select
 
@@ -1697,7 +1697,7 @@ async def toggle_admin(user_id: int, user: dict = Depends(require_admin)):
     if not DB_SERVICE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import User
     from sqlalchemy import select
 
@@ -1759,7 +1759,7 @@ async def list_support_emails(
         print("📧 [support/emails] Database service not available")
         return {"emails": [], "total": 0, "message": "Database not available"}
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import SupportEmail, SupportMessage
     from sqlalchemy import select, func, desc
     from sqlalchemy.orm import selectinload
@@ -1838,7 +1838,7 @@ async def get_support_email(email_id: int, user: dict = Depends(get_current_user
     if not DB_SERVICE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import SupportEmail
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
@@ -1902,7 +1902,7 @@ async def webhook_support_email(req: SupportEmailCreate):
     if not DB_SERVICE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import SupportEmail, SupportMessage
     from sqlalchemy import select
 
@@ -1964,7 +1964,7 @@ async def webhook_update_support_email(email_id: int, req: SupportEmailUpdate):
     if not DB_SERVICE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import SupportEmail, SupportMessage
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
@@ -2017,7 +2017,7 @@ async def create_support_email(req: SupportEmailCreate, user: dict = Depends(get
     if not DB_SERVICE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import SupportEmail, SupportMessage
     from sqlalchemy import select
 
@@ -2083,7 +2083,7 @@ async def update_support_email(
     if not DB_SERVICE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import SupportEmail, SupportMessage
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
@@ -2143,7 +2143,7 @@ async def approve_support_email(email_id: int, user: dict = Depends(get_current_
     if not DB_SERVICE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import SupportEmail, SupportMessage
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
@@ -2193,7 +2193,7 @@ async def reject_support_email(email_id: int, user: dict = Depends(get_current_u
     if not DB_SERVICE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import SupportEmail
     from sqlalchemy import select
 
@@ -2225,7 +2225,7 @@ async def resolve_support_email(email_id: int, req: ResolveRequest, user: dict =
     if not DB_SERVICE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import SupportEmail
     from sqlalchemy import select
 
@@ -2281,7 +2281,7 @@ async def regenerate_ai_response(
         raise HTTPException(status_code=503, detail="Database not available")
 
     import httpx
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import SupportEmail, SupportMessage
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
@@ -2369,7 +2369,7 @@ async def get_support_stats(user: dict = Depends(get_current_user)):
     if not DB_SERVICE_AVAILABLE:
         return {"pending": 0, "draft_ready": 0, "approved": 0, "sent": 0, "total": 0}
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import SupportEmail
     from sqlalchemy import select, func, and_
     from datetime import datetime, timedelta
@@ -2498,9 +2498,12 @@ async def get_support_tickets(
     if not DB_SERVICE_AVAILABLE:
         return {"tickets": [], "total": 0}
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import SupportEmail, SupportMessage
     from sqlalchemy import select, func, desc, and_
+
+    if not is_db_configured():
+        return {"tickets": [], "total": 0}
 
     async with get_db() as db:
         # First, get distinct customers with their latest email info
@@ -2634,10 +2637,13 @@ async def get_customer_support_details(email: str, user: dict = Depends(get_curr
     if not DB_SERVICE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import SupportEmail, SupportMessage, ShipmentTracking
     from sqlalchemy import select, desc
     import urllib.parse
+
+    if not is_db_configured():
+        raise HTTPException(status_code=503, detail="Database not configured")
 
     decoded_email = urllib.parse.unquote(email)
 
@@ -2773,9 +2779,12 @@ async def get_recent_trackings(limit: int = 10, user: dict = Depends(get_current
     if not DB_SERVICE_AVAILABLE:
         return {"trackings": []}
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import ShipmentTracking
     from sqlalchemy import select, desc
+
+    if not is_db_configured():
+        return {"trackings": []}
 
     async with get_db() as db:
         result = await db.execute(
@@ -2823,9 +2832,12 @@ async def list_shipments(
     if not DB_SERVICE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import ShipmentTracking
     from sqlalchemy import select, desc
+
+    if not is_db_configured():
+        raise HTTPException(status_code=503, detail="Database not configured")
 
     async with get_db() as db:
         query = select(ShipmentTracking).order_by(desc(ShipmentTracking.shipped_at))
@@ -2878,9 +2890,12 @@ async def get_tracking_stats(user: dict = Depends(get_current_user)):
     if not DB_SERVICE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import ShipmentTracking
     from sqlalchemy import select, func
+
+    if not is_db_configured():
+        raise HTTPException(status_code=503, detail="Database not configured")
 
     async with get_db() as db:
         # Count by status
@@ -2941,9 +2956,12 @@ async def sync_shipments_from_shopify(user: dict = Depends(get_current_user)):
     if not DB_SERVICE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import ShipmentTracking
     from sqlalchemy import select
+
+    if not is_db_configured():
+        raise HTTPException(status_code=503, detail="Database not configured")
 
     shopify_store = os.getenv("SHOPIFY_STORE")
     shopify_token = os.getenv("SHOPIFY_ACCESS_TOKEN") or os.getenv("SHOPIFY_TOKEN")
@@ -3010,9 +3028,12 @@ async def check_single_tracking(tracking_number: str, user: dict = Depends(get_c
     if not DB_SERVICE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import ShipmentTracking
     from sqlalchemy import select
+
+    if not is_db_configured():
+        raise HTTPException(status_code=503, detail="Database not configured")
 
     # Import tracking service
     import sys
@@ -3087,7 +3108,7 @@ async def check_all_active_trackings(background_tasks: BackgroundTasks, user: di
     if not DB_SERVICE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import ShipmentTracking
     from sqlalchemy import select
 
@@ -3113,7 +3134,7 @@ async def check_trackings_background(tracking_numbers: List[str]):
     import sys
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'emma_service'))
     from tracking_service import check_tracking_aftership, detect_delays
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import ShipmentTracking
     from sqlalchemy import select
     import asyncio
@@ -3150,7 +3171,7 @@ async def mark_followup_sent(tracking_id: int, user: dict = Depends(get_current_
     if not DB_SERVICE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import ShipmentTracking
     from sqlalchemy import select
 
@@ -3215,7 +3236,7 @@ async def send_followup_for_shipment(tracking_id: int, user: dict = Depends(get_
     if not DB_SERVICE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import ShipmentTracking
     from sqlalchemy import select
 
@@ -3296,7 +3317,7 @@ async def send_all_pending_followups(
     if not DB_SERVICE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import ShipmentTracking
     from sqlalchemy import select
 
@@ -3331,7 +3352,7 @@ async def send_followups_background(shipment_ids: List[int]):
     import sys
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'emma_service'))
     from followup_service import process_delivery_followup
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import ShipmentTracking
     from sqlalchemy import select
     import asyncio
@@ -3396,7 +3417,7 @@ async def list_pending_followups(limit: int = 50, user: dict = Depends(get_curre
     if not DB_SERVICE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
-    from database.connection import get_db
+    from database.connection import get_db, is_db_configured
     from database.models import ShipmentTracking
     from sqlalchemy import select, desc
 

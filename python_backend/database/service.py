@@ -6,8 +6,9 @@ import os
 from datetime import datetime, date, timedelta
 from typing import List, Dict, Any, Optional
 from decimal import Decimal
+import pytz
 
-from sqlalchemy import select, func, and_, desc, case
+from sqlalchemy import select, func, and_, desc, case, text
 from sqlalchemy.orm import selectinload
 
 from .connection import get_db, is_db_configured
@@ -271,17 +272,39 @@ class DatabaseService:
         Get daily KPIs - aggregates from orders table directly
 
         Returns list with daily metrics
+
+        IMPORTANT: Uses Asia/Nicosia timezone for date boundaries to match Shopify store timezone.
+        Database stores timestamps in UTC, so we convert local dates to UTC for filtering
+        and convert UTC timestamps to local timezone for grouping by date.
         """
         if not is_db_configured():
             return None
 
         try:
+            # Get shop timezone (Asia/Nicosia = UTC+2)
+            shop_tz_str = os.getenv("SHOP_TZ", "Asia/Nicosia")
+            shop_tz = pytz.timezone(shop_tz_str)
+
+            # Convert local date boundaries to UTC for WHERE clause
+            # Local midnight start_date -> UTC
+            start_local = shop_tz.localize(datetime.combine(start_date, datetime.min.time()))
+            start_utc = start_local.astimezone(pytz.UTC).replace(tzinfo=None)
+
+            # Local midnight (end_date + 1 day) -> UTC
+            end_local = shop_tz.localize(datetime.combine(end_date + timedelta(days=1), datetime.min.time()))
+            end_utc = end_local.astimezone(pytz.UTC).replace(tzinfo=None)
+
             async with get_db() as db:
+                # Convert UTC timestamps to local timezone for grouping
+                # PostgreSQL: created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Nicosia'
+                local_timestamp = func.timezone(shop_tz_str, func.timezone('UTC', Order.created_at))
+                local_date = func.date(local_timestamp)
+
                 # Aggregate directly from orders table with channel attribution
                 # Note: returning_customers counts UNIQUE customer_ids where is_returning=True
                 query = (
                     select(
-                        func.date(Order.created_at).label('order_date'),
+                        local_date.label('order_date'),
                         func.count(Order.id).label('orders'),
                         # Count unique returning customers (not total returning orders)
                         func.count(func.distinct(case((Order.is_returning == True, Order.customer_id), else_=None))).label('returning_customers'),
@@ -297,13 +320,13 @@ class DatabaseService:
                     )
                     .where(
                         and_(
-                            Order.created_at >= datetime.combine(start_date, datetime.min.time()),
-                            Order.created_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time()),
+                            Order.created_at >= start_utc,
+                            Order.created_at < end_utc,
                             Order.cancelled_at.is_(None)
                         )
                     )
-                    .group_by(func.date(Order.created_at))
-                    .order_by(desc(func.date(Order.created_at)))
+                    .group_by(local_date)
+                    .order_by(desc(local_date))
                 )
 
                 result = await db.execute(query)
