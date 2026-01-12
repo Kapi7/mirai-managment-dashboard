@@ -1104,6 +1104,65 @@ app.get('/api/support/stats', async (req, res) => {
   }
 });
 
+// Support - Get tickets (grouped by customer)
+app.get('/api/support/tickets', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const queryString = new URLSearchParams(req.query).toString();
+    const response = await fetch(`${pythonBackendUrl}/support/tickets${queryString ? '?' + queryString : ''}`, {
+      headers: {
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(30000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Support tickets error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Support - Get customer details (full conversation history)
+app.get('/api/support/customer/:email/details', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/support/customer/${encodeURIComponent(req.params.email)}/details`, {
+      headers: {
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(30000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Support customer details error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Support - Get recent trackings
+app.get('/api/support/recent-trackings', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const queryString = new URLSearchParams(req.query).toString();
+    const response = await fetch(`${pythonBackendUrl}/support/recent-trackings${queryString ? '?' + queryString : ''}`, {
+      headers: {
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(15000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Support recent trackings error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ==================== TRACKING DASHBOARD ====================
 
 // Tracking - List shipments
