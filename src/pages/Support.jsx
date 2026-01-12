@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -60,10 +61,12 @@ import { cn } from '@/lib/utils';
 const API_URL = '/api';
 
 export default function Support() {
+  const { getAuthHeader } = useAuth();
   const [tickets, setTickets] = useState([]);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [customerDetails, setCustomerDetails] = useState(null);
   const [recentTrackings, setRecentTrackings] = useState([]);
+  const [checkingTrackingId, setCheckingTrackingId] = useState(null);
   const [stats, setStats] = useState({
     pending: 0, draft_ready: 0, approved: 0, sent: 0, total: 0,
     classification_breakdown: {}, priority_breakdown: {}, intent_breakdown: {},
@@ -123,12 +126,34 @@ export default function Support() {
   // Fetch recent trackings
   const fetchRecentTrackings = async () => {
     try {
-      const response = await fetch(`${API_URL}/support/recent-trackings?limit=10`);
+      const response = await fetch(`${API_URL}/support/recent-trackings?limit=10`, {
+        headers: getAuthHeader()
+      });
       if (!response.ok) throw new Error('Failed to fetch trackings');
       const data = await response.json();
       setRecentTrackings(data.trackings || []);
     } catch (err) {
       console.error('Failed to fetch trackings:', err);
+    }
+  };
+
+  // Check/refresh a single tracking
+  const handleCheckTracking = async (trackingNumber) => {
+    setCheckingTrackingId(trackingNumber);
+    try {
+      const response = await fetch(`${API_URL}/tracking/check/${trackingNumber}`, {
+        method: 'POST',
+        headers: getAuthHeader()
+      });
+      const data = await response.json();
+      if (data.success) {
+        // Refresh trackings list to show updated data
+        await fetchRecentTrackings();
+      }
+    } catch (err) {
+      console.error('Check tracking error:', err);
+    } finally {
+      setCheckingTrackingId(null);
     }
   };
 
@@ -527,16 +552,29 @@ export default function Support() {
                         </div>
                       </div>
                     </div>
-                    <div className="text-right text-xs text-slate-500">
-                      {tracking.last_checkpoint && (
-                        <div className="flex items-center gap-1 mb-1">
-                          <MapPin className="h-3 w-3" />
-                          {tracking.last_checkpoint.substring(0, 40)}
-                        </div>
-                      )}
-                      {tracking.last_checked && (
-                        <div>Updated {formatDistanceToNow(new Date(tracking.last_checked), { addSuffix: true })}</div>
-                      )}
+                    <div className="flex items-center gap-3">
+                      <div className="text-right text-xs text-slate-500">
+                        {tracking.last_checkpoint && (
+                          <div className="flex items-center gap-1 mb-1">
+                            <MapPin className="h-3 w-3" />
+                            {tracking.last_checkpoint.substring(0, 40)}
+                          </div>
+                        )}
+                        {tracking.last_checked && (
+                          <div>Updated {formatDistanceToNow(new Date(tracking.last_checked), { addSuffix: true })}</div>
+                        )}
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleCheckTracking(tracking.tracking_number)}
+                        disabled={checkingTrackingId === tracking.tracking_number}
+                      >
+                        <RefreshCw className={cn(
+                          "h-4 w-4",
+                          checkingTrackingId === tracking.tracking_number && "animate-spin"
+                        )} />
+                      </Button>
                     </div>
                   </div>
                 ))}
