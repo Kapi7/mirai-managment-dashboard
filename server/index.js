@@ -959,6 +959,28 @@ app.post('/api/support/emails/:emailId/reject', async (req, res) => {
   }
 });
 
+// Support - Resolve ticket
+app.post('/api/support/emails/:emailId/resolve', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/support/emails/${req.params.emailId}/resolve`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': req.headers.authorization || ''
+      },
+      body: JSON.stringify(req.body),
+      signal: AbortSignal.timeout(10000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Support email resolve error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Support - Regenerate AI response with optional hints
 app.post('/api/support/emails/:emailId/regenerate', async (req, res) => {
   try {

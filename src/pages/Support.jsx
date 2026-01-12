@@ -46,7 +46,15 @@ import {
   Zap,
   Tag,
   Calendar,
-  ShoppingCart
+  ShoppingCart,
+  Package,
+  Timer,
+  FileCheck,
+  Truck,
+  DollarSign,
+  RotateCcw,
+  Archive,
+  Flag
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { cn } from '@/lib/utils';
@@ -74,6 +82,88 @@ export default function Support() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [showAllEmails, setShowAllEmails] = useState(false);
+
+  // Ticket resolution state
+  const [resolution, setResolution] = useState('');
+  const [resolutionNotes, setResolutionNotes] = useState('');
+  const [isResolving, setIsResolving] = useState(false);
+
+  // Helper to parse email content and clean up quoted threads
+  const parseEmailThread = (content) => {
+    if (!content) return [];
+
+    // Split by common reply patterns
+    const patterns = [
+      /On .+wrote:/gi,  // "On Mon, Jan 5, 2026 at 9:49 PM Christina Pan wrote:"
+      /From:.+Sent:.+To:/gi,
+      /_{20,}/g,  // Long underscores
+      /-{20,}/g,  // Long dashes
+    ];
+
+    // Clean up the content
+    let cleaned = content
+      .replace(/<[^>]*>/g, '') // Remove HTML tags
+      .replace(/\r\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n'); // Remove excessive newlines
+
+    // Try to extract just the latest message (before quotes)
+    const onWroteMatch = cleaned.match(/^([\s\S]*?)(?=On .{10,80}wrote:)/i);
+    if (onWroteMatch && onWroteMatch[1].trim().length > 10) {
+      return onWroteMatch[1].trim();
+    }
+
+    // Fallback: return first 500 chars if very long
+    if (cleaned.length > 1000) {
+      const firstPart = cleaned.substring(0, 800);
+      const lastNewline = firstPart.lastIndexOf('\n\n');
+      if (lastNewline > 200) {
+        return firstPart.substring(0, lastNewline) + '\n\n[...see full thread below]';
+      }
+    }
+
+    return cleaned;
+  };
+
+  // Resolution options
+  const resolutionOptions = [
+    { value: 'resolved', label: 'Resolved', icon: CheckCircle, color: 'green' },
+    { value: 'refunded', label: 'Refunded', icon: DollarSign, color: 'blue' },
+    { value: 'replaced', label: 'Replaced', icon: RotateCcw, color: 'purple' },
+    { value: 'waiting_customer', label: 'Waiting on Customer', icon: Clock, color: 'yellow' },
+    { value: 'escalated', label: 'Escalated', icon: Flag, color: 'red' },
+    { value: 'no_action_needed', label: 'No Action Needed', icon: Archive, color: 'slate' },
+  ];
+
+  // Handle ticket resolution
+  const handleResolveTicket = async (resolutionType) => {
+    if (!selectedEmail) return;
+    setIsResolving(true);
+    try {
+      const response = await fetch(`${API_URL}/support/emails/${selectedEmail.id}/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          resolution: resolutionType,
+          resolution_notes: resolutionNotes,
+        }),
+      });
+      if (!response.ok) throw new Error('Failed to resolve ticket');
+
+      // Update local state
+      setSelectedEmail(prev => ({
+        ...prev,
+        status: 'resolved',
+        resolution: resolutionType,
+        resolution_notes: resolutionNotes,
+      }));
+      await fetchEmails();
+    } catch (err) {
+      console.error('Failed to resolve ticket:', err);
+      setError(err.message);
+    } finally {
+      setIsResolving(false);
+    }
+  };
 
   // Fetch emails
   const fetchEmails = async () => {
@@ -675,9 +765,60 @@ export default function Support() {
 
           {selectedEmail && (
             <div className="space-y-6">
-              {/* Status & Classification */}
-              <div className="flex items-center gap-2 flex-wrap p-3 bg-slate-50 rounded-lg">
-                {getStatusBadge(selectedEmail.status)}
+              {/* Ticket Info Bar */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {/* Status */}
+                <div className="p-3 bg-slate-50 rounded-lg border">
+                  <div className="text-xs text-slate-500 mb-1">Status</div>
+                  <div className="flex items-center gap-2">
+                    {getStatusBadge(selectedEmail.status)}
+                    {selectedEmail.resolution && (
+                      <Badge variant="outline" className="text-xs">{selectedEmail.resolution}</Badge>
+                    )}
+                  </div>
+                </div>
+
+                {/* Time Open */}
+                <div className="p-3 bg-slate-50 rounded-lg border">
+                  <div className="text-xs text-slate-500 mb-1 flex items-center gap-1">
+                    <Timer className="h-3 w-3" /> Time Open
+                  </div>
+                  <div className="font-medium text-sm">
+                    {selectedEmail.received_at ? formatDistanceToNow(new Date(selectedEmail.received_at)) : '-'}
+                  </div>
+                </div>
+
+                {/* Order # */}
+                <div className="p-3 bg-slate-50 rounded-lg border">
+                  <div className="text-xs text-slate-500 mb-1 flex items-center gap-1">
+                    <ShoppingCart className="h-3 w-3" /> Order
+                  </div>
+                  <div className="font-medium text-sm">
+                    {selectedEmail.order_number || (
+                      <span className="text-slate-400">Not linked</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Tracking */}
+                <div className="p-3 bg-slate-50 rounded-lg border">
+                  <div className="text-xs text-slate-500 mb-1 flex items-center gap-1">
+                    <Truck className="h-3 w-3" /> Tracking
+                  </div>
+                  <div className="font-medium text-sm">
+                    {selectedEmail.tracking_status ? (
+                      <Badge variant="outline" className="text-xs">{selectedEmail.tracking_status}</Badge>
+                    ) : selectedEmail.tracking_number ? (
+                      <span className="text-xs font-mono">{selectedEmail.tracking_number.substring(0, 15)}...</span>
+                    ) : (
+                      <span className="text-slate-400">N/A</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Classification Tags */}
+              <div className="flex items-center gap-2 flex-wrap">
                 {getInboxBadge(selectedEmail.inbox_type)}
                 {getClassificationBadge(selectedEmail.classification)}
                 {selectedEmail.intent && (
@@ -692,64 +833,71 @@ export default function Support() {
                 )}
               </div>
 
-              {/* Conversation - Manager-friendly display */}
-              <div className="space-y-4">
-                <h4 className="font-semibold flex items-center gap-2">
+              {/* Conversation - Chat-like display */}
+              <div className="space-y-3">
+                <h4 className="font-semibold flex items-center gap-2 text-slate-700">
                   <MessageSquare className="h-4 w-4" />
                   Conversation
+                  <span className="text-xs font-normal text-slate-400">
+                    ({selectedEmail.messages?.length || 0} messages)
+                  </span>
                 </h4>
 
-                {/* Customer Context Summary */}
-                {selectedEmail.messages?.length > 0 && (
-                  <div className="p-3 bg-slate-100 rounded-lg border text-sm">
-                    <div className="font-medium text-slate-700 mb-1">Quick Summary:</div>
-                    <div className="text-slate-600">
-                      <span className="font-medium">{selectedEmail.customer_name || selectedEmail.customer_email}</span>
-                      {' - '}
-                      <span className="capitalize">{selectedEmail.intent || 'General inquiry'}</span>
-                      {selectedEmail.classification && (
-                        <span className="text-xs ml-2 text-slate-500">({selectedEmail.classification})</span>
+                <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
+                  {selectedEmail.messages?.map((msg, idx) => (
+                    <div
+                      key={idx}
+                      className={cn(
+                        "p-3 rounded-lg",
+                        msg.direction === 'inbound'
+                          ? 'bg-white border border-slate-200 mr-12'
+                          : 'bg-blue-50 border border-blue-200 ml-12'
                       )}
-                    </div>
-                  </div>
-                )}
-
-                {selectedEmail.messages?.map((msg, idx) => (
-                  <div
-                    key={idx}
-                    className={cn(
-                      "p-4 rounded-lg border",
-                      msg.direction === 'inbound' ? 'bg-slate-50 border-slate-200' : 'bg-blue-50 border-blue-200 ml-8'
-                    )}
-                  >
-                    <div className="flex items-center gap-2 mb-2">
-                      {msg.direction === 'inbound' ? (
-                        <User className="h-4 w-4 text-slate-600" />
-                      ) : (
-                        <Bot className="h-4 w-4 text-blue-600" />
-                      )}
-                      <span className="font-medium text-sm">
-                        {msg.direction === 'inbound' ? msg.sender_name || 'Customer' : 'Mirai Support'}
-                      </span>
-                      <span className="text-xs text-slate-500">
-                        {msg.created_at ? format(new Date(msg.created_at), 'MMM d, h:mm a') : ''}
-                      </span>
-                    </div>
-                    <div className="whitespace-pre-wrap text-sm">{msg.content}</div>
-
-                    {/* AI Draft */}
-                    {msg.ai_draft && (
-                      <div className="mt-4 p-4 bg-white rounded-lg border-2 border-blue-300">
-                        <div className="flex items-center gap-2 mb-3 text-blue-600">
-                          <Sparkles className="h-4 w-4" />
-                          <span className="font-semibold text-sm">AI Generated Draft</span>
-                          <Badge className="bg-blue-100 text-blue-700 text-xs">Ready to send</Badge>
+                    >
+                      {/* Message Header */}
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <div className={cn(
+                            "w-6 h-6 rounded-full flex items-center justify-center text-xs",
+                            msg.direction === 'inbound' ? 'bg-slate-200' : 'bg-blue-200'
+                          )}>
+                            {msg.direction === 'inbound' ? (
+                              <User className="h-3 w-3 text-slate-600" />
+                            ) : (
+                              <Bot className="h-3 w-3 text-blue-600" />
+                            )}
+                          </div>
+                          <span className="font-medium text-sm">
+                            {msg.direction === 'inbound'
+                              ? (msg.sender_name || selectedEmail.customer_name || 'Customer')
+                              : 'Emma (Mirai Support)'
+                            }
+                          </span>
                         </div>
-                        <div className="whitespace-pre-wrap text-sm bg-blue-50 p-3 rounded">{msg.ai_draft}</div>
+                        <span className="text-xs text-slate-400">
+                          {msg.created_at ? format(new Date(msg.created_at), 'MMM d, h:mm a') : ''}
+                        </span>
                       </div>
+
+                      {/* Message Content - parsed and cleaned */}
+                      <div className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
+                        {parseEmailThread(msg.content)}
+                      </div>
+
+                      {/* AI Draft */}
+                      {msg.ai_draft && (
+                        <div className="mt-3 p-3 bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg border border-purple-200">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Sparkles className="h-4 w-4 text-purple-600" />
+                            <span className="font-medium text-sm text-purple-700">Emma's Draft</span>
+                            <Badge className="bg-purple-100 text-purple-700 text-xs">Ready</Badge>
+                          </div>
+                          <div className="text-sm whitespace-pre-wrap">{msg.ai_draft}</div>
+                        </div>
                     )}
                   </div>
                 ))}
+                </div>
               </div>
 
               {/* Action Section based on status */}
@@ -942,6 +1090,56 @@ export default function Support() {
                   </div>
                 </div>
               )}
+
+              {/* Ticket Resolution Section */}
+              <div className="p-4 bg-slate-50 rounded-lg border space-y-3">
+                <h4 className="font-semibold flex items-center gap-2 text-slate-700">
+                  <FileCheck className="h-4 w-4" />
+                  Resolve Ticket
+                </h4>
+
+                {selectedEmail.resolution ? (
+                  <div className="p-3 bg-green-50 rounded border border-green-200">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle className="h-4 w-4 text-green-600" />
+                      <span className="font-medium text-green-800">
+                        Resolved: {selectedEmail.resolution}
+                      </span>
+                    </div>
+                    {selectedEmail.resolution_notes && (
+                      <p className="text-sm text-green-700 mt-2">{selectedEmail.resolution_notes}</p>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-3 gap-2">
+                      {resolutionOptions.map((opt) => (
+                        <Button
+                          key={opt.value}
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleResolveTicket(opt.value)}
+                          disabled={isResolving}
+                          className={cn(
+                            "justify-start h-auto py-2 px-3",
+                            resolution === opt.value && "border-2 border-blue-500"
+                          )}
+                        >
+                          <opt.icon className={`h-4 w-4 mr-2 text-${opt.color}-600`} />
+                          <span className="text-xs">{opt.label}</span>
+                        </Button>
+                      ))}
+                    </div>
+                    <Textarea
+                      value={resolutionNotes}
+                      onChange={(e) => setResolutionNotes(e.target.value)}
+                      rows={2}
+                      placeholder="Add resolution notes (optional)..."
+                      className="bg-white text-sm"
+                    />
+                  </>
+                )}
+              </div>
             </div>
           )}
 

@@ -2212,6 +2212,55 @@ async def reject_support_email(email_id: int, user: dict = Depends(get_current_u
         return {"success": True, "message": "Email rejected"}
 
 
+class ResolveRequest(BaseModel):
+    resolution: str  # resolved, refunded, replaced, waiting_customer, escalated, no_action_needed
+    resolution_notes: Optional[str] = None
+
+
+@app.post("/support/emails/{email_id}/resolve")
+async def resolve_support_email(email_id: int, req: ResolveRequest, user: dict = Depends(get_current_user)):
+    """
+    Mark a support ticket as resolved with a resolution type.
+    """
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import SupportEmail
+    from sqlalchemy import select
+
+    async with get_db() as db:
+        result = await db.execute(
+            select(SupportEmail).where(SupportEmail.id == email_id)
+        )
+        email = result.scalar_one_or_none()
+
+        if not email:
+            raise HTTPException(status_code=404, detail="Email not found")
+
+        # Calculate resolution time
+        resolution_time = None
+        if email.received_at:
+            from datetime import datetime
+            resolution_time = int((datetime.utcnow() - email.received_at).total_seconds() / 60)
+
+        # Update ticket
+        email.status = "resolved"
+        email.resolution = req.resolution
+        email.resolution_notes = req.resolution_notes
+        email.resolved_by = user.get("user_id")
+        email.resolved_at = datetime.utcnow()
+        email.resolution_time_minutes = resolution_time
+
+        await db.commit()
+
+        return {
+            "success": True,
+            "message": f"Ticket resolved as: {req.resolution}",
+            "resolution_time_minutes": resolution_time
+        }
+
+
 class RegenerateRequest(BaseModel):
     user_hints: Optional[str] = None  # Manager guidance for Emma
 

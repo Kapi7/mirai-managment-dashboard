@@ -118,6 +118,55 @@ async def init_db():
                     END IF;
                 END $$;
                 """,
+                # Add ticket system fields to support_emails
+                """
+                DO $$
+                BEGIN
+                    -- Resolution fields
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'support_emails' AND column_name = 'resolution') THEN
+                        ALTER TABLE support_emails ADD COLUMN resolution VARCHAR(50);
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'support_emails' AND column_name = 'resolution_notes') THEN
+                        ALTER TABLE support_emails ADD COLUMN resolution_notes TEXT;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'support_emails' AND column_name = 'resolved_by') THEN
+                        ALTER TABLE support_emails ADD COLUMN resolved_by INTEGER REFERENCES users(id);
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'support_emails' AND column_name = 'resolved_at') THEN
+                        ALTER TABLE support_emails ADD COLUMN resolved_at TIMESTAMP;
+                    END IF;
+                    -- Time tracking fields
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'support_emails' AND column_name = 'first_response_at') THEN
+                        ALTER TABLE support_emails ADD COLUMN first_response_at TIMESTAMP;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'support_emails' AND column_name = 'response_time_minutes') THEN
+                        ALTER TABLE support_emails ADD COLUMN response_time_minutes INTEGER;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'support_emails' AND column_name = 'resolution_time_minutes') THEN
+                        ALTER TABLE support_emails ADD COLUMN resolution_time_minutes INTEGER;
+                    END IF;
+                    -- Order & Tracking fields
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'support_emails' AND column_name = 'order_number') THEN
+                        ALTER TABLE support_emails ADD COLUMN order_number VARCHAR(50);
+                        CREATE INDEX IF NOT EXISTS idx_support_emails_order ON support_emails(order_number);
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'support_emails' AND column_name = 'tracking_number') THEN
+                        ALTER TABLE support_emails ADD COLUMN tracking_number VARCHAR(100);
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'support_emails' AND column_name = 'tracking_carrier') THEN
+                        ALTER TABLE support_emails ADD COLUMN tracking_carrier VARCHAR(50);
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'support_emails' AND column_name = 'tracking_status') THEN
+                        ALTER TABLE support_emails ADD COLUMN tracking_status VARCHAR(100);
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'support_emails' AND column_name = 'tracking_last_checked') THEN
+                        ALTER TABLE support_emails ADD COLUMN tracking_last_checked TIMESTAMP;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'support_emails' AND column_name = 'estimated_delivery') THEN
+                        ALTER TABLE support_emails ADD COLUMN estimated_delivery TIMESTAMP;
+                    END IF;
+                END $$;
+                """,
             ]
 
             for migration in migrations:
