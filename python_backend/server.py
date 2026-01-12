@@ -269,6 +269,95 @@ async def daily_report(req: DateRangeRequest):
         return {"error": str(e), "data": []}
 
 
+# ---------- Debug endpoint: show orders for a specific day ----------
+
+class DebugDayRequest(BaseModel):
+    date: str  # YYYY-MM-DD
+
+
+@app.post("/debug/day-orders")
+async def debug_day_orders(req: DebugDayRequest):
+    """
+    Debug endpoint to show exactly which orders are counted for a specific day.
+    Shows order names and their timestamps in both UTC and local (Nicosia) time.
+    """
+    try:
+        from master_report_mirai import SHOPIFY_STORES, _parse_dt
+        from shopify_client import fetch_orders_created_between_for_store
+
+        shop_tz = _safe_shop_tz()
+        tz = pytz.timezone(shop_tz)
+
+        day = datetime.strptime(req.date, "%Y-%m-%d").date()
+        start_local = tz.localize(datetime.combine(day, datetime.min.time()))
+        end_local = tz.localize(datetime.combine(day + timedelta(days=1), datetime.min.time()))
+
+        # Convert to UTC for display
+        start_utc = start_local.astimezone(pytz.UTC)
+        end_utc = end_local.astimezone(pytz.UTC)
+
+        orders_debug = []
+        all_orders = []
+
+        for store in SHOPIFY_STORES:
+            domain = store["domain"]
+            token = store["access_token"]
+
+            # Fetch orders using the same method as the report
+            created = fetch_orders_created_between_for_store(
+                domain, token, start_local.isoformat(), end_local.isoformat(), exclude_cancelled=False
+            )
+            all_orders.extend(created)
+
+        # Process each order
+        in_window_count = 0
+        for o in all_orders:
+            dt = _parse_dt(o.get("createdAt"))
+            if not dt:
+                continue
+            if dt.tzinfo is None:
+                dt = pytz.UTC.localize(dt)
+            dt_local = dt.astimezone(tz)
+
+            in_window = start_local <= dt_local < end_local
+            if in_window:
+                in_window_count += 1
+
+            is_cancelled = bool(o.get("cancelledAt"))
+
+            orders_debug.append({
+                "order_name": o.get("name"),
+                "created_at_utc": o.get("createdAt"),
+                "created_at_local": dt_local.isoformat(),
+                "in_window": in_window,
+                "is_cancelled": is_cancelled,
+                "counted": in_window and not is_cancelled,
+                "total_price": o.get("totalPriceSet", {}).get("shopMoney", {}).get("amount"),
+            })
+
+        # Sort by created time
+        orders_debug.sort(key=lambda x: x["created_at_utc"] or "")
+
+        return {
+            "date": req.date,
+            "timezone": shop_tz,
+            "window": {
+                "start_local": start_local.isoformat(),
+                "end_local": end_local.isoformat(),
+                "start_utc": start_utc.isoformat(),
+                "end_utc": end_utc.isoformat(),
+            },
+            "orders_fetched": len(all_orders),
+            "orders_in_window": in_window_count,
+            "orders_counted": sum(1 for o in orders_debug if o["counted"]),
+            "orders": orders_debug
+        }
+
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+
 # ---------- Supporting endpoint: raw ad spend only ----------
 
 @app.post("/ad-spend")

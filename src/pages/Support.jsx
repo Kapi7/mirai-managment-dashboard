@@ -909,69 +909,67 @@ export default function Support() {
                 {/* Action Section */}
                 {customerDetails.summary?.has_pending_response && (
                   <Card className="border-green-200 bg-green-50">
-                    <CardHeader className="py-2 px-3">
-                      <CardTitle className="text-sm flex items-center gap-2 text-green-800">
-                        <CheckCircle className="h-4 w-4" />
+                    <CardHeader className="py-3 px-4">
+                      <CardTitle className="text-base flex items-center gap-2 text-green-800">
+                        <CheckCircle className="h-5 w-5" />
                         Ready to Respond
                       </CardTitle>
                     </CardHeader>
-                    <CardContent className="px-3 pb-3 space-y-3">
-                      {/* Edit draft */}
+                    <CardContent className="px-4 pb-4 space-y-4">
+                      {/* Regenerate with hints - More prominent */}
+                      <div className="space-y-2 p-3 bg-purple-50 rounded-lg border border-purple-200">
+                        <label className="text-sm font-medium text-purple-800 flex items-center gap-2">
+                          <Sparkles className="h-4 w-4" />
+                          Regenerate with guidance:
+                        </label>
+                        <Textarea
+                          value={userHints}
+                          onChange={(e) => setUserHints(e.target.value)}
+                          placeholder="e.g., 'Process the refund immediately', 'Be more apologetic', 'Don't try to sell anything'"
+                          className="bg-white text-sm min-h-[80px]"
+                          rows={3}
+                        />
+                        <Button
+                          onClick={() => handleRegenerateAI(userHints.trim() ? true : false)}
+                          disabled={isRegenerating}
+                          variant="outline"
+                          className="w-full border-purple-400 text-purple-700 hover:bg-purple-100"
+                        >
+                          <Sparkles className="h-4 w-4 mr-2" />
+                          {isRegenerating ? 'Regenerating...' : 'Regenerate AI Response'}
+                        </Button>
+                      </div>
+
+                      {/* Edit draft - Larger */}
                       <div className="space-y-2">
-                        <label className="text-xs font-medium text-green-800">Edit draft (optional):</label>
+                        <label className="text-sm font-medium text-green-800">Edit draft before sending:</label>
                         <Textarea
                           value={editDraft}
                           onChange={(e) => setEditDraft(e.target.value)}
-                          rows={4}
+                          rows={10}
                           placeholder="Edit the AI draft..."
-                          className="bg-white text-sm"
+                          className="bg-white text-sm min-h-[200px]"
                         />
                       </div>
 
-                      {/* Regenerate with hints */}
-                      <div className="space-y-2 pt-2 border-t border-green-200">
-                        <label className="text-xs font-medium text-green-800">
-                          Regenerate with guidance:
-                        </label>
-                        <div className="flex gap-2">
-                          <Input
-                            value={userHints}
-                            onChange={(e) => setUserHints(e.target.value)}
-                            placeholder="e.g., 'Offer refund'"
-                            className="bg-white text-xs h-8"
-                          />
-                          <Button
-                            onClick={() => handleRegenerateAI(userHints.trim() ? true : false)}
-                            disabled={isRegenerating}
-                            variant="outline"
-                            size="sm"
-                            className="border-green-400 text-green-700 hover:bg-green-100 whitespace-nowrap"
-                          >
-                            <Sparkles className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      </div>
-
                       {/* Action buttons */}
-                      <div className="flex gap-2 pt-2">
+                      <div className="flex gap-3 pt-2">
                         <Button
                           variant="destructive"
-                          size="sm"
                           onClick={handleReject}
                           disabled={isSending}
                           className="flex-1"
                         >
-                          <XCircle className="h-3 w-3 mr-1" />
+                          <XCircle className="h-4 w-4 mr-2" />
                           Reject
                         </Button>
                         <Button
-                          size="sm"
                           onClick={editDraft !== customerDetails.summary?.pending_draft ? handleApproveWithEdits : handleApprove}
                           disabled={isSending}
                           className="flex-1 bg-green-600 hover:bg-green-700"
                         >
-                          <Send className="h-3 w-3 mr-1" />
-                          {isSending ? 'Sending...' : 'Send'}
+                          <Send className="h-4 w-4 mr-2" />
+                          {isSending ? 'Sending...' : 'Send Response'}
                         </Button>
                       </div>
                     </CardContent>
@@ -981,43 +979,58 @@ export default function Support() {
                 {/* Manual response if no draft */}
                 {!customerDetails.summary?.has_pending_response && customerDetails.current_status !== 'resolved' && (
                   <Card>
-                    <CardHeader className="py-2 px-3">
-                      <CardTitle className="text-sm flex items-center gap-2">
-                        <Edit className="h-4 w-4" />
+                    <CardHeader className="py-3 px-4">
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <Edit className="h-5 w-5" />
                         Write Response
                       </CardTitle>
                     </CardHeader>
-                    <CardContent className="px-3 pb-3 space-y-3">
-                      <Textarea
-                        value={manualResponse}
-                        onChange={(e) => setManualResponse(e.target.value)}
-                        rows={4}
-                        placeholder="Type your response..."
-                        className="text-sm"
-                      />
-                      <div className="flex gap-2">
+                    <CardContent className="px-4 pb-4 space-y-4">
+                      {/* Generate AI option */}
+                      <div className="space-y-2 p-3 bg-purple-50 rounded-lg border border-purple-200">
+                        <label className="text-sm font-medium text-purple-800 flex items-center gap-2">
+                          <Sparkles className="h-4 w-4" />
+                          Generate AI Response with guidance:
+                        </label>
+                        <Textarea
+                          value={userHints}
+                          onChange={(e) => setUserHints(e.target.value)}
+                          placeholder="e.g., 'Process refund', 'Be apologetic', 'Check tracking status'"
+                          className="bg-white text-sm min-h-[60px]"
+                          rows={2}
+                        />
                         <Button
-                          onClick={() => handleRegenerateAI(false)}
+                          onClick={() => handleRegenerateAI(userHints.trim() ? true : false)}
                           disabled={isRegenerating}
                           variant="outline"
-                          size="sm"
-                          className="flex-1"
+                          className="w-full border-purple-400 text-purple-700 hover:bg-purple-100"
                         >
-                          <Sparkles className="h-3 w-3 mr-1" />
-                          {isRegenerating ? 'Generating...' : 'Generate AI'}
+                          <Sparkles className="h-4 w-4 mr-2" />
+                          {isRegenerating ? 'Generating...' : 'Generate AI Response'}
                         </Button>
-                        {manualResponse.trim() && (
-                          <Button
-                            onClick={handleSendManual}
-                            disabled={isSending}
-                            size="sm"
-                            className="flex-1"
-                          >
-                            <Send className="h-3 w-3 mr-1" />
-                            Send
-                          </Button>
-                        )}
                       </div>
+
+                      {/* Manual response */}
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Or write manually:</label>
+                        <Textarea
+                          value={manualResponse}
+                          onChange={(e) => setManualResponse(e.target.value)}
+                          rows={8}
+                          placeholder="Type your response..."
+                          className="text-sm min-h-[150px]"
+                        />
+                      </div>
+                      {manualResponse.trim() && (
+                        <Button
+                          onClick={handleSendManual}
+                          disabled={isSending}
+                          className="w-full"
+                        >
+                          <Send className="h-4 w-4 mr-2" />
+                          Send Response
+                        </Button>
+                      )}
                     </CardContent>
                   </Card>
                 )}

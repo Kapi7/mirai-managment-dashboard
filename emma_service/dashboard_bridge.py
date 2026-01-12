@@ -545,6 +545,115 @@ def get_order_by_name(order_name: str) -> Optional[Dict[str, Any]]:
         session.close()
 
 
+def get_customer_conversation_history(customer_email: str, limit: int = 10) -> List[Dict[str, Any]]:
+    """
+    Get full conversation history for a customer from the support email database.
+    Returns all messages (inbound and outbound) in chronological order.
+    """
+    session = get_db_session()
+    if not session:
+        return []
+
+    try:
+        from sqlalchemy import text
+
+        sql = text("""
+            SELECT
+                se.id as email_id,
+                se.subject,
+                se.received_at,
+                se.status,
+                se.intent,
+                sm.direction,
+                sm.content,
+                sm.ai_draft,
+                sm.final_content,
+                sm.sent_at,
+                sm.created_at as message_created
+            FROM support_emails se
+            LEFT JOIN support_messages sm ON sm.email_id = se.id
+            WHERE LOWER(se.customer_email) = LOWER(:email)
+            ORDER BY se.received_at ASC, sm.created_at ASC
+            LIMIT :limit
+        """)
+
+        result = session.execute(sql, {"email": customer_email, "limit": limit * 10})
+        messages = []
+
+        for row in result:
+            messages.append({
+                "email_id": row.email_id,
+                "subject": row.subject,
+                "received_at": row.received_at.isoformat() if row.received_at else None,
+                "status": row.status,
+                "intent": row.intent,
+                "direction": row.direction,
+                "content": row.content,
+                "ai_draft": row.ai_draft,
+                "final_content": row.final_content,
+                "sent_at": row.sent_at.isoformat() if row.sent_at else None,
+            })
+
+        print(f"[dashboard_bridge] Found {len(messages)} messages in conversation history for {customer_email}")
+        return messages
+    except Exception as e:
+        print(f"[dashboard_bridge] get_customer_conversation_history error: {e}")
+        return []
+    finally:
+        session.close()
+
+
+def get_customer_tracking_info(customer_email: str) -> List[Dict[str, Any]]:
+    """
+    Get tracking information for a customer's recent shipments.
+    Uses the ShipmentTracking table if available.
+    """
+    session = get_db_session()
+    if not session:
+        return []
+
+    try:
+        from sqlalchemy import text
+
+        sql = text("""
+            SELECT
+                tracking_number, carrier, status, status_detail,
+                order_number, shipped_at, delivered_at, estimated_delivery,
+                last_checkpoint, last_checked, delay_detected, delay_days
+            FROM shipment_tracking
+            WHERE LOWER(customer_email) = LOWER(:email)
+            ORDER BY shipped_at DESC NULLS LAST
+            LIMIT 5
+        """)
+
+        result = session.execute(sql, {"email": customer_email})
+        trackings = []
+
+        for row in result:
+            trackings.append({
+                "tracking_number": row.tracking_number,
+                "carrier": row.carrier,
+                "status": row.status,
+                "status_detail": row.status_detail,
+                "order_number": row.order_number,
+                "shipped_at": row.shipped_at.isoformat() if row.shipped_at else None,
+                "delivered_at": row.delivered_at.isoformat() if row.delivered_at else None,
+                "estimated_delivery": row.estimated_delivery.isoformat() if row.estimated_delivery else None,
+                "last_checkpoint": row.last_checkpoint,
+                "last_checked": row.last_checked.isoformat() if row.last_checked else None,
+                "delay_detected": row.delay_detected,
+                "delay_days": row.delay_days,
+            })
+
+        print(f"[dashboard_bridge] Found {len(trackings)} tracking records for {customer_email}")
+        return trackings
+    except Exception as e:
+        print(f"[dashboard_bridge] get_customer_tracking_info error: {e}")
+        return []
+    finally:
+        session.close()
+
+
 # ==================== DASHBOARD API ====================
 
 def _api_headers() -> Dict[str, str]:
@@ -812,26 +921,88 @@ def process_incoming_email(
             print(f"[dashboard_bridge] Cannot generate draft - OPENAI_API_KEY not set")
         else:
             try:
-                print(f"[dashboard_bridge] Generating Emma draft for email_id={email_id}...")
-                print(f"[dashboard_bridge] Customer: {customer_email}, Subject: {subject[:50]}...")
+                print(f"[dashboard_bridge] ========== GENERATING EMMA DRAFT ==========")
+                print(f"[dashboard_bridge] Email ID: {email_id}")
+                print(f"[dashboard_bridge] Customer: {customer_email}")
+                print(f"[dashboard_bridge] Subject: {subject}")
+                print(f"[dashboard_bridge] Content preview: {content[:200]}...")
+
                 from emma_agent import respond_as_emma
 
                 # Get customer context
-                customer_orders = get_customer_orders(customer_email, limit=3)
+                customer_orders = get_customer_orders(customer_email, limit=5)
+                print(f"[dashboard_bridge] Customer orders: {len(customer_orders)}")
+                for order in customer_orders[:3]:
+                    print(f"[dashboard_bridge]   - Order {order.get('order_name')}: ${order.get('gross', 0):.2f} on {order.get('created_at', '')[:10]}")
 
-                # Build history context for Emma
+                # Get FULL conversation history
+                conversation_history = get_customer_conversation_history(customer_email, limit=20)
+                print(f"[dashboard_bridge] Conversation history: {len(conversation_history)} messages")
+
+                # Get tracking info
+                tracking_info = get_customer_tracking_info(customer_email)
+                print(f"[dashboard_bridge] Tracking records: {len(tracking_info)}")
+                for t in tracking_info:
+                    print(f"[dashboard_bridge]   - {t.get('tracking_number')}: {t.get('status')} - {t.get('status_detail', 'no detail')}")
+                    if t.get('last_checkpoint'):
+                        print(f"[dashboard_bridge]     Last checkpoint: {t.get('last_checkpoint')}")
+
+                # Build comprehensive history context for Emma
                 history = []
+
+                # Add conversation history
+                if conversation_history:
+                    conv_summary = "=== FULL CONVERSATION HISTORY (respond to ALL issues, not just the last message) ===\n"
+                    for msg in conversation_history:
+                        if msg.get('direction') == 'inbound':
+                            conv_summary += f"\n[CUSTOMER on {msg.get('received_at', '')[:10]}]:\n{msg.get('content', '')[:500]}\n"
+                        elif msg.get('final_content') or msg.get('ai_draft'):
+                            response = msg.get('final_content') or msg.get('ai_draft', '')
+                            if msg.get('sent_at'):
+                                conv_summary += f"\n[EMMA REPLIED on {msg.get('sent_at', '')[:10]}]:\n{response[:300]}...\n"
+                    conv_summary += "\n=== END HISTORY ===\n"
+                    history.append({"role": "system", "content": conv_summary})
+                    print(f"[dashboard_bridge] Added conversation history to context")
+
+                # Add order context
                 if customer_orders:
-                    order_summary = f"Previous orders: {len(customer_orders)}. "
-                    if customer_orders[0]:
-                        order_summary += f"Last order: {customer_orders[0].get('order_name')} on {customer_orders[0].get('created_at', '')[:10]}"
+                    order_summary = f"\n=== CUSTOMER ORDER HISTORY ===\n"
+                    order_summary += f"Total orders: {len(customer_orders)}\n"
+                    for order in customer_orders[:3]:
+                        order_summary += f"- Order {order.get('order_name')}: ${order.get('gross', 0):.2f} on {order.get('created_at', '')[:10]} ({order.get('country', 'Unknown')})\n"
                     history.append({"role": "system", "content": order_summary})
-                    print(f"[dashboard_bridge] Customer has {len(customer_orders)} previous orders")
+
+                # Add REAL tracking context
+                if tracking_info:
+                    tracking_summary = f"\n=== REAL TRACKING DATA (use this for accurate responses!) ===\n"
+                    for t in tracking_info:
+                        tracking_summary += f"\nOrder {t.get('order_number', 'Unknown')}:\n"
+                        tracking_summary += f"  Tracking: {t.get('tracking_number')}\n"
+                        tracking_summary += f"  Carrier: {t.get('carrier', 'Unknown')}\n"
+                        tracking_summary += f"  Status: {t.get('status', 'Unknown')} - {t.get('status_detail', '')}\n"
+                        if t.get('shipped_at'):
+                            tracking_summary += f"  Shipped: {t.get('shipped_at')[:10]}\n"
+                        if t.get('delivered_at'):
+                            tracking_summary += f"  Delivered: {t.get('delivered_at')[:10]}\n"
+                        if t.get('estimated_delivery'):
+                            tracking_summary += f"  Est. Delivery: {t.get('estimated_delivery')[:10]}\n"
+                        if t.get('last_checkpoint'):
+                            tracking_summary += f"  Last Location: {t.get('last_checkpoint')}\n"
+                        if t.get('delay_detected'):
+                            tracking_summary += f"  ⚠️ DELAY DETECTED: {t.get('delay_days', 0)} days behind schedule\n"
+                    tracking_summary += "\n=== USE THIS DATA IN YOUR RESPONSE ===\n"
+                    history.append({"role": "system", "content": tracking_summary})
+                    print(f"[dashboard_bridge] Added tracking context to Emma")
+                else:
+                    # No tracking found - let Emma know
+                    history.append({"role": "system", "content": "\n=== NO TRACKING DATA FOUND ===\nNo tracking information was found in our system for this customer. If they're asking about tracking, acknowledge we need to check with the shipping team.\n"})
 
                 # Extract first name from customer_name
                 first_name = ""
                 if customer_name:
                     first_name = customer_name.split()[0] if customer_name else ""
+
+                print(f"[dashboard_bridge] Calling respond_as_emma with {len(history)} context messages...")
 
                 ai_draft = respond_as_emma(
                     first_name=first_name,
@@ -840,20 +1011,25 @@ def process_incoming_email(
                     history=history,
                     first_contact=False,
                     geo=None,
-                    style_mode="soft",
+                    style_mode="empathetic",  # More empathetic for support
                     customer_email=customer_email
                 )
+
                 if ai_draft:
                     draft_status = "draft_ready"
-                    print(f"[dashboard_bridge] Emma draft generated: {len(ai_draft)} chars")
+                    print(f"[dashboard_bridge] ✅ Emma draft generated: {len(ai_draft)} chars")
+                    print(f"[dashboard_bridge] Draft preview: {ai_draft[:200]}...")
                 else:
                     draft_status = "draft_empty"
-                    print(f"[dashboard_bridge] Emma returned empty draft")
+                    print(f"[dashboard_bridge] ⚠️ Emma returned empty draft")
+
+                print(f"[dashboard_bridge] ========== END EMMA DRAFT ==========")
+
             except Exception as e:
                 import traceback
                 draft_status = "draft_failed"
                 draft_error = str(e)
-                print(f"[dashboard_bridge] Emma draft generation failed: {e}")
+                print(f"[dashboard_bridge] ❌ Emma draft generation failed: {e}")
                 traceback.print_exc()
                 ai_draft = None
 
