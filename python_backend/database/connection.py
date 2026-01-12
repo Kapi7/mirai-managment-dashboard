@@ -167,6 +167,24 @@ async def init_db():
                     END IF;
                 END $$;
                 """,
+                # Add followup draft columns to shipment_tracking
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'shipment_tracking' AND column_name = 'followup_draft_subject') THEN
+                        ALTER TABLE shipment_tracking ADD COLUMN followup_draft_subject TEXT;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'shipment_tracking' AND column_name = 'followup_draft_body') THEN
+                        ALTER TABLE shipment_tracking ADD COLUMN followup_draft_body TEXT;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'shipment_tracking' AND column_name = 'followup_draft_generated_at') THEN
+                        ALTER TABLE shipment_tracking ADD COLUMN followup_draft_generated_at TIMESTAMP;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'shipment_tracking' AND column_name = 'followup_status') THEN
+                        ALTER TABLE shipment_tracking ADD COLUMN followup_status VARCHAR(20) DEFAULT 'none';
+                    END IF;
+                END $$;
+                """,
             ]
 
             for migration in migrations:
