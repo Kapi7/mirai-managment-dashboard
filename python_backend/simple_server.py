@@ -2967,59 +2967,66 @@ async def sync_shipments_from_shopify(user: dict = Depends(get_current_user)):
     shopify_token = os.getenv("SHOPIFY_ACCESS_TOKEN") or os.getenv("SHOPIFY_TOKEN")
 
     if not shopify_store or not shopify_token:
-        raise HTTPException(status_code=500, detail="Shopify credentials not configured")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Shopify credentials not configured. SHOPIFY_STORE={'set' if shopify_store else 'missing'}, TOKEN={'set' if shopify_token else 'missing'}"
+        )
 
     # Import tracking service
     import sys
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'emma_service'))
     try:
         from tracking_service import sync_shipments_from_shopify as sync_shopify, check_tracking_aftership
-    except ImportError:
-        raise HTTPException(status_code=500, detail="Tracking service not available")
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"Tracking service import failed: {e}")
 
-    # Sync from Shopify
-    shopify_shipments = sync_shopify(shopify_store, shopify_token, days_back=30)
+    try:
+        # Sync from Shopify
+        shopify_shipments = sync_shopify(shopify_store, shopify_token, days_back=30)
 
-    synced = 0
-    updated = 0
+        synced = 0
+        updated = 0
 
-    async with get_db() as db:
-        for shipment in shopify_shipments:
-            # Check if already exists
-            result = await db.execute(
-                select(ShipmentTracking)
-                .where(ShipmentTracking.tracking_number == shipment["tracking_number"])
-            )
-            existing = result.scalar_one_or_none()
-
-            if existing:
-                # Update if needed
-                updated += 1
-            else:
-                # Create new
-                new_shipment = ShipmentTracking(
-                    order_id=shipment.get("order_id"),
-                    order_number=shipment.get("order_number"),
-                    customer_email=shipment.get("customer_email"),
-                    customer_name=shipment.get("customer_name"),
-                    tracking_number=shipment.get("tracking_number"),
-                    carrier=shipment.get("carrier"),
-                    shipped_at=datetime.fromisoformat(shipment["shipped_at"].replace("Z", "+00:00")) if shipment.get("shipped_at") else None,
-                    delivery_address_city=shipment.get("delivery_address_city"),
-                    delivery_address_country=shipment.get("delivery_address_country"),
-                    status="pending",
+        async with get_db() as db:
+            for shipment in shopify_shipments:
+                # Check if already exists
+                result = await db.execute(
+                    select(ShipmentTracking)
+                    .where(ShipmentTracking.tracking_number == shipment["tracking_number"])
                 )
-                db.add(new_shipment)
-                synced += 1
+                existing = result.scalar_one_or_none()
 
-        await db.commit()
+                if existing:
+                    # Update if needed
+                    updated += 1
+                else:
+                    # Create new
+                    new_shipment = ShipmentTracking(
+                        order_id=shipment.get("order_id"),
+                        order_number=shipment.get("order_number"),
+                        customer_email=shipment.get("customer_email"),
+                        customer_name=shipment.get("customer_name"),
+                        tracking_number=shipment.get("tracking_number"),
+                        carrier=shipment.get("carrier"),
+                        shipped_at=datetime.fromisoformat(shipment["shipped_at"].replace("Z", "+00:00")) if shipment.get("shipped_at") else None,
+                        delivery_address_city=shipment.get("delivery_address_city"),
+                        delivery_address_country=shipment.get("delivery_address_country"),
+                        status="pending",
+                    )
+                    db.add(new_shipment)
+                    synced += 1
 
-    return {
-        "success": True,
-        "synced": synced,
-        "updated": updated,
-        "total_from_shopify": len(shopify_shipments)
-    }
+            await db.commit()
+
+        return {
+            "success": True,
+            "synced": synced,
+            "updated": updated,
+            "total_from_shopify": len(shopify_shipments)
+        }
+    except Exception as e:
+        import traceback
+        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}\n{traceback.format_exc()}")
 
 
 @app.post("/tracking/check/{tracking_number}")
