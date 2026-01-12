@@ -3000,7 +3000,16 @@ async def sync_shipments_from_shopify(user: dict = Depends(get_current_user)):
                     # Update if needed
                     updated += 1
                 else:
-                    # Create new
+                    # Create new - parse shipped_at and convert to naive UTC datetime
+                    shipped_at_value = None
+                    if shipment.get("shipped_at"):
+                        shipped_dt = datetime.fromisoformat(shipment["shipped_at"].replace("Z", "+00:00"))
+                        # Convert to UTC naive datetime for database
+                        if shipped_dt.tzinfo:
+                            shipped_at_value = shipped_dt.astimezone(pytz.UTC).replace(tzinfo=None)
+                        else:
+                            shipped_at_value = shipped_dt
+
                     new_shipment = ShipmentTracking(
                         order_id=shipment.get("order_id"),
                         order_number=shipment.get("order_number"),
@@ -3008,7 +3017,7 @@ async def sync_shipments_from_shopify(user: dict = Depends(get_current_user)):
                         customer_name=shipment.get("customer_name"),
                         tracking_number=shipment.get("tracking_number"),
                         carrier=shipment.get("carrier"),
-                        shipped_at=datetime.fromisoformat(shipment["shipped_at"].replace("Z", "+00:00")) if shipment.get("shipped_at") else None,
+                        shipped_at=shipped_at_value,
                         delivery_address_city=shipment.get("delivery_address_city"),
                         delivery_address_country=shipment.get("delivery_address_country"),
                         status="pending",
