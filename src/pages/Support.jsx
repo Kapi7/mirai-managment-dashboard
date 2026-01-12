@@ -15,14 +15,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import {
   Mail,
   MessageSquare,
   Clock,
@@ -54,7 +46,13 @@ import {
   DollarSign,
   RotateCcw,
   Archive,
-  Flag
+  Flag,
+  Users,
+  MessageCircle,
+  History,
+  AlertTriangle,
+  MapPin,
+  ExternalLink
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { cn } from '@/lib/utils';
@@ -62,7 +60,10 @@ import { cn } from '@/lib/utils';
 const API_URL = '/api';
 
 export default function Support() {
-  const [emails, setEmails] = useState([]);
+  const [tickets, setTickets] = useState([]);
+  const [selectedCustomer, setSelectedCustomer] = useState(null);
+  const [customerDetails, setCustomerDetails] = useState(null);
+  const [recentTrackings, setRecentTrackings] = useState([]);
   const [stats, setStats] = useState({
     pending: 0, draft_ready: 0, approved: 0, sent: 0, total: 0,
     classification_breakdown: {}, priority_breakdown: {}, intent_breakdown: {},
@@ -70,59 +71,27 @@ export default function Support() {
     avg_confidence: null, resolution_rate: 0, ai_draft_rate: 0
   });
   const [loading, setLoading] = useState(true);
+  const [detailsLoading, setDetailsLoading] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
+  const [showTrackings, setShowTrackings] = useState(false);
   const [error, setError] = useState(null);
-  const [activeInbox, setActiveInbox] = useState('all'); // 'all', 'emma', 'support'
+  const [activeInbox, setActiveInbox] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [search, setSearch] = useState('');
-  const [selectedEmail, setSelectedEmail] = useState(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [editDraft, setEditDraft] = useState('');
   const [manualResponse, setManualResponse] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const [showAllEmails, setShowAllEmails] = useState(false);
 
   // Ticket resolution state
   const [resolution, setResolution] = useState('');
   const [resolutionNotes, setResolutionNotes] = useState('');
   const [isResolving, setIsResolving] = useState(false);
 
-  // Helper to parse email content and clean up quoted threads
-  const parseEmailThread = (content) => {
-    if (!content) return [];
-
-    // Split by common reply patterns
-    const patterns = [
-      /On .+wrote:/gi,  // "On Mon, Jan 5, 2026 at 9:49 PM Christina Pan wrote:"
-      /From:.+Sent:.+To:/gi,
-      /_{20,}/g,  // Long underscores
-      /-{20,}/g,  // Long dashes
-    ];
-
-    // Clean up the content
-    let cleaned = content
-      .replace(/<[^>]*>/g, '') // Remove HTML tags
-      .replace(/\r\n/g, '\n')
-      .replace(/\n{3,}/g, '\n\n'); // Remove excessive newlines
-
-    // Try to extract just the latest message (before quotes)
-    const onWroteMatch = cleaned.match(/^([\s\S]*?)(?=On .{10,80}wrote:)/i);
-    if (onWroteMatch && onWroteMatch[1].trim().length > 10) {
-      return onWroteMatch[1].trim();
-    }
-
-    // Fallback: return first 500 chars if very long
-    if (cleaned.length > 1000) {
-      const firstPart = cleaned.substring(0, 800);
-      const lastNewline = firstPart.lastIndexOf('\n\n');
-      if (lastNewline > 200) {
-        return firstPart.substring(0, lastNewline) + '\n\n[...see full thread below]';
-      }
-    }
-
-    return cleaned;
-  };
+  // Regenerate state
+  const [isRegenerating, setIsRegenerating] = useState(false);
+  const [userHints, setUserHints] = useState('');
 
   // Resolution options
   const resolutionOptions = [
@@ -134,52 +103,32 @@ export default function Support() {
     { value: 'no_action_needed', label: 'No Action Needed', icon: Archive, color: 'slate' },
   ];
 
-  // Handle ticket resolution
-  const handleResolveTicket = async (resolutionType) => {
-    if (!selectedEmail) return;
-    setIsResolving(true);
-    try {
-      const response = await fetch(`${API_URL}/support/emails/${selectedEmail.id}/resolve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          resolution: resolutionType,
-          resolution_notes: resolutionNotes,
-        }),
-      });
-      if (!response.ok) throw new Error('Failed to resolve ticket');
-
-      // Update local state
-      setSelectedEmail(prev => ({
-        ...prev,
-        status: 'resolved',
-        resolution: resolutionType,
-        resolution_notes: resolutionNotes,
-      }));
-      await fetchEmails();
-    } catch (err) {
-      console.error('Failed to resolve ticket:', err);
-      setError(err.message);
-    } finally {
-      setIsResolving(false);
-    }
-  };
-
-  // Fetch emails
-  const fetchEmails = async () => {
+  // Fetch tickets (grouped by customer)
+  const fetchTickets = async () => {
     try {
       const params = new URLSearchParams();
-      if (statusFilter && statusFilter !== 'all') params.append('status', statusFilter);
       if (activeInbox && activeInbox !== 'all') params.append('inbox_type', activeInbox);
       params.append('limit', '100');
 
-      const response = await fetch(`${API_URL}/support/emails?${params}`);
-      if (!response.ok) throw new Error('Failed to fetch emails');
+      const response = await fetch(`${API_URL}/support/tickets?${params}`);
+      if (!response.ok) throw new Error('Failed to fetch tickets');
       const data = await response.json();
-      setEmails(data.emails || []);
+      setTickets(data.tickets || []);
     } catch (err) {
-      console.error('Failed to fetch emails:', err);
+      console.error('Failed to fetch tickets:', err);
       setError(err.message);
+    }
+  };
+
+  // Fetch recent trackings
+  const fetchRecentTrackings = async () => {
+    try {
+      const response = await fetch(`${API_URL}/support/recent-trackings?limit=10`);
+      if (!response.ok) throw new Error('Failed to fetch trackings');
+      const data = await response.json();
+      setRecentTrackings(data.trackings || []);
+    } catch (err) {
+      console.error('Failed to fetch trackings:', err);
     }
   };
 
@@ -195,11 +144,34 @@ export default function Support() {
     }
   };
 
+  // Fetch customer details
+  const fetchCustomerDetails = async (email) => {
+    setDetailsLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/support/customer/${encodeURIComponent(email)}/details`);
+      if (!response.ok) throw new Error('Failed to fetch customer details');
+      const data = await response.json();
+      setCustomerDetails(data);
+      // Set the AI draft from the latest pending message
+      const pendingDraft = data.summary?.pending_draft;
+      if (pendingDraft) {
+        setEditDraft(pendingDraft);
+      } else {
+        setEditDraft('');
+      }
+    } catch (err) {
+      console.error('Failed to fetch customer details:', err);
+      setError(err.message);
+    } finally {
+      setDetailsLoading(false);
+    }
+  };
+
   // Initial load
   useEffect(() => {
     const loadData = async () => {
       setLoading(true);
-      await Promise.all([fetchEmails(), fetchStats()]);
+      await Promise.all([fetchTickets(), fetchStats(), fetchRecentTrackings()]);
       setLoading(false);
     };
     loadData();
@@ -207,54 +179,35 @@ export default function Support() {
 
   // Reload when filters change
   useEffect(() => {
-    fetchEmails();
-  }, [activeInbox, statusFilter]);
+    fetchTickets();
+  }, [activeInbox]);
 
   // Refresh
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    await Promise.all([fetchEmails(), fetchStats()]);
+    await Promise.all([fetchTickets(), fetchStats(), fetchRecentTrackings()]);
     setIsRefreshing(false);
   };
 
-  // Fetch email detail (refresh without opening dialog)
-  const fetchEmailDetail = async (emailId) => {
-    try {
-      const response = await fetch(`${API_URL}/support/emails/${emailId}`);
-      if (!response.ok) throw new Error('Failed to fetch email details');
-      const data = await response.json();
-      setSelectedEmail(data);
-      setEditDraft(data.messages?.find(m => m.ai_draft)?.ai_draft || '');
-    } catch (err) {
-      console.error('Failed to fetch email:', err);
-    }
-  };
-
-  // Open email detail
-  const openEmailDetail = async (email) => {
-    try {
-      const response = await fetch(`${API_URL}/support/emails/${email.id}`);
-      if (!response.ok) throw new Error('Failed to fetch email details');
-      const data = await response.json();
-      setSelectedEmail(data);
-      setEditDraft(data.messages?.find(m => m.ai_draft)?.ai_draft || '');
-      setManualResponse('');
-      setDetailOpen(true);
-    } catch (err) {
-      console.error('Failed to fetch email:', err);
-    }
+  // Open customer detail view
+  const openCustomerDetail = async (ticket) => {
+    setSelectedCustomer(ticket);
+    setManualResponse('');
+    setUserHints('');
+    setDetailOpen(true);
+    await fetchCustomerDetails(ticket.customer_email);
   };
 
   // Approve email (send AI draft)
   const handleApprove = async () => {
-    if (!selectedEmail) return;
+    if (!customerDetails?.current_email_id) return;
     setIsSending(true);
     try {
-      const response = await fetch(`${API_URL}/support/emails/${selectedEmail.id}/approve`, {
+      const response = await fetch(`${API_URL}/support/emails/${customerDetails.current_email_id}/approve`, {
         method: 'POST'
       });
       if (!response.ok) throw new Error('Failed to approve');
-      setDetailOpen(false);
+      await fetchCustomerDetails(selectedCustomer.customer_email);
       handleRefresh();
     } catch (err) {
       console.error('Failed to approve:', err);
@@ -264,16 +217,16 @@ export default function Support() {
 
   // Approve with edits
   const handleApproveWithEdits = async () => {
-    if (!selectedEmail || !editDraft) return;
+    if (!customerDetails?.current_email_id || !editDraft) return;
     setIsSending(true);
     try {
-      const response = await fetch(`${API_URL}/support/emails/${selectedEmail.id}`, {
+      const response = await fetch(`${API_URL}/support/emails/${customerDetails.current_email_id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ final_content: editDraft })
       });
       if (!response.ok) throw new Error('Failed to update');
-      setDetailOpen(false);
+      await fetchCustomerDetails(selectedCustomer.customer_email);
       handleRefresh();
     } catch (err) {
       console.error('Failed to update:', err);
@@ -283,16 +236,16 @@ export default function Support() {
 
   // Send manual response
   const handleSendManual = async () => {
-    if (!selectedEmail || !manualResponse.trim()) return;
+    if (!customerDetails?.current_email_id || !manualResponse.trim()) return;
     setIsSending(true);
     try {
-      const response = await fetch(`${API_URL}/support/emails/${selectedEmail.id}`, {
+      const response = await fetch(`${API_URL}/support/emails/${customerDetails.current_email_id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ final_content: manualResponse, status: 'approved' })
       });
       if (!response.ok) throw new Error('Failed to send');
-      setDetailOpen(false);
+      await fetchCustomerDetails(selectedCustomer.customer_email);
       handleRefresh();
     } catch (err) {
       console.error('Failed to send:', err);
@@ -302,45 +255,62 @@ export default function Support() {
 
   // Reject email
   const handleReject = async () => {
-    if (!selectedEmail) return;
+    if (!customerDetails?.current_email_id) return;
     try {
-      const response = await fetch(`${API_URL}/support/emails/${selectedEmail.id}/reject`, {
+      const response = await fetch(`${API_URL}/support/emails/${customerDetails.current_email_id}/reject`, {
         method: 'POST'
       });
       if (!response.ok) throw new Error('Failed to reject');
-      setDetailOpen(false);
+      await fetchCustomerDetails(selectedCustomer.customer_email);
       handleRefresh();
     } catch (err) {
       console.error('Failed to reject:', err);
     }
   };
 
-  // Regenerate AI response with optional hints
-  const [isRegenerating, setIsRegenerating] = useState(false);
-  const [userHints, setUserHints] = useState('');
+  // Resolve ticket
+  const handleResolveTicket = async (resolutionType) => {
+    if (!customerDetails?.current_email_id) return;
+    setIsResolving(true);
+    try {
+      const response = await fetch(`${API_URL}/support/emails/${customerDetails.current_email_id}/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          resolution: resolutionType,
+          resolution_notes: resolutionNotes,
+        }),
+      });
+      if (!response.ok) throw new Error('Failed to resolve ticket');
+      await fetchCustomerDetails(selectedCustomer.customer_email);
+      await fetchTickets();
+    } catch (err) {
+      console.error('Failed to resolve ticket:', err);
+      setError(err.message);
+    } finally {
+      setIsResolving(false);
+    }
+  };
 
+  // Regenerate AI response
   const handleRegenerateAI = async (withHints = false) => {
-    if (!selectedEmail) return;
+    if (!customerDetails?.current_email_id) return;
     setIsRegenerating(true);
     try {
       const requestBody = withHints && userHints.trim()
         ? { user_hints: userHints.trim() }
         : {};
 
-      const response = await fetch(`${API_URL}/support/emails/${selectedEmail.id}/regenerate`, {
+      const response = await fetch(`${API_URL}/support/emails/${customerDetails.current_email_id}/regenerate`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody)
       });
       const data = await response.json();
       if (data.success) {
-        // Clear hints after successful generation
         if (withHints) setUserHints('');
-        // Wait a moment then refresh to see the new draft
         setTimeout(() => {
-          fetchEmailDetail(selectedEmail.id);
+          fetchCustomerDetails(selectedCustomer.customer_email);
           handleRefresh();
         }, 2000);
       } else {
@@ -354,18 +324,37 @@ export default function Support() {
     setIsRegenerating(false);
   };
 
-  // Status badge
-  const getStatusBadge = (status) => {
+  // Parse email content to extract the latest message
+  const parseEmailContent = (content) => {
+    if (!content) return '';
+
+    let cleaned = content
+      .replace(/<[^>]*>/g, '')
+      .replace(/\r\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n');
+
+    // Extract just the latest message (before quotes)
+    const onWroteMatch = cleaned.match(/^([\s\S]*?)(?=On .{10,80}wrote:)/i);
+    if (onWroteMatch && onWroteMatch[1].trim().length > 10) {
+      return onWroteMatch[1].trim();
+    }
+
+    // Truncate if too long
+    if (cleaned.length > 500) {
+      return cleaned.substring(0, 500) + '...';
+    }
+
+    return cleaned;
+  };
+
+  // Status badge for tickets
+  const getTicketStatusBadge = (status) => {
     const variants = {
+      needs_attention: { icon: AlertCircle, label: 'Needs Attention', color: 'text-red-600 bg-red-50' },
       pending: { icon: Clock, label: 'Pending', color: 'text-yellow-600 bg-yellow-50' },
-      draft_ready: { icon: Bot, label: 'AI Ready', color: 'text-blue-600 bg-blue-50' },
-      approved: { icon: CheckCircle, label: 'Approved', color: 'text-green-600 bg-green-50' },
+      draft_ready: { icon: Bot, label: 'Draft Ready', color: 'text-blue-600 bg-blue-50' },
+      resolved: { icon: CheckCircle, label: 'Resolved', color: 'text-green-600 bg-green-50' },
       sent: { icon: Send, label: 'Sent', color: 'text-indigo-600 bg-indigo-50' },
-      rejected: { icon: XCircle, label: 'Rejected', color: 'text-red-600 bg-red-50' },
-      draft_failed: { icon: AlertCircle, label: 'Draft Failed', color: 'text-red-600 bg-red-50' },
-      draft_empty: { icon: AlertCircle, label: 'No Draft', color: 'text-orange-600 bg-orange-50' },
-      not_customer: { icon: User, label: 'Not Customer', color: 'text-gray-600 bg-gray-50' },
-      draft_skipped: { icon: Clock, label: 'Skipped', color: 'text-gray-600 bg-gray-50' }
     };
     const config = variants[status] || variants.pending;
     const Icon = config.icon;
@@ -377,128 +366,80 @@ export default function Support() {
     );
   };
 
-  // Classification badge
-  const getClassificationBadge = (classification) => {
-    if (!classification) return null;
-    const colors = {
-      support: 'bg-blue-100 text-blue-800',
-      sales: 'bg-green-100 text-green-800',
-      support_sales: 'bg-purple-100 text-purple-800'
+  // Tracking status badge
+  const getTrackingStatusBadge = (status) => {
+    const variants = {
+      pending: { color: 'bg-gray-100 text-gray-700', label: 'Pending' },
+      in_transit: { color: 'bg-blue-100 text-blue-700', label: 'In Transit' },
+      out_for_delivery: { color: 'bg-purple-100 text-purple-700', label: 'Out for Delivery' },
+      delivered: { color: 'bg-green-100 text-green-700', label: 'Delivered' },
+      exception: { color: 'bg-red-100 text-red-700', label: 'Exception' },
+      expired: { color: 'bg-orange-100 text-orange-700', label: 'Expired' },
     };
-    return (
-      <Badge className={cn('text-xs', colors[classification] || 'bg-gray-100')}>
-        {classification === 'support_sales' ? 'Support+Sales' : classification}
-      </Badge>
-    );
+    const config = variants[status] || { color: 'bg-gray-100', label: status };
+    return <Badge className={cn('text-xs', config.color)}>{config.label}</Badge>;
   };
 
-  // Priority badge
-  const getPriorityBadge = (priority) => {
-    if (!priority) return null;
-    const colors = {
-      high: 'bg-red-100 text-red-800',
-      medium: 'bg-yellow-100 text-yellow-800',
-      low: 'bg-gray-100 text-gray-800'
-    };
-    return (
-      <Badge className={cn('text-xs', colors[priority] || 'bg-gray-100')}>
-        {priority}
-      </Badge>
-    );
-  };
-
-  // Inbox badge
-  const getInboxBadge = (inboxType) => {
-    if (!inboxType) return null;
-    return (
-      <Badge className={cn('text-xs', inboxType === 'emma' ? 'bg-pink-100 text-pink-800' : 'bg-slate-100 text-slate-800')}>
-        {inboxType === 'emma' ? 'Emma' : 'Support'}
-      </Badge>
-    );
-  };
-
-  // Sender type badge (customer vs supplier)
-  const getSenderBadge = (senderType) => {
-    if (!senderType || senderType === 'customer') return null;
-    const config = {
-      supplier: { label: 'Supplier', color: 'bg-orange-100 text-orange-800' },
-      automated: { label: 'Auto', color: 'bg-gray-100 text-gray-600' },
-      internal: { label: 'Internal', color: 'bg-cyan-100 text-cyan-800' }
-    };
-    const { label, color } = config[senderType] || { label: senderType, color: 'bg-gray-100' };
-    return <Badge className={cn('text-xs', color)}>{label}</Badge>;
-  };
-
-  // Check if email has AI draft
-  const hasAIDraft = (email) => {
-    return email?.messages?.some(m => m.ai_draft);
-  };
-
-  // Filter emails - hide suppliers by default unless searching
-  const filteredEmails = useMemo(() => {
-    let result = emails;
+  // Filter tickets
+  const filteredTickets = useMemo(() => {
+    let result = tickets;
 
     // Filter by search
     if (search.trim()) {
       const s = search.toLowerCase();
-      result = result.filter(e =>
-        e.customer_email?.toLowerCase().includes(s) ||
-        e.customer_name?.toLowerCase().includes(s) ||
-        e.subject?.toLowerCase().includes(s)
+      result = result.filter(t =>
+        t.customer_email?.toLowerCase().includes(s) ||
+        t.customer_name?.toLowerCase().includes(s) ||
+        t.latest_subject?.toLowerCase().includes(s) ||
+        t.order_number?.toLowerCase().includes(s)
       );
-    } else if (!showAllEmails) {
-      // If not searching and not showing all, hide supplier/automated emails
-      result = result.filter(e => !e.sender_type || e.sender_type === 'customer');
+    }
+
+    // Filter by status
+    if (statusFilter && statusFilter !== 'all') {
+      if (statusFilter === 'pending' || statusFilter === 'draft_ready') {
+        result = result.filter(t => t.ticket_status === 'needs_attention' || t.latest_status === statusFilter);
+      } else {
+        result = result.filter(t => t.latest_status === statusFilter);
+      }
     }
 
     return result;
-  }, [emails, search, showAllEmails]);
+  }, [tickets, search, statusFilter]);
 
-  // Count including hidden supplier emails
-  const supplierCount = useMemo(() => {
-    return emails.filter(e => e.sender_type && e.sender_type !== 'customer').length;
-  }, [emails]);
+  // Count tickets needing attention
+  const needsAttentionCount = useMemo(() => {
+    return tickets.filter(t => t.ticket_status === 'needs_attention').length;
+  }, [tickets]);
 
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-slate-900">Email Inbox</h1>
+          <h1 className="text-3xl font-bold text-slate-900">Support Tickets</h1>
           <p className="text-slate-500 mt-1">
-            Manage Emma Sales and Support emails
-            {emails.length > 0 && (
-              <span className="ml-2 text-xs">
-                ({filteredEmails.length} shown, {emails.length} total)
-              </span>
+            Customer cases grouped by conversation
+            {needsAttentionCount > 0 && (
+              <Badge className="ml-2 bg-red-100 text-red-700">
+                {needsAttentionCount} need attention
+              </Badge>
             )}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          {supplierCount > 0 && (
-            <Button
-              variant={showAllEmails ? "default" : "outline"}
-              size="sm"
-              onClick={() => setShowAllEmails(!showAllEmails)}
-              className="text-xs"
-            >
-              {showAllEmails ? 'Hide' : 'Show'} {supplierCount} hidden
-            </Button>
-          )}
-          <Button onClick={handleRefresh} disabled={isRefreshing}>
-            <RefreshCw className={cn("h-4 w-4 mr-2", isRefreshing && "animate-spin")} />
-            Refresh
-          </Button>
-        </div>
+        <Button onClick={handleRefresh} disabled={isRefreshing}>
+          <RefreshCw className={cn("h-4 w-4 mr-2", isRefreshing && "animate-spin")} />
+          Refresh
+        </Button>
       </div>
 
-      {/* Inbox Selector Tabs */}
+      {/* Inbox Tabs */}
       <div className="flex items-center gap-4 border-b border-slate-200 pb-4">
         <Tabs value={activeInbox} onValueChange={setActiveInbox} className="w-full">
           <TabsList className="grid w-full max-w-md grid-cols-3">
             <TabsTrigger value="all" className="flex items-center gap-2">
               <Inbox className="h-4 w-4" />
-              All Emails
+              All Tickets
             </TabsTrigger>
             <TabsTrigger value="emma" className="flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-pink-500" />
@@ -512,14 +453,14 @@ export default function Support() {
         </Tabs>
       </div>
 
-      {/* Quick Stats Row */}
+      {/* Quick Stats */}
       <div className="grid grid-cols-5 gap-3">
         {[
-          { key: 'all', label: 'Total', value: stats.total, color: 'slate', icon: Inbox },
+          { key: 'all', label: 'Total Tickets', value: tickets.length, color: 'slate', icon: Users },
           { key: 'pending', label: 'Pending', value: stats.pending, color: 'yellow', icon: Clock },
-          { key: 'draft_ready', label: 'AI Ready', value: stats.draft_ready, color: 'blue', icon: Bot },
-          { key: 'approved', label: 'Approved', value: stats.approved, color: 'green', icon: CheckCircle },
-          { key: 'sent', label: 'Sent', value: stats.sent, color: 'indigo', icon: Send },
+          { key: 'draft_ready', label: 'Draft Ready', value: stats.draft_ready, color: 'blue', icon: Bot },
+          { key: 'sent', label: 'Sent', value: stats.sent, color: 'green', icon: Send },
+          { key: 'today', label: 'Today', value: stats.today_count, color: 'indigo', icon: Calendar },
         ].map(({ key, label, value, color, icon: Icon }) => (
           <Card
             key={key}
@@ -541,6 +482,69 @@ export default function Support() {
           </Card>
         ))}
       </div>
+
+      {/* Recent Trackings Collapse */}
+      <Card>
+        <CardHeader
+          className="cursor-pointer hover:bg-slate-50 transition-colors py-3"
+          onClick={() => setShowTrackings(!showTrackings)}
+        >
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Truck className="h-4 w-4" />
+              Recent Shipment Tracking
+              <Badge variant="secondary">{recentTrackings.length}</Badge>
+            </CardTitle>
+            <Button variant="ghost" size="sm">
+              {showTrackings ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </Button>
+          </div>
+        </CardHeader>
+        {showTrackings && (
+          <CardContent className="pt-0">
+            {recentTrackings.length === 0 ? (
+              <p className="text-sm text-slate-500 text-center py-4">No recent trackings</p>
+            ) : (
+              <div className="space-y-2">
+                {recentTrackings.map((tracking) => (
+                  <div key={tracking.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <Truck className="h-4 w-4 text-slate-400" />
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-sm">{tracking.tracking_number}</span>
+                          {getTrackingStatusBadge(tracking.status)}
+                          {tracking.delay_detected && (
+                            <Badge className="bg-red-100 text-red-700 text-xs">
+                              <AlertTriangle className="h-3 w-3 mr-1" />
+                              Delayed
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="text-xs text-slate-500 mt-1">
+                          {tracking.customer_name || tracking.customer_email}
+                          {tracking.order_number && ` • Order ${tracking.order_number}`}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right text-xs text-slate-500">
+                      {tracking.last_checkpoint && (
+                        <div className="flex items-center gap-1 mb-1">
+                          <MapPin className="h-3 w-3" />
+                          {tracking.last_checkpoint.substring(0, 40)}
+                        </div>
+                      )}
+                      {tracking.last_checked && (
+                        <div>Updated {formatDistanceToNow(new Date(tracking.last_checked), { addSuffix: true })}</div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        )}
+      </Card>
 
       {/* Analytics Collapse */}
       <Card>
@@ -646,29 +650,22 @@ export default function Support() {
         )}
       </Card>
 
-      {/* Email Table */}
+      {/* Customer Tickets List */}
       <Card>
         <CardHeader className="py-3">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Mail className="h-4 w-4" />
-                {activeInbox === 'emma' ? 'Emma Sales' : activeInbox === 'support' ? 'Support' : 'All'} Emails
-                <Badge variant="secondary">{filteredEmails.length}</Badge>
-              </CardTitle>
-              {supplierCount > 0 && !search && (
-                <span className="text-xs text-slate-400">
-                  ({supplierCount} supplier/auto emails hidden)
-                </span>
-              )}
-            </div>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Users className="h-4 w-4" />
+              Customer Tickets
+              <Badge variant="secondary">{filteredTickets.length}</Badge>
+            </CardTitle>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
               <Input
-                placeholder="Search (shows all)..."
+                placeholder="Search customers, orders..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-[200px] pl-9 h-8"
+                className="w-[250px] pl-9 h-8"
               />
             </div>
           </div>
@@ -676,185 +673,159 @@ export default function Support() {
         <CardContent className="p-0">
           {loading ? (
             <div className="p-4 space-y-2">
-              {[1, 2, 3].map(i => <Skeleton key={i} className="h-12 w-full" />)}
+              {[1, 2, 3].map(i => <Skeleton key={i} className="h-16 w-full" />)}
             </div>
-          ) : filteredEmails.length === 0 ? (
+          ) : filteredTickets.length === 0 ? (
             <div className="text-center py-12 text-slate-500">
-              <Inbox className="h-12 w-12 mx-auto mb-3 opacity-30" />
-              <p className="font-medium">No emails found</p>
-              <p className="text-sm">Emails will appear when customers contact you</p>
+              <Users className="h-12 w-12 mx-auto mb-3 opacity-30" />
+              <p className="font-medium">No tickets found</p>
+              <p className="text-sm">Customer inquiries will appear here</p>
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-slate-50">
-                  <TableHead className="w-[200px]">From</TableHead>
-                  <TableHead>Subject</TableHead>
-                  <TableHead className="w-[80px]">Inbox</TableHead>
-                  <TableHead className="w-[80px]">Type</TableHead>
-                  <TableHead className="w-[80px]">Priority</TableHead>
-                  <TableHead className="w-[100px]">Status</TableHead>
-                  <TableHead className="w-[100px]">Received</TableHead>
-                  <TableHead className="w-[60px]"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredEmails.map((email) => (
-                  <TableRow
-                    key={email.id}
-                    className="cursor-pointer hover:bg-slate-50"
-                    onClick={() => openEmailDetail(email)}
-                  >
-                    <TableCell>
-                      <div className="flex flex-col gap-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium truncate max-w-[150px]">{email.customer_name || 'Unknown'}</span>
-                          {getSenderBadge(email.sender_type)}
-                        </div>
-                        <span className="text-xs text-slate-500 truncate max-w-[180px]">{email.customer_email}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-col">
-                        <span className="font-medium truncate max-w-[300px]">{email.subject}</span>
-                        {email.latest_message && (
-                          <span className="text-xs text-slate-500 truncate max-w-[300px]">{email.latest_message}</span>
+            <div className="divide-y">
+              {filteredTickets.map((ticket) => (
+                <div
+                  key={ticket.customer_email}
+                  className="p-4 hover:bg-slate-50 cursor-pointer transition-colors"
+                  onClick={() => openCustomerDetail(ticket)}
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      {/* Customer info row */}
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="font-semibold text-slate-900">
+                          {ticket.customer_name}
+                        </span>
+                        {getTicketStatusBadge(ticket.ticket_status)}
+                        {ticket.has_pending_draft && (
+                          <Badge className="bg-purple-100 text-purple-700 text-xs">
+                            <Sparkles className="h-3 w-3 mr-1" />
+                            AI Draft
+                          </Badge>
                         )}
                       </div>
-                    </TableCell>
-                    <TableCell>{getInboxBadge(email.inbox_type)}</TableCell>
-                    <TableCell>{getClassificationBadge(email.classification)}</TableCell>
-                    <TableCell>{getPriorityBadge(email.priority)}</TableCell>
-                    <TableCell>{getStatusBadge(email.status)}</TableCell>
-                    <TableCell>
-                      <span className="text-xs text-slate-500">
-                        {email.received_at ? formatDistanceToNow(new Date(email.received_at), { addSuffix: true }) : '-'}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      <Button variant="ghost" size="sm">
-                        <Eye className="h-4 w-4" />
+                      <p className="text-sm text-slate-500 mb-2">{ticket.customer_email}</p>
+
+                      {/* Latest subject */}
+                      <p className="text-sm text-slate-700 truncate max-w-[500px]">
+                        {ticket.latest_subject}
+                      </p>
+
+                      {/* Meta info */}
+                      <div className="flex items-center gap-4 mt-2 text-xs text-slate-500">
+                        <span className="flex items-center gap-1">
+                          <MessageCircle className="h-3 w-3" />
+                          {ticket.message_count} message{ticket.message_count !== 1 ? 's' : ''}
+                        </span>
+                        {ticket.order_number && (
+                          <span className="flex items-center gap-1">
+                            <ShoppingCart className="h-3 w-3" />
+                            Order {ticket.order_number}
+                          </span>
+                        )}
+                        {ticket.tracking_status && (
+                          <span className="flex items-center gap-1">
+                            <Truck className="h-3 w-3" />
+                            {ticket.tracking_status}
+                          </span>
+                        )}
+                        {ticket.intents && ticket.intents.length > 0 && (
+                          <span className="flex items-center gap-1">
+                            <Target className="h-3 w-3" />
+                            {ticket.intents.join(', ')}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="text-right ml-4">
+                      <div className="text-xs text-slate-500">
+                        {ticket.last_activity && formatDistanceToNow(new Date(ticket.last_activity), { addSuffix: true })}
+                      </div>
+                      <Button variant="ghost" size="sm" className="mt-2">
+                        <Eye className="h-4 w-4 mr-1" />
+                        View
                       </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
         </CardContent>
       </Card>
 
-      {/* Email Detail Dialog */}
+      {/* Customer Detail Dialog */}
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Mail className="h-5 w-5" />
-              {selectedEmail?.subject || 'Email Details'}
+              <User className="h-5 w-5" />
+              {selectedCustomer?.customer_name || selectedCustomer?.customer_email}
             </DialogTitle>
-            <DialogDescription className="flex items-center gap-2 flex-wrap">
-              From: <span className="font-medium">{selectedEmail?.customer_name || 'Unknown'}</span>
-              <span className="text-slate-400">({selectedEmail?.customer_email})</span>
-              {selectedEmail?.received_at && (
-                <span className="text-slate-400">
-                  - {format(new Date(selectedEmail.received_at), 'MMM d, yyyy h:mm a')}
+            <DialogDescription>
+              {selectedCustomer?.customer_email}
+              {customerDetails && (
+                <span className="ml-2">
+                  • {customerDetails.total_messages} messages across {customerDetails.total_threads} thread{customerDetails.total_threads !== 1 ? 's' : ''}
                 </span>
               )}
             </DialogDescription>
           </DialogHeader>
 
-          {selectedEmail && (
-            <div className="space-y-6">
-              {/* Ticket Info Bar */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {/* Status */}
-                <div className="p-3 bg-slate-50 rounded-lg border">
-                  <div className="text-xs text-slate-500 mb-1">Status</div>
-                  <div className="flex items-center gap-2">
-                    {getStatusBadge(selectedEmail.status)}
-                    {selectedEmail.resolution && (
-                      <Badge variant="outline" className="text-xs">{selectedEmail.resolution}</Badge>
-                    )}
+          {detailsLoading ? (
+            <div className="flex-1 flex items-center justify-center">
+              <RefreshCw className="h-8 w-8 animate-spin text-slate-400" />
+            </div>
+          ) : customerDetails ? (
+            <div className="flex-1 overflow-hidden flex gap-4">
+              {/* Left side: Conversation */}
+              <div className="flex-1 flex flex-col overflow-hidden">
+                {/* Quick Info Bar */}
+                <div className="grid grid-cols-4 gap-2 mb-4">
+                  <div className="p-2 bg-slate-50 rounded-lg">
+                    <div className="text-xs text-slate-500">Status</div>
+                    <div className="font-medium text-sm">{getTicketStatusBadge(customerDetails.current_status)}</div>
+                  </div>
+                  <div className="p-2 bg-slate-50 rounded-lg">
+                    <div className="text-xs text-slate-500">Orders</div>
+                    <div className="font-medium text-sm">
+                      {customerDetails.summary?.order_numbers?.join(', ') || 'None'}
+                    </div>
+                  </div>
+                  <div className="p-2 bg-slate-50 rounded-lg">
+                    <div className="text-xs text-slate-500">First Contact</div>
+                    <div className="font-medium text-sm">
+                      {customerDetails.first_contact ? format(new Date(customerDetails.first_contact), 'MMM d, yyyy') : '-'}
+                    </div>
+                  </div>
+                  <div className="p-2 bg-slate-50 rounded-lg">
+                    <div className="text-xs text-slate-500">Tracking</div>
+                    <div className="font-medium text-sm">
+                      {customerDetails.trackings?.length > 0
+                        ? getTrackingStatusBadge(customerDetails.trackings[0].status)
+                        : <span className="text-slate-400">No tracking</span>
+                      }
+                    </div>
                   </div>
                 </div>
 
-                {/* Time Open */}
-                <div className="p-3 bg-slate-50 rounded-lg border">
-                  <div className="text-xs text-slate-500 mb-1 flex items-center gap-1">
-                    <Timer className="h-3 w-3" /> Time Open
-                  </div>
-                  <div className="font-medium text-sm">
-                    {selectedEmail.received_at ? formatDistanceToNow(new Date(selectedEmail.received_at)) : '-'}
-                  </div>
-                </div>
-
-                {/* Order # */}
-                <div className="p-3 bg-slate-50 rounded-lg border">
-                  <div className="text-xs text-slate-500 mb-1 flex items-center gap-1">
-                    <ShoppingCart className="h-3 w-3" /> Order
-                  </div>
-                  <div className="font-medium text-sm">
-                    {selectedEmail.order_number || (
-                      <span className="text-slate-400">Not linked</span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Tracking */}
-                <div className="p-3 bg-slate-50 rounded-lg border">
-                  <div className="text-xs text-slate-500 mb-1 flex items-center gap-1">
-                    <Truck className="h-3 w-3" /> Tracking
-                  </div>
-                  <div className="font-medium text-sm">
-                    {selectedEmail.tracking_status ? (
-                      <Badge variant="outline" className="text-xs">{selectedEmail.tracking_status}</Badge>
-                    ) : selectedEmail.tracking_number ? (
-                      <span className="text-xs font-mono">{selectedEmail.tracking_number.substring(0, 15)}...</span>
-                    ) : (
-                      <span className="text-slate-400">N/A</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Classification Tags */}
-              <div className="flex items-center gap-2 flex-wrap">
-                {getInboxBadge(selectedEmail.inbox_type)}
-                {getClassificationBadge(selectedEmail.classification)}
-                {selectedEmail.intent && (
-                  <Badge variant="outline">{selectedEmail.intent}</Badge>
-                )}
-                {getPriorityBadge(selectedEmail.priority)}
-                {selectedEmail.sales_opportunity && (
-                  <Badge className="bg-amber-100 text-amber-800">
-                    <TrendingUp className="h-3 w-3 mr-1" />
-                    Sales Opportunity
-                  </Badge>
-                )}
-              </div>
-
-              {/* Conversation - Chat-like display */}
-              <div className="space-y-3">
-                <h4 className="font-semibold flex items-center gap-2 text-slate-700">
-                  <MessageSquare className="h-4 w-4" />
-                  Conversation
-                  <span className="text-xs font-normal text-slate-400">
-                    ({selectedEmail.messages?.length || 0} messages)
-                  </span>
-                </h4>
-
-                <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
-                  {selectedEmail.messages?.map((msg, idx) => (
+                {/* Conversation Timeline */}
+                <div className="flex-1 overflow-y-auto space-y-3 pr-2">
+                  <h4 className="font-semibold flex items-center gap-2 text-slate-700 sticky top-0 bg-white py-2">
+                    <History className="h-4 w-4" />
+                    Full Conversation Timeline
+                  </h4>
+                  {customerDetails.all_messages?.map((msg, idx) => (
                     <div
                       key={idx}
                       className={cn(
                         "p-3 rounded-lg",
                         msg.direction === 'inbound'
-                          ? 'bg-white border border-slate-200 mr-12'
-                          : 'bg-blue-50 border border-blue-200 ml-12'
+                          ? 'bg-white border border-slate-200 mr-8'
+                          : 'bg-blue-50 border border-blue-200 ml-8'
                       )}
                     >
-                      {/* Message Header */}
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2">
                           <div className={cn(
@@ -869,250 +840,198 @@ export default function Support() {
                           </div>
                           <span className="font-medium text-sm">
                             {msg.direction === 'inbound'
-                              ? (msg.sender_name || selectedEmail.customer_name || 'Customer')
+                              ? (msg.sender_name || customerDetails.customer_name || 'Customer')
                               : 'Emma (Mirai Support)'
                             }
                           </span>
+                          {msg.thread_subject && (
+                            <span className="text-xs text-slate-400 truncate max-w-[200px]">
+                              Re: {msg.thread_subject}
+                            </span>
+                          )}
                         </div>
                         <span className="text-xs text-slate-400">
                           {msg.created_at ? format(new Date(msg.created_at), 'MMM d, h:mm a') : ''}
                         </span>
                       </div>
-
-                      {/* Message Content - parsed and cleaned */}
                       <div className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
-                        {parseEmailThread(msg.content)}
+                        {parseEmailContent(msg.content)}
                       </div>
 
                       {/* AI Draft */}
-                      {msg.ai_draft && (
+                      {msg.ai_draft && !msg.sent_at && (
                         <div className="mt-3 p-3 bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg border border-purple-200">
                           <div className="flex items-center gap-2 mb-2">
                             <Sparkles className="h-4 w-4 text-purple-600" />
                             <span className="font-medium text-sm text-purple-700">Emma's Draft</span>
-                            <Badge className="bg-purple-100 text-purple-700 text-xs">Ready</Badge>
+                            <Badge className="bg-purple-100 text-purple-700 text-xs">Ready for Review</Badge>
                           </div>
                           <div className="text-sm whitespace-pre-wrap">{msg.ai_draft}</div>
                         </div>
-                    )}
-                  </div>
-                ))}
+                      )}
+                    </div>
+                  ))}
                 </div>
               </div>
 
-              {/* Action Section based on status */}
-              {selectedEmail.status === 'draft_ready' && (
-                <div className="space-y-4 p-4 bg-green-50 rounded-lg border border-green-200">
-                  <h4 className="font-semibold flex items-center gap-2 text-green-800">
-                    <CheckCircle className="h-4 w-4" />
-                    Ready to Send
-                  </h4>
-                  <p className="text-sm text-green-700">
-                    Review the AI draft above. You can approve it, edit it, regenerate with guidance, or reject it.
-                  </p>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Edit draft (optional):</label>
-                    <Textarea
-                      value={editDraft}
-                      onChange={(e) => setEditDraft(e.target.value)}
-                      rows={6}
-                      placeholder="Edit the AI draft here..."
-                      className="bg-white"
-                    />
-                  </div>
+              {/* Right side: Actions & Tracking */}
+              <div className="w-80 flex flex-col space-y-4 overflow-y-auto">
+                {/* Tracking Info */}
+                {customerDetails.trackings && customerDetails.trackings.length > 0 && (
+                  <Card>
+                    <CardHeader className="py-2 px-3">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <Truck className="h-4 w-4" />
+                        Shipment Tracking
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="px-3 pb-3 space-y-2">
+                      {customerDetails.trackings.slice(0, 3).map((t) => (
+                        <div key={t.id} className="p-2 bg-slate-50 rounded text-xs">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="font-mono">{t.tracking_number.substring(0, 20)}...</span>
+                            {getTrackingStatusBadge(t.status)}
+                          </div>
+                          {t.last_checkpoint && (
+                            <div className="text-slate-500 truncate">{t.last_checkpoint}</div>
+                          )}
+                          {t.estimated_delivery && (
+                            <div className="text-slate-500 mt-1">
+                              Est. delivery: {format(new Date(t.estimated_delivery), 'MMM d')}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+                )}
 
-                  {/* Regenerate with hints option */}
-                  <div className="pt-3 border-t border-green-200">
-                    <label className="text-sm font-medium text-green-800 block mb-2">
-                      Not happy with the draft? Regenerate with guidance:
-                    </label>
-                    <div className="flex gap-2">
+                {/* Action Section */}
+                {customerDetails.summary?.has_pending_response && (
+                  <Card className="border-green-200 bg-green-50">
+                    <CardHeader className="py-2 px-3">
+                      <CardTitle className="text-sm flex items-center gap-2 text-green-800">
+                        <CheckCircle className="h-4 w-4" />
+                        Ready to Respond
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="px-3 pb-3 space-y-3">
+                      {/* Edit draft */}
+                      <div className="space-y-2">
+                        <label className="text-xs font-medium text-green-800">Edit draft (optional):</label>
+                        <Textarea
+                          value={editDraft}
+                          onChange={(e) => setEditDraft(e.target.value)}
+                          rows={4}
+                          placeholder="Edit the AI draft..."
+                          className="bg-white text-sm"
+                        />
+                      </div>
+
+                      {/* Regenerate with hints */}
+                      <div className="space-y-2 pt-2 border-t border-green-200">
+                        <label className="text-xs font-medium text-green-800">
+                          Regenerate with guidance:
+                        </label>
+                        <div className="flex gap-2">
+                          <Input
+                            value={userHints}
+                            onChange={(e) => setUserHints(e.target.value)}
+                            placeholder="e.g., 'Offer refund'"
+                            className="bg-white text-xs h-8"
+                          />
+                          <Button
+                            onClick={() => handleRegenerateAI(userHints.trim() ? true : false)}
+                            disabled={isRegenerating}
+                            variant="outline"
+                            size="sm"
+                            className="border-green-400 text-green-700 hover:bg-green-100 whitespace-nowrap"
+                          >
+                            <Sparkles className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="flex gap-2 pt-2">
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={handleReject}
+                          disabled={isSending}
+                          className="flex-1"
+                        >
+                          <XCircle className="h-3 w-3 mr-1" />
+                          Reject
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={editDraft !== customerDetails.summary?.pending_draft ? handleApproveWithEdits : handleApprove}
+                          disabled={isSending}
+                          className="flex-1 bg-green-600 hover:bg-green-700"
+                        >
+                          <Send className="h-3 w-3 mr-1" />
+                          {isSending ? 'Sending...' : 'Send'}
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Manual response if no draft */}
+                {!customerDetails.summary?.has_pending_response && customerDetails.current_status !== 'resolved' && (
+                  <Card>
+                    <CardHeader className="py-2 px-3">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <Edit className="h-4 w-4" />
+                        Write Response
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="px-3 pb-3 space-y-3">
                       <Textarea
-                        value={userHints}
-                        onChange={(e) => setUserHints(e.target.value)}
-                        rows={1}
-                        placeholder="e.g., 'Be more apologetic', 'Offer discount', 'Focus on return policy'..."
-                        className="bg-white text-sm flex-1"
+                        value={manualResponse}
+                        onChange={(e) => setManualResponse(e.target.value)}
+                        rows={4}
+                        placeholder="Type your response..."
+                        className="text-sm"
                       />
-                      <Button
-                        onClick={() => handleRegenerateAI(userHints.trim() ? true : false)}
-                        disabled={isRegenerating}
-                        variant="outline"
-                        className="border-green-400 text-green-700 hover:bg-green-100 whitespace-nowrap"
-                      >
-                        <Sparkles className="h-4 w-4 mr-1" />
-                        {isRegenerating ? 'Regenerating...' : 'Regenerate'}
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              )}
+                      <div className="flex gap-2">
+                        <Button
+                          onClick={() => handleRegenerateAI(false)}
+                          disabled={isRegenerating}
+                          variant="outline"
+                          size="sm"
+                          className="flex-1"
+                        >
+                          <Sparkles className="h-3 w-3 mr-1" />
+                          {isRegenerating ? 'Generating...' : 'Generate AI'}
+                        </Button>
+                        {manualResponse.trim() && (
+                          <Button
+                            onClick={handleSendManual}
+                            disabled={isSending}
+                            size="sm"
+                            className="flex-1"
+                          >
+                            <Send className="h-3 w-3 mr-1" />
+                            Send
+                          </Button>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
 
-              {selectedEmail.status === 'pending' && !hasAIDraft(selectedEmail) && (
-                <div className="space-y-4 p-4 bg-yellow-50 rounded-lg border border-yellow-200">
-                  <h4 className="font-semibold flex items-center gap-2 text-yellow-800">
-                    <AlertCircle className="h-4 w-4" />
-                    Awaiting AI Draft
-                  </h4>
-                  <p className="text-sm text-yellow-700">
-                    AI draft not yet generated. Click below to generate or write a manual response.
-                  </p>
-
-                  {/* Hints input for Emma */}
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-yellow-800">
-                      Guide Emma (optional):
-                    </label>
-                    <Textarea
-                      value={userHints}
-                      onChange={(e) => setUserHints(e.target.value)}
-                      rows={2}
-                      placeholder="e.g., 'Offer 10% discount', 'Be more apologetic', 'Focus on shipping timeline'..."
-                      className="bg-white text-sm"
-                    />
-                    <p className="text-xs text-yellow-600">
-                      Provide hints to guide Emma's response style or content
-                    </p>
-                  </div>
-
-                  <div className="flex gap-2">
-                    <Button
-                      onClick={() => handleRegenerateAI(false)}
-                      disabled={isRegenerating}
-                      className="flex-1 bg-purple-600 hover:bg-purple-700"
-                    >
-                      <Sparkles className="h-4 w-4 mr-2" />
-                      {isRegenerating ? 'Generating...' : 'Generate AI Response'}
-                    </Button>
-                    {userHints.trim() && (
-                      <Button
-                        onClick={() => handleRegenerateAI(true)}
-                        disabled={isRegenerating}
-                        variant="outline"
-                        className="border-purple-300 text-purple-700 hover:bg-purple-50"
-                      >
-                        With Hints
-                      </Button>
-                    )}
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Or write a manual response:</label>
-                    <Textarea
-                      value={manualResponse}
-                      onChange={(e) => setManualResponse(e.target.value)}
-                      rows={6}
-                      placeholder="Type your response..."
-                      className="bg-white"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {selectedEmail.status === 'draft_failed' && (
-                <div className="space-y-4 p-4 bg-red-50 rounded-lg border border-red-200">
-                  <h4 className="font-semibold flex items-center gap-2 text-red-800">
-                    <AlertCircle className="h-4 w-4" />
-                    AI Draft Generation Failed
-                  </h4>
-                  <p className="text-sm text-red-700">
-                    The AI couldn't generate a draft for this email. Try again or write a manual response.
-                  </p>
-
-                  {/* Hints input for Emma */}
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-red-800">
-                      Guide Emma (optional):
-                    </label>
-                    <Textarea
-                      value={userHints}
-                      onChange={(e) => setUserHints(e.target.value)}
-                      rows={2}
-                      placeholder="e.g., 'Be more apologetic', 'Mention 180-day return policy'..."
-                      className="bg-white text-sm"
-                    />
-                  </div>
-
-                  <div className="flex gap-2">
-                    <Button
-                      onClick={() => handleRegenerateAI(false)}
-                      disabled={isRegenerating}
-                      variant="outline"
-                      className="flex-1 border-red-300 text-red-700 hover:bg-red-100"
-                    >
-                      <Sparkles className="h-4 w-4 mr-2" />
-                      {isRegenerating ? 'Retrying...' : 'Retry AI Generation'}
-                    </Button>
-                    {userHints.trim() && (
-                      <Button
-                        onClick={() => handleRegenerateAI(true)}
-                        disabled={isRegenerating}
-                        className="bg-red-600 hover:bg-red-700 text-white"
-                      >
-                        With Hints
-                      </Button>
-                    )}
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Or write a manual response:</label>
-                    <Textarea
-                      value={manualResponse}
-                      onChange={(e) => setManualResponse(e.target.value)}
-                      rows={6}
-                      placeholder="Type your response..."
-                      className="bg-white"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {(selectedEmail.status === 'not_customer' || selectedEmail.status === 'draft_skipped') && (
-                <div className="space-y-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-                  <h4 className="font-semibold flex items-center gap-2 text-gray-800">
-                    <User className="h-4 w-4" />
-                    {selectedEmail.status === 'not_customer' ? 'Non-Customer Email' : 'Draft Skipped'}
-                  </h4>
-                  <p className="text-sm text-gray-700">
-                    {selectedEmail.status === 'not_customer'
-                      ? 'This email is from a supplier or automated source. No AI draft was generated.'
-                      : 'AI draft generation was skipped for this email.'}
-                  </p>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Manual response (optional):</label>
-                    <Textarea
-                      value={manualResponse}
-                      onChange={(e) => setManualResponse(e.target.value)}
-                      rows={6}
-                      placeholder="Type your response..."
-                      className="bg-white"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Ticket Resolution Section */}
-              <div className="p-4 bg-slate-50 rounded-lg border space-y-3">
-                <h4 className="font-semibold flex items-center gap-2 text-slate-700">
-                  <FileCheck className="h-4 w-4" />
-                  Resolve Ticket
-                </h4>
-
-                {selectedEmail.resolution ? (
-                  <div className="p-3 bg-green-50 rounded border border-green-200">
-                    <div className="flex items-center gap-2">
-                      <CheckCircle className="h-4 w-4 text-green-600" />
-                      <span className="font-medium text-green-800">
-                        Resolved: {selectedEmail.resolution}
-                      </span>
-                    </div>
-                    {selectedEmail.resolution_notes && (
-                      <p className="text-sm text-green-700 mt-2">{selectedEmail.resolution_notes}</p>
-                    )}
-                  </div>
-                ) : (
-                  <>
-                    <div className="grid grid-cols-3 gap-2">
+                {/* Resolve Ticket */}
+                <Card>
+                  <CardHeader className="py-2 px-3">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <FileCheck className="h-4 w-4" />
+                      Resolve Ticket
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="px-3 pb-3 space-y-2">
+                    <div className="grid grid-cols-2 gap-1">
                       {resolutionOptions.map((opt) => (
                         <Button
                           key={opt.value}
@@ -1120,65 +1039,29 @@ export default function Support() {
                           size="sm"
                           onClick={() => handleResolveTicket(opt.value)}
                           disabled={isResolving}
-                          className={cn(
-                            "justify-start h-auto py-2 px-3",
-                            resolution === opt.value && "border-2 border-blue-500"
-                          )}
+                          className="justify-start h-auto py-1.5 px-2 text-xs"
                         >
-                          <opt.icon className={`h-4 w-4 mr-2 text-${opt.color}-600`} />
-                          <span className="text-xs">{opt.label}</span>
+                          <opt.icon className={`h-3 w-3 mr-1 text-${opt.color}-600`} />
+                          {opt.label}
                         </Button>
                       ))}
                     </div>
-                    <Textarea
+                    <Input
                       value={resolutionNotes}
                       onChange={(e) => setResolutionNotes(e.target.value)}
-                      rows={2}
-                      placeholder="Add resolution notes (optional)..."
-                      className="bg-white text-sm"
+                      placeholder="Resolution notes..."
+                      className="text-xs h-8"
                     />
-                  </>
-                )}
+                  </CardContent>
+                </Card>
               </div>
             </div>
-          )}
+          ) : null}
 
-          <DialogFooter className="flex gap-2 mt-4">
+          <DialogFooter className="mt-4">
             <Button variant="outline" onClick={() => setDetailOpen(false)}>
               Close
             </Button>
-
-            {selectedEmail?.status === 'draft_ready' && (
-              <>
-                <Button variant="destructive" onClick={handleReject} disabled={isSending}>
-                  <XCircle className="h-4 w-4 mr-2" />
-                  Reject
-                </Button>
-                <Button variant="secondary" onClick={handleApproveWithEdits} disabled={isSending || !editDraft}>
-                  <Edit className="h-4 w-4 mr-2" />
-                  {isSending ? 'Sending...' : 'Send Edited'}
-                </Button>
-                <Button onClick={handleApprove} disabled={isSending} className="bg-green-600 hover:bg-green-700">
-                  <Send className="h-4 w-4 mr-2" />
-                  {isSending ? 'Sending...' : 'Send AI Draft'}
-                </Button>
-              </>
-            )}
-
-            {['pending', 'draft_failed', 'draft_empty', 'not_customer', 'draft_skipped'].includes(selectedEmail?.status) && (
-              <>
-                <Button variant="destructive" onClick={handleReject} disabled={isSending}>
-                  <XCircle className="h-4 w-4 mr-2" />
-                  Reject
-                </Button>
-                {manualResponse.trim() && (
-                  <Button onClick={handleSendManual} disabled={isSending} className="bg-green-600 hover:bg-green-700">
-                    <Send className="h-4 w-4 mr-2" />
-                    {isSending ? 'Sending...' : 'Send Response'}
-                  </Button>
-                )}
-              </>
-            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

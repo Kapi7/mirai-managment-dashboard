@@ -444,6 +444,8 @@ def _kpis_from_orders(
     returning_customers: set[str] = set()
 
     in_window: List[dict] = []
+    boundary_orders = []  # Track orders near boundaries for debugging
+
     for o in orders:
         dt = _parse_dt(o.get("createdAt"))
         if not dt:
@@ -451,8 +453,28 @@ def _kpis_from_orders(
         if dt.tzinfo is None:
             dt = pytz.UTC.localize(dt)
         dt_local = dt.astimezone(tz)
+
+        # Check for boundary orders (within 5 minutes of start/end)
+        seconds_from_start = abs((dt_local - start_local).total_seconds())
+        seconds_from_end = abs((dt_local - end_local).total_seconds())
+
+        if seconds_from_start < 300 or seconds_from_end < 300:
+            boundary_orders.append({
+                "order_name": o.get("name"),
+                "created_at_utc": o.get("createdAt"),
+                "created_at_local": dt_local.isoformat(),
+                "in_window": start_local <= dt_local < end_local
+            })
+
         if start_local <= dt_local < end_local:
             in_window.append(o)
+
+    # Log boundary orders if any found
+    if boundary_orders:
+        print(f"  [KPIs] {day_label}: Found {len(boundary_orders)} boundary order(s):")
+        for bo in boundary_orders:
+            status = "INCLUDED" if bo["in_window"] else "EXCLUDED"
+            print(f"    - {bo['order_name']}: {bo['created_at_local']} [{status}]")
 
     orders_created = len(in_window)
     orders_net_count = 0

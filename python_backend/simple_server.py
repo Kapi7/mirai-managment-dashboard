@@ -2484,6 +2484,331 @@ async def get_support_stats(user: dict = Depends(get_current_user)):
         }
 
 
+@app.get("/support/tickets")
+async def get_support_tickets(
+    status: Optional[str] = None,
+    inbox_type: Optional[str] = None,
+    limit: int = 100,
+    user: dict = Depends(get_current_user)
+):
+    """
+    Get support tickets grouped by customer email.
+    Returns one ticket per customer with aggregated info for manager decision-making.
+    """
+    if not DB_SERVICE_AVAILABLE:
+        return {"tickets": [], "total": 0}
+
+    from database.connection import get_db
+    from database.models import SupportEmail, SupportMessage
+    from sqlalchemy import select, func, desc, and_
+
+    async with get_db() as db:
+        # First, get distinct customers with their latest email info
+        # Subquery to get the latest email per customer
+        latest_subq = (
+            select(
+                SupportEmail.customer_email,
+                func.max(SupportEmail.received_at).label('latest_received'),
+            )
+            .group_by(SupportEmail.customer_email)
+        ).subquery()
+
+        # Build filter conditions
+        filters = []
+        if inbox_type and inbox_type != 'all':
+            filters.append(SupportEmail.inbox_type == inbox_type)
+        # Only show customer emails by default (hide suppliers)
+        filters.append(SupportEmail.sender_type.in_(['customer', None]))
+
+        # Get customer tickets with aggregated data
+        query = (
+            select(
+                SupportEmail.customer_email,
+                SupportEmail.customer_name,
+                func.count(SupportEmail.id).label('message_count'),
+                func.max(SupportEmail.received_at).label('last_activity'),
+                func.min(SupportEmail.received_at).label('first_contact'),
+                # Get the status of the most recent email
+                func.max(SupportEmail.id).label('latest_email_id'),
+            )
+            .where(and_(*filters) if filters else True)
+            .group_by(SupportEmail.customer_email, SupportEmail.customer_name)
+            .order_by(desc(func.max(SupportEmail.received_at)))
+            .limit(limit)
+        )
+
+        result = await db.execute(query)
+        customer_groups = result.all()
+
+        tickets = []
+        for row in customer_groups:
+            # Get the latest email details for this customer
+            latest_email_result = await db.execute(
+                select(SupportEmail)
+                .where(SupportEmail.id == row.latest_email_id)
+            )
+            latest_email = latest_email_result.scalar_one_or_none()
+
+            if not latest_email:
+                continue
+
+            # Apply status filter if specified
+            if status and status != 'all':
+                # Get all emails for this customer to check if any match the status
+                emails_result = await db.execute(
+                    select(SupportEmail)
+                    .where(and_(
+                        SupportEmail.customer_email == row.customer_email,
+                        SupportEmail.status == status
+                    ))
+                )
+                if not emails_result.scalars().first():
+                    continue
+
+            # Get all messages for this customer to build conversation summary
+            messages_result = await db.execute(
+                select(SupportMessage)
+                .join(SupportEmail)
+                .where(SupportEmail.customer_email == row.customer_email)
+                .order_by(SupportMessage.created_at)
+            )
+            messages = messages_result.scalars().all()
+
+            # Get all email threads for this customer
+            emails_result = await db.execute(
+                select(SupportEmail)
+                .where(SupportEmail.customer_email == row.customer_email)
+                .order_by(desc(SupportEmail.received_at))
+            )
+            customer_emails = emails_result.scalars().all()
+
+            # Determine overall ticket status (priority: pending > draft_ready > sent)
+            statuses = [e.status for e in customer_emails]
+            if 'pending' in statuses or 'draft_ready' in statuses:
+                ticket_status = 'needs_attention'
+            elif 'sent' in statuses or 'approved' in statuses:
+                ticket_status = 'resolved'
+            else:
+                ticket_status = latest_email.status
+
+            # Check if there's an AI draft waiting
+            has_draft = any(m.ai_draft for m in messages)
+
+            # Get unique intents and subjects
+            intents = list(set(e.intent for e in customer_emails if e.intent))
+            subjects = list(set(e.subject for e in customer_emails if e.subject))
+
+            tickets.append({
+                "customer_email": row.customer_email,
+                "customer_name": row.customer_name or row.customer_email.split('@')[0],
+                "message_count": row.message_count,
+                "thread_count": len(customer_emails),
+                "last_activity": row.last_activity.isoformat() if row.last_activity else None,
+                "first_contact": row.first_contact.isoformat() if row.first_contact else None,
+                "ticket_status": ticket_status,
+                "has_pending_draft": has_draft and latest_email.status == 'draft_ready',
+                "latest_subject": latest_email.subject,
+                "latest_status": latest_email.status,
+                "latest_email_id": latest_email.id,
+                "inbox_type": latest_email.inbox_type,
+                "classification": latest_email.classification,
+                "priority": latest_email.priority,
+                "intents": intents[:3],  # Top 3 intents
+                "order_number": latest_email.order_number,
+                "tracking_number": latest_email.tracking_number,
+                "tracking_status": latest_email.tracking_status,
+            })
+
+        return {
+            "tickets": tickets,
+            "total": len(tickets)
+        }
+
+
+@app.get("/support/customer/{email}/details")
+async def get_customer_support_details(email: str, user: dict = Depends(get_current_user)):
+    """
+    Get complete support history for a customer including all conversations,
+    tracking info, and order details for manager decision-making.
+    """
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import SupportEmail, SupportMessage, ShipmentTracking
+    from sqlalchemy import select, desc
+    import urllib.parse
+
+    decoded_email = urllib.parse.unquote(email)
+
+    async with get_db() as db:
+        # Get all email threads for this customer
+        emails_result = await db.execute(
+            select(SupportEmail)
+            .where(SupportEmail.customer_email == decoded_email)
+            .order_by(desc(SupportEmail.received_at))
+        )
+        emails = emails_result.scalars().all()
+
+        if not emails:
+            raise HTTPException(status_code=404, detail="Customer not found")
+
+        # Get all messages across all threads
+        all_messages = []
+        for email_thread in emails:
+            messages_result = await db.execute(
+                select(SupportMessage)
+                .where(SupportMessage.email_id == email_thread.id)
+                .order_by(SupportMessage.created_at)
+            )
+            messages = messages_result.scalars().all()
+            for msg in messages:
+                all_messages.append({
+                    "id": msg.id,
+                    "email_id": email_thread.id,
+                    "thread_subject": email_thread.subject,
+                    "direction": msg.direction,
+                    "sender_email": msg.sender_email,
+                    "sender_name": msg.sender_name,
+                    "content": msg.content,
+                    "ai_draft": msg.ai_draft,
+                    "final_content": msg.final_content,
+                    "created_at": msg.created_at.isoformat() if msg.created_at else None,
+                    "sent_at": msg.sent_at.isoformat() if msg.sent_at else None,
+                })
+
+        # Sort all messages chronologically
+        all_messages.sort(key=lambda x: x['created_at'] or '')
+
+        # Get tracking info for this customer
+        tracking_result = await db.execute(
+            select(ShipmentTracking)
+            .where(ShipmentTracking.customer_email == decoded_email)
+            .order_by(desc(ShipmentTracking.shipped_at))
+            .limit(10)
+        )
+        trackings = tracking_result.scalars().all()
+
+        # Build conversation threads organized by subject/intent
+        threads = []
+        for email_thread in emails:
+            thread_messages = [m for m in all_messages if m['email_id'] == email_thread.id]
+            threads.append({
+                "id": email_thread.id,
+                "thread_id": email_thread.thread_id,
+                "subject": email_thread.subject,
+                "status": email_thread.status,
+                "classification": email_thread.classification,
+                "intent": email_thread.intent,
+                "priority": email_thread.priority,
+                "received_at": email_thread.received_at.isoformat() if email_thread.received_at else None,
+                "order_number": email_thread.order_number,
+                "resolution": email_thread.resolution,
+                "resolution_notes": email_thread.resolution_notes,
+                "messages": thread_messages,
+            })
+
+        # Get the latest email that needs attention (pending or draft_ready)
+        needs_attention = next(
+            (e for e in emails if e.status in ['pending', 'draft_ready']),
+            emails[0] if emails else None
+        )
+
+        return {
+            "customer_email": decoded_email,
+            "customer_name": emails[0].customer_name if emails else None,
+            "total_threads": len(emails),
+            "total_messages": len(all_messages),
+            "first_contact": min(e.received_at for e in emails).isoformat() if emails else None,
+            "last_activity": max(e.received_at for e in emails).isoformat() if emails else None,
+            "current_status": needs_attention.status if needs_attention else 'resolved',
+            "current_email_id": needs_attention.id if needs_attention else None,
+            "threads": threads,
+            "all_messages": all_messages,  # Chronological conversation view
+            "trackings": [
+                {
+                    "id": t.id,
+                    "tracking_number": t.tracking_number,
+                    "carrier": t.carrier,
+                    "status": t.status,
+                    "status_detail": t.status_detail,
+                    "order_number": t.order_number,
+                    "shipped_at": t.shipped_at.isoformat() if t.shipped_at else None,
+                    "delivered_at": t.delivered_at.isoformat() if t.delivered_at else None,
+                    "estimated_delivery": t.estimated_delivery.isoformat() if t.estimated_delivery else None,
+                    "last_checkpoint": t.last_checkpoint,
+                    "last_checked": t.last_checked.isoformat() if t.last_checked else None,
+                    "delay_detected": t.delay_detected,
+                }
+                for t in trackings
+            ],
+            # Summary for manager
+            "summary": {
+                "has_pending_response": needs_attention.status in ['pending', 'draft_ready'] if needs_attention else False,
+                "pending_draft": next(
+                    (m['ai_draft'] for m in all_messages if m['ai_draft'] and not m['sent_at']),
+                    None
+                ),
+                "order_numbers": list(set(e.order_number for e in emails if e.order_number)),
+                "tracking_numbers": list(set(t.tracking_number for t in trackings)),
+                "open_issues": [
+                    {
+                        "subject": e.subject,
+                        "intent": e.intent,
+                        "status": e.status,
+                    }
+                    for e in emails
+                    if e.status in ['pending', 'draft_ready']
+                ],
+            }
+        }
+
+
+@app.get("/support/recent-trackings")
+async def get_recent_trackings(limit: int = 10, user: dict = Depends(get_current_user)):
+    """
+    Get recent tracking information for the support dashboard.
+    Shows the last N trackings with their current status.
+    """
+    if not DB_SERVICE_AVAILABLE:
+        return {"trackings": []}
+
+    from database.connection import get_db
+    from database.models import ShipmentTracking
+    from sqlalchemy import select, desc
+
+    async with get_db() as db:
+        result = await db.execute(
+            select(ShipmentTracking)
+            .order_by(desc(ShipmentTracking.last_checked))
+            .limit(limit)
+        )
+        trackings = result.scalars().all()
+
+        return {
+            "trackings": [
+                {
+                    "id": t.id,
+                    "tracking_number": t.tracking_number,
+                    "carrier": t.carrier,
+                    "status": t.status,
+                    "status_detail": t.status_detail,
+                    "customer_email": t.customer_email,
+                    "customer_name": t.customer_name,
+                    "order_number": t.order_number,
+                    "shipped_at": t.shipped_at.isoformat() if t.shipped_at else None,
+                    "delivered_at": t.delivered_at.isoformat() if t.delivered_at else None,
+                    "estimated_delivery": t.estimated_delivery.isoformat() if t.estimated_delivery else None,
+                    "last_checkpoint": t.last_checkpoint,
+                    "last_checked": t.last_checked.isoformat() if t.last_checked else None,
+                    "delay_detected": t.delay_detected,
+                    "delay_days": t.delay_days,
+                }
+                for t in trackings
+            ]
+        }
+
+
 # ==================== TRACKING DASHBOARD ====================
 
 @app.get("/tracking/shipments")
