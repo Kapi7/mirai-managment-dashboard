@@ -1208,6 +1208,7 @@ app.get('/api/tracking/stats', async (req, res) => {
 app.post('/api/tracking/sync', async (req, res) => {
   try {
     const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    console.log('[tracking/sync] Calling Python backend:', pythonBackendUrl);
     const response = await fetch(`${pythonBackendUrl}/tracking/sync`, {
       method: 'POST',
       headers: {
@@ -1217,9 +1218,10 @@ app.post('/api/tracking/sync', async (req, res) => {
     });
 
     const data = await response.json();
+    console.log('[tracking/sync] Python response status:', response.status, 'data:', JSON.stringify(data).slice(0, 500));
     res.status(response.status).json(data);
   } catch (error) {
-    console.error('Tracking sync error:', error);
+    console.error('[tracking/sync] Error:', error);
     res.status(500).json({ error: error.message });
   }
 });
