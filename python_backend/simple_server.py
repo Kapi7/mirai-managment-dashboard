@@ -2981,6 +2981,16 @@ async def get_tracking_stats(user: dict = Depends(get_current_user)):
         delivered = status_counts.get("delivered", 0)
         delivery_rate = round((delivered / total) * 100, 1) if total > 0 else 0
 
+        # Count drafts ready for approval
+        drafts_ready_result = await db.execute(
+            select(func.count(ShipmentTracking.id))
+            .where(
+                ShipmentTracking.followup_status == "draft_ready",
+                ShipmentTracking.delivery_followup_sent == False
+            )
+        )
+        drafts_ready = drafts_ready_result.scalar() or 0
+
         return {
             "total": total,
             "pending": status_counts.get("pending", 0),
@@ -2991,6 +3001,7 @@ async def get_tracking_stats(user: dict = Depends(get_current_user)):
             "delayed": delayed_count,
             "followup_pending": followup_pending,
             "followup_sent": followup_sent,
+            "drafts_ready": drafts_ready,
             "avg_delivery_days": round(avg_delivery_days, 1) if avg_delivery_days else None,
             "delivery_rate": delivery_rate,
             "active_shipments": active_count,
@@ -3173,35 +3184,36 @@ async def check_single_tracking(tracking_number: str, user: dict = Depends(get_c
             shipment.last_checked = datetime.utcnow()
             await db.commit()
 
-            # Auto-send followup email when delivery is detected
-            if result.get("status") == "delivered" and not shipment.delivery_followup_sent:
+            # Auto-generate followup draft when delivery is detected (don't auto-send)
+            if result.get("status") == "delivered" and not shipment.delivery_followup_sent and shipment.followup_status != 'draft_ready':
                 try:
                     import sys
                     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'emma_service'))
-                    from followup_service import process_delivery_followup
+                    from followup_service import generate_followup_email
 
                     # Parse line items
                     ordered_items = []
                     if shipment.line_items:
                         ordered_items = [item.strip() for item in shipment.line_items.split(",") if item.strip()]
 
-                    followup_result = process_delivery_followup(
-                        customer_email=shipment.customer_email,
+                    # Generate draft (don't send)
+                    draft = generate_followup_email(
                         customer_name=shipment.customer_name or "",
+                        customer_email=shipment.customer_email,
                         order_number=shipment.order_number or "",
                         ordered_items=ordered_items,
                         delivered_date=shipment.delivered_at,
-                        send_email=True
                     )
 
-                    if followup_result.get("email_sent"):
-                        shipment.delivery_followup_sent = True
+                    if draft.get("success"):
+                        shipment.followup_draft_subject = draft.get("subject")
+                        shipment.followup_draft_body = draft.get("body")
+                        shipment.followup_draft_generated_at = datetime.utcnow()
+                        shipment.followup_status = 'draft_ready'
                         await db.commit()
-                        print(f"[tracking] Auto-sent delivery followup to {shipment.customer_email} for order {shipment.order_number}")
-                    else:
-                        print(f"[tracking] Followup email generated but not sent: {followup_result.get('send_error', 'Unknown error')}")
+                        print(f"[tracking] Generated followup draft for {shipment.customer_email} order {shipment.order_number}")
                 except Exception as e:
-                    print(f"[tracking] Auto-followup failed for {shipment.tracking_number}: {e}")
+                    print(f"[tracking] Draft generation failed for {shipment.tracking_number}: {e}")
 
     return {
         "success": True,
@@ -3282,31 +3294,33 @@ async def check_trackings_background(tracking_numbers: List[str]):
 
                         await db.commit()
 
-                        # Auto-send followup when delivery is detected
-                        if result.get("status") == "delivered" and not shipment.delivery_followup_sent:
+                        # Auto-generate followup draft when delivery is detected (don't auto-send)
+                        if result.get("status") == "delivered" and not shipment.delivery_followup_sent and shipment.followup_status != 'draft_ready':
                             try:
-                                from followup_service import process_delivery_followup
+                                from followup_service import generate_followup_email
 
                                 ordered_items = []
                                 if shipment.line_items:
                                     ordered_items = [item.strip() for item in shipment.line_items.split(",") if item.strip()]
 
-                                followup_result = process_delivery_followup(
-                                    customer_email=shipment.customer_email,
+                                draft = generate_followup_email(
                                     customer_name=shipment.customer_name or "",
+                                    customer_email=shipment.customer_email,
                                     order_number=shipment.order_number or "",
                                     ordered_items=ordered_items,
                                     delivered_date=shipment.delivered_at,
-                                    send_email=True
                                 )
 
-                                if followup_result.get("email_sent"):
-                                    shipment.delivery_followup_sent = True
+                                if draft.get("success"):
+                                    shipment.followup_draft_subject = draft.get("subject")
+                                    shipment.followup_draft_body = draft.get("body")
+                                    shipment.followup_draft_generated_at = datetime.utcnow()
+                                    shipment.followup_status = 'draft_ready'
                                     await db.commit()
-                                    followup_sent_count += 1
-                                    print(f"[tracking] Auto-sent delivery followup to {shipment.customer_email} for order {shipment.order_number}")
+                                    followup_sent_count += 1  # Renamed: now counts drafts generated
+                                    print(f"[tracking] Generated followup draft for {shipment.customer_email} order {shipment.order_number}")
                             except Exception as e:
-                                print(f"[tracking] Auto-followup failed for {tracking_number}: {e}")
+                                print(f"[tracking] Draft generation failed for {tracking_number}: {e}")
 
             # Rate limit - AfterShip has limits
             await asyncio.sleep(0.5)
@@ -3594,10 +3608,250 @@ async def list_pending_followups(limit: int = 50, user: dict = Depends(get_curre
                     "customer_name": s.customer_name,
                     "delivered_at": s.delivered_at.isoformat() if s.delivered_at else None,
                     "delivery_address_country": s.delivery_address_country,
+                    "line_items": s.line_items,
+                    "followup_status": s.followup_status or 'none',
+                    "followup_draft_subject": s.followup_draft_subject,
+                    "followup_draft_body": s.followup_draft_body,
+                    "followup_draft_generated_at": s.followup_draft_generated_at.isoformat() if s.followup_draft_generated_at else None,
                 }
                 for s in shipments
             ],
             "count": len(shipments),
+        }
+
+
+# ==================== FOLLOWUP APPROVAL WORKFLOW ====================
+
+class RegenerateFollowupRequest(BaseModel):
+    instructions: Optional[str] = None  # e.g., "Make it shorter", "Don't mention products"
+
+
+@app.post("/tracking/followup/generate/{tracking_id}")
+async def generate_followup_draft(tracking_id: int, user: dict = Depends(get_current_user)):
+    """Generate a followup email draft for approval (without sending)."""
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import ShipmentTracking
+    from sqlalchemy import select
+
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'emma_service'))
+    try:
+        from followup_service import generate_followup_email
+    except ImportError:
+        raise HTTPException(status_code=500, detail="Followup service not available")
+
+    async with get_db() as db:
+        result = await db.execute(
+            select(ShipmentTracking).where(ShipmentTracking.id == tracking_id)
+        )
+        shipment = result.scalar_one_or_none()
+
+        if not shipment:
+            raise HTTPException(status_code=404, detail="Shipment not found")
+
+        # Parse line items
+        ordered_items = []
+        if shipment.line_items:
+            ordered_items = [item.strip() for item in shipment.line_items.split(",") if item.strip()]
+        if not ordered_items:
+            ordered_items = ["Korean skincare products"]
+
+        # Generate draft
+        draft = generate_followup_email(
+            customer_name=shipment.customer_name or "",
+            customer_email=shipment.customer_email,
+            order_number=shipment.order_number or "",
+            ordered_items=ordered_items,
+            delivered_date=shipment.delivered_at,
+        )
+
+        if draft.get("success"):
+            shipment.followup_draft_subject = draft.get("subject")
+            shipment.followup_draft_body = draft.get("body")
+            shipment.followup_draft_generated_at = datetime.utcnow()
+            shipment.followup_status = 'draft_ready'
+            await db.commit()
+
+        return {
+            "success": True,
+            "draft": {
+                "subject": shipment.followup_draft_subject,
+                "body": shipment.followup_draft_body,
+                "generated_at": shipment.followup_draft_generated_at.isoformat() if shipment.followup_draft_generated_at else None,
+            },
+            "shipment": {
+                "id": shipment.id,
+                "order_number": shipment.order_number,
+                "customer_email": shipment.customer_email,
+                "customer_name": shipment.customer_name,
+            }
+        }
+
+
+@app.post("/tracking/followup/regenerate/{tracking_id}")
+async def regenerate_followup_draft(tracking_id: int, req: RegenerateFollowupRequest, user: dict = Depends(get_current_user)):
+    """Regenerate followup email draft with custom instructions."""
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import ShipmentTracking
+    from sqlalchemy import select
+    from openai import OpenAI
+
+    async with get_db() as db:
+        result = await db.execute(
+            select(ShipmentTracking).where(ShipmentTracking.id == tracking_id)
+        )
+        shipment = result.scalar_one_or_none()
+
+        if not shipment:
+            raise HTTPException(status_code=404, detail="Shipment not found")
+
+        # Parse line items
+        ordered_items = []
+        if shipment.line_items:
+            ordered_items = [item.strip() for item in shipment.line_items.split(",") if item.strip()]
+        if not ordered_items:
+            ordered_items = ["Korean skincare products"]
+
+        first_name = shipment.customer_name.split()[0] if shipment.customer_name else "there"
+        items_text = ", ".join(ordered_items[:3])
+
+        # Build prompt with instructions
+        base_prompt = f"""Write a short, warm follow-up email from Emma at Mirai Skin to a customer whose order was just delivered.
+
+Customer: {first_name}
+Order: #{shipment.order_number}
+Items: {items_text}
+
+Guidelines:
+- Be warm and genuine, not salesy
+- Ask how they're enjoying their products
+- Mention we're here if they have questions about their skincare routine
+- Keep it SHORT - 3-4 sentences max
+- Sign off as Emma"""
+
+        if req.instructions:
+            base_prompt += f"\n\nADDITIONAL INSTRUCTIONS: {req.instructions}"
+
+        base_prompt += "\n\nWrite ONLY the email body, no subject line."
+
+        # Generate with OpenAI
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": base_prompt}],
+                max_tokens=300,
+                temperature=0.7,
+            )
+            body = response.choices[0].message.content.strip()
+            subject = f"How are you enjoying your order, {first_name}?"
+
+            shipment.followup_draft_subject = subject
+            shipment.followup_draft_body = body
+            shipment.followup_draft_generated_at = datetime.utcnow()
+            shipment.followup_status = 'draft_ready'
+            await db.commit()
+
+            return {
+                "success": True,
+                "draft": {
+                    "subject": subject,
+                    "body": body,
+                    "generated_at": shipment.followup_draft_generated_at.isoformat(),
+                }
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to regenerate: {str(e)}")
+
+
+@app.post("/tracking/followup/approve/{tracking_id}")
+async def approve_and_send_followup(tracking_id: int, user: dict = Depends(get_current_user)):
+    """Approve the draft and send the followup email."""
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import ShipmentTracking
+    from sqlalchemy import select
+
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'emma_service'))
+    try:
+        from followup_service import send_followup_email
+    except ImportError:
+        raise HTTPException(status_code=500, detail="Followup service not available")
+
+    async with get_db() as db:
+        result = await db.execute(
+            select(ShipmentTracking).where(ShipmentTracking.id == tracking_id)
+        )
+        shipment = result.scalar_one_or_none()
+
+        if not shipment:
+            raise HTTPException(status_code=404, detail="Shipment not found")
+
+        if not shipment.followup_draft_subject or not shipment.followup_draft_body:
+            raise HTTPException(status_code=400, detail="No draft to send. Generate a draft first.")
+
+        if shipment.delivery_followup_sent:
+            raise HTTPException(status_code=400, detail="Followup already sent for this shipment")
+
+        # Send the stored draft
+        send_result = send_followup_email(
+            to_email=shipment.customer_email,
+            subject=shipment.followup_draft_subject,
+            body=shipment.followup_draft_body,
+        )
+
+        if send_result.get("success"):
+            shipment.delivery_followup_sent = True
+            shipment.followup_status = 'sent'
+            await db.commit()
+            return {
+                "success": True,
+                "message": f"Followup email sent to {shipment.customer_email}",
+                "messageId": send_result.get("messageId"),
+            }
+        else:
+            return {
+                "success": False,
+                "error": send_result.get("error", "Failed to send email"),
+            }
+
+
+@app.post("/tracking/followup/reject/{tracking_id}")
+async def reject_followup(tracking_id: int, user: dict = Depends(get_current_user)):
+    """Reject/skip the followup for this shipment."""
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import ShipmentTracking
+    from sqlalchemy import select
+
+    async with get_db() as db:
+        result = await db.execute(
+            select(ShipmentTracking).where(ShipmentTracking.id == tracking_id)
+        )
+        shipment = result.scalar_one_or_none()
+
+        if not shipment:
+            raise HTTPException(status_code=404, detail="Shipment not found")
+
+        # Mark as rejected - won't show in pending anymore
+        shipment.followup_status = 'rejected'
+        shipment.delivery_followup_sent = True  # Mark as "handled" so it doesn't show up again
+        await db.commit()
+
+        return {
+            "success": True,
+            "message": f"Followup rejected for order #{shipment.order_number}",
         }
 
 

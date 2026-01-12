@@ -476,6 +476,12 @@ class ShipmentTracking(Base):
     customer_notified_delay = Column(Boolean, default=False)
     delivery_followup_sent = Column(Boolean, default=False)  # Post-delivery sales email sent
 
+    # Followup email draft (for approval workflow)
+    followup_draft_subject = Column(Text)
+    followup_draft_body = Column(Text)
+    followup_draft_generated_at = Column(DateTime)
+    followup_status = Column(String(20), default='none')  # none, draft_ready, approved, sent, rejected
+
     # Timestamps
     last_checked = Column(DateTime, default=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)

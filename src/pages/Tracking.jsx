@@ -277,28 +277,39 @@ export default function Tracking() {
     }
   };
 
-  // Preview followup email
+  // State for regenerate instructions
+  const [regenerateInstructions, setRegenerateInstructions] = useState('');
+  const [isRegenerating, setIsRegenerating] = useState(false);
+
+  // Preview/Generate followup email draft
   const handlePreviewFollowup = async (shipment) => {
     setIsSendingFollowup(true);
     setFollowupPreview(null);
+    setRegenerateInstructions('');
     try {
-      const response = await fetch(`${API_URL}/tracking/followup/preview`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
-        body: JSON.stringify({
-          customer_email: shipment.customer_email,
-          customer_name: shipment.customer_name,
-          order_number: shipment.order_number,
-          ordered_items: shipment.line_items || ['Skincare product'],
-        }),
-      });
-      const data = await response.json();
-      if (data.success) {
+      // Check if shipment already has a draft
+      if (shipment.followup_draft_subject && shipment.followup_draft_body) {
         setFollowupPreview({
-          ...data,
+          subject: shipment.followup_draft_subject,
+          body: shipment.followup_draft_body,
           shipment: shipment,
         });
         setFollowupDialogOpen(true);
+      } else {
+        // Generate a new draft
+        const response = await fetch(`${API_URL}/tracking/followup/generate/${shipment.id}`, {
+          method: 'POST',
+          headers: getAuthHeader(),
+        });
+        const data = await response.json();
+        if (data.success) {
+          setFollowupPreview({
+            subject: data.draft.subject,
+            body: data.draft.body,
+            shipment: shipment,
+          });
+          setFollowupDialogOpen(true);
+        }
       }
     } catch (err) {
       console.error('Preview followup error:', err);
@@ -307,11 +318,37 @@ export default function Tracking() {
     }
   };
 
-  // Send followup for single shipment
-  const handleSendFollowup = async (trackingId) => {
+  // Regenerate draft with instructions
+  const handleRegenerateDraft = async () => {
+    if (!followupPreview?.shipment) return;
+    setIsRegenerating(true);
+    try {
+      const response = await fetch(`${API_URL}/tracking/followup/regenerate/${followupPreview.shipment.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+        body: JSON.stringify({ instructions: regenerateInstructions }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        setFollowupPreview(prev => ({
+          ...prev,
+          subject: data.draft.subject,
+          body: data.draft.body,
+        }));
+        setRegenerateInstructions('');
+      }
+    } catch (err) {
+      console.error('Regenerate error:', err);
+    } finally {
+      setIsRegenerating(false);
+    }
+  };
+
+  // Approve and send followup
+  const handleApproveFollowup = async (trackingId) => {
     setIsSendingFollowup(true);
     try {
-      const response = await fetch(`${API_URL}/tracking/followup/send/${trackingId}`, {
+      const response = await fetch(`${API_URL}/tracking/followup/approve/${trackingId}`, {
         method: 'POST',
         headers: getAuthHeader()
       });
@@ -321,16 +358,41 @@ export default function Tracking() {
         setFollowupPreview(null);
         await fetchShipments();
         await fetchStats();
-        // Update selected shipment if open
         if (selectedShipment?.id === trackingId) {
           setSelectedShipment(prev => ({ ...prev, delivery_followup_sent: true }));
         }
+      } else {
+        console.error('Approve failed:', data.error);
       }
     } catch (err) {
-      console.error('Send followup error:', err);
+      console.error('Approve followup error:', err);
     } finally {
       setIsSendingFollowup(false);
     }
+  };
+
+  // Reject/skip followup
+  const handleRejectFollowup = async (trackingId) => {
+    try {
+      const response = await fetch(`${API_URL}/tracking/followup/reject/${trackingId}`, {
+        method: 'POST',
+        headers: getAuthHeader()
+      });
+      const data = await response.json();
+      if (data.success) {
+        setFollowupDialogOpen(false);
+        setFollowupPreview(null);
+        await fetchShipments();
+        await fetchStats();
+      }
+    } catch (err) {
+      console.error('Reject followup error:', err);
+    }
+  };
+
+  // Legacy send followup (now redirects to approve)
+  const handleSendFollowup = async (trackingId) => {
+    return handleApproveFollowup(trackingId);
   };
 
   // Send all pending followups
@@ -1162,16 +1224,16 @@ export default function Tracking() {
         </DialogContent>
       </Dialog>
 
-      {/* Followup Preview Dialog */}
+      {/* Followup Approval Dialog */}
       <Dialog open={followupDialogOpen} onOpenChange={setFollowupDialogOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Mail className="h-5 w-5 text-amber-600" />
-              Preview Followup Email
+              Review Followup Email
             </DialogTitle>
             <DialogDescription>
-              Review the email before sending to {followupPreview?.shipment?.customer_email}
+              Approve, edit, or reject the email before sending to {followupPreview?.shipment?.customer_email}
             </DialogDescription>
           </DialogHeader>
 
@@ -1196,46 +1258,62 @@ export default function Tracking() {
               </div>
 
               {/* Body */}
-              <div className="p-4 bg-white border border-slate-200 rounded-lg">
+              <div className="p-4 bg-white border border-slate-200 rounded-lg max-h-48 overflow-y-auto">
                 <div className="whitespace-pre-wrap text-sm leading-relaxed">
                   {followupPreview.body}
                 </div>
               </div>
 
-              {/* Recommendations */}
-              {followupPreview.recommendations && followupPreview.recommendations.length > 0 && (
-                <div className="p-3 bg-amber-50 rounded-lg border border-amber-200">
-                  <div className="text-xs text-amber-700 mb-2 font-medium">
-                    Product Recommendations Mentioned
-                  </div>
-                  <div className="space-y-1">
-                    {followupPreview.recommendations.map((rec, i) => (
-                      <div key={i} className="text-sm flex items-center gap-2">
-                        <Package className="h-3 w-3 text-amber-600" />
-                        <span>{rec.name}</span>
-                        <Badge variant="outline" className="text-xs">{rec.concern}</Badge>
-                      </div>
-                    ))}
-                  </div>
+              {/* Regenerate Section */}
+              <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
+                <div className="text-xs text-blue-700 mb-2 font-medium">
+                  Regenerate with Instructions
                 </div>
-              )}
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="e.g., Make it shorter, Don't mention products, More casual tone..."
+                    value={regenerateInstructions}
+                    onChange={(e) => setRegenerateInstructions(e.target.value)}
+                    className="flex-1 text-sm"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleRegenerateDraft}
+                    disabled={isRegenerating}
+                    className="border-blue-300 text-blue-700 hover:bg-blue-100"
+                  >
+                    <RefreshCw className={cn("h-4 w-4 mr-1", isRegenerating && "animate-spin")} />
+                    {isRegenerating ? 'Regenerating...' : 'Regenerate'}
+                  </Button>
+                </div>
+              </div>
 
               {/* Actions */}
-              <div className="flex justify-end gap-3 pt-4 border-t">
+              <div className="flex justify-between items-center pt-4 border-t">
                 <Button
                   variant="outline"
-                  onClick={() => setFollowupDialogOpen(false)}
+                  onClick={() => handleRejectFollowup(followupPreview.shipment?.id)}
+                  className="border-red-200 text-red-600 hover:bg-red-50"
                 >
-                  Cancel
+                  Skip This Customer
                 </Button>
-                <Button
-                  onClick={() => handleSendFollowup(followupPreview.shipment?.id)}
-                  disabled={isSendingFollowup}
-                  className="bg-amber-600 hover:bg-amber-700"
-                >
-                  <Send className={cn("h-4 w-4 mr-2", isSendingFollowup && "animate-pulse")} />
-                  {isSendingFollowup ? 'Sending...' : 'Send Email'}
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => setFollowupDialogOpen(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={() => handleApproveFollowup(followupPreview.shipment?.id)}
+                    disabled={isSendingFollowup}
+                    className="bg-green-600 hover:bg-green-700"
+                  >
+                    <CheckCircle className={cn("h-4 w-4 mr-2", isSendingFollowup && "animate-pulse")} />
+                    {isSendingFollowup ? 'Sending...' : 'Approve & Send'}
+                  </Button>
+                </div>
               </div>
             </div>
           )}
