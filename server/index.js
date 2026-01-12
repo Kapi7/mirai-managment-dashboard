@@ -1367,6 +1367,25 @@ app.get('/api/tracking/followup/pending', async (req, res) => {
   }
 });
 
+// Debug - Day orders (for timezone debugging)
+app.post('/api/debug/day-orders', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/debug/day-orders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body),
+      signal: AbortSignal.timeout(60000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Debug day-orders error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
