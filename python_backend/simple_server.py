@@ -3111,6 +3111,36 @@ async def check_single_tracking(tracking_number: str, user: dict = Depends(get_c
             shipment.last_checked = datetime.utcnow()
             await db.commit()
 
+            # Auto-send followup email when delivery is detected
+            if result.get("status") == "delivered" and not shipment.delivery_followup_sent:
+                try:
+                    import sys
+                    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'emma_service'))
+                    from followup_service import process_delivery_followup
+
+                    # Parse line items
+                    ordered_items = []
+                    if shipment.line_items:
+                        ordered_items = [item.strip() for item in shipment.line_items.split(",") if item.strip()]
+
+                    followup_result = process_delivery_followup(
+                        customer_email=shipment.customer_email,
+                        customer_name=shipment.customer_name or "",
+                        order_number=shipment.order_number or "",
+                        ordered_items=ordered_items,
+                        delivered_date=shipment.delivered_at,
+                        send_email=True
+                    )
+
+                    if followup_result.get("email_sent"):
+                        shipment.delivery_followup_sent = True
+                        await db.commit()
+                        print(f"[tracking] Auto-sent delivery followup to {shipment.customer_email} for order {shipment.order_number}")
+                    else:
+                        print(f"[tracking] Followup email generated but not sent: {followup_result.get('send_error', 'Unknown error')}")
+                except Exception as e:
+                    print(f"[tracking] Auto-followup failed for {shipment.tracking_number}: {e}")
+
     return {
         "success": True,
         "tracking_number": tracking_number,
@@ -3155,6 +3185,9 @@ async def check_trackings_background(tracking_numbers: List[str]):
     from sqlalchemy import select
     import asyncio
 
+    delivered_count = 0
+    followup_sent_count = 0
+
     for tracking_number in tracking_numbers:
         try:
             result = check_tracking_aftership(tracking_number)
@@ -3168,17 +3201,58 @@ async def check_trackings_background(tracking_numbers: List[str]):
                     shipment = db_result.scalar_one_or_none()
 
                     if shipment:
+                        previous_status = shipment.status
                         shipment.status = result.get("status", "unknown")
                         shipment.status_detail = result.get("status_detail")
                         shipment.last_checkpoint = result.get("last_checkpoint")
                         shipment.last_checked = datetime.utcnow()
+
+                        # Update delivered_at if status is delivered
+                        if result.get("status") == "delivered":
+                            delivered_count += 1
+                            if result.get("delivered_at"):
+                                try:
+                                    shipment.delivered_at = datetime.fromisoformat(
+                                        result["delivered_at"].replace("Z", "+00:00")
+                                    )
+                                except:
+                                    shipment.delivered_at = datetime.utcnow()
+
                         await db.commit()
+
+                        # Auto-send followup when delivery is detected
+                        if result.get("status") == "delivered" and not shipment.delivery_followup_sent:
+                            try:
+                                from followup_service import process_delivery_followup
+
+                                ordered_items = []
+                                if shipment.line_items:
+                                    ordered_items = [item.strip() for item in shipment.line_items.split(",") if item.strip()]
+
+                                followup_result = process_delivery_followup(
+                                    customer_email=shipment.customer_email,
+                                    customer_name=shipment.customer_name or "",
+                                    order_number=shipment.order_number or "",
+                                    ordered_items=ordered_items,
+                                    delivered_date=shipment.delivered_at,
+                                    send_email=True
+                                )
+
+                                if followup_result.get("email_sent"):
+                                    shipment.delivery_followup_sent = True
+                                    await db.commit()
+                                    followup_sent_count += 1
+                                    print(f"[tracking] Auto-sent delivery followup to {shipment.customer_email} for order {shipment.order_number}")
+                            except Exception as e:
+                                print(f"[tracking] Auto-followup failed for {tracking_number}: {e}")
 
             # Rate limit - AfterShip has limits
             await asyncio.sleep(0.5)
 
         except Exception as e:
             print(f"[tracking] Error checking {tracking_number}: {e}")
+
+    print(f"[tracking] Background check complete: {len(tracking_numbers)} checked, {delivered_count} delivered, {followup_sent_count} followups sent")
 
 
 @app.post("/tracking/mark-followup-sent/{tracking_id}")

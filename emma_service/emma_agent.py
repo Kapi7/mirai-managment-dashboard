@@ -777,92 +777,59 @@ def tool_get_customer_profile(email: str) -> Dict[str, Any]:
 
 def tool_track_package(tracking_number: str, carrier: Optional[str] = None) -> Dict[str, Any]:
     """
-    Track a package using tracking number.
-    Uses multiple tracking services to get real-time status.
+    Track a package using tracking number via AfterShip.
+    Returns real-time status and checkpoints.
     """
-    import os
-    import requests
+    try:
+        from tracking_service import check_tracking_aftership, get_tracking_url
 
-    # Try different tracking methods
-    result = {
-        "tracking_number": tracking_number,
-        "carrier": carrier,
-        "status": "unknown",
-        "status_detail": "",
-        "location": "",
-        "events": []
-    }
+        result = check_tracking_aftership(tracking_number, carrier)
 
-    # Method 1: Try 17track API (if configured)
-    api_key_17track = os.getenv("TRACK17_API_KEY")
-    if api_key_17track:
-        try:
-            response = requests.post(
-                "https://api.17track.net/track/v2/gettracklist",
-                headers={"17token": api_key_17track},
-                json=[{"number": tracking_number, "carrier": 0}],
-                timeout=10
-            )
-            if response.ok:
-                data = response.json()
-                if data.get("data") and data["data"].get("accepted"):
-                    track_info = data["data"]["accepted"][0]
-                    result["status"] = track_info.get("track", {}).get("z", "in_transit")
-                    result["status_detail"] = track_info.get("track", {}).get("z1", "")
-                    events = track_info.get("track", {}).get("z2", [])
-                    if events:
-                        result["events"] = events[:5]
-                        result["location"] = events[0].get("a", "") if events else ""
-                    return result
-        except Exception as e:
-            print(f"[track_package] 17track error: {e}")
+        if result.get("success"):
+            # Format checkpoints for display
+            checkpoints = result.get("checkpoints", [])
+            formatted_events = []
+            for c in checkpoints[-5:]:  # Last 5 events
+                formatted_events.append({
+                    "date": c.get("checkpoint_time", ""),
+                    "status": c.get("message", ""),
+                    "location": c.get("location", "") or c.get("city", "")
+                })
 
-    # Method 2: Try AfterShip API (if configured)
-    api_key_aftership = os.getenv("AFTERSHIP_API_KEY")
-    if api_key_aftership:
-        try:
-            response = requests.get(
-                f"https://api.aftership.com/v4/trackings/{tracking_number}",
-                headers={"aftership-api-key": api_key_aftership},
-                timeout=10
-            )
-            if response.ok:
-                data = response.json()
-                tracking = data.get("data", {}).get("tracking", {})
-                result["status"] = tracking.get("tag", "InTransit")
-                result["status_detail"] = tracking.get("subtag_message", "")
-                result["carrier"] = tracking.get("slug", carrier)
-                checkpoints = tracking.get("checkpoints", [])
-                if checkpoints:
-                    latest = checkpoints[-1]
-                    result["location"] = latest.get("city", "") or latest.get("location", "")
-                    result["events"] = [
-                        {"date": c.get("checkpoint_time"), "status": c.get("message"), "location": c.get("location")}
-                        for c in checkpoints[-5:]
-                    ]
-                return result
-        except Exception as e:
-            print(f"[track_package] AfterShip error: {e}")
-
-    # Method 3: Return guidance if no tracking API configured
-    # Determine likely carrier from tracking number format
-    if not carrier:
-        if tracking_number.startswith("RR") or tracking_number.startswith("RB"):
-            carrier = "Korea Post (EMS)"
-        elif tracking_number.startswith("1Z"):
-            carrier = "UPS"
-        elif len(tracking_number) == 10 and tracking_number.isdigit():
-            carrier = "DHL"
+            return {
+                "tracking_number": tracking_number,
+                "carrier": result.get("carrier", carrier),
+                "status": result.get("status", "unknown"),
+                "status_tag": result.get("tag", ""),
+                "status_detail": result.get("status_detail", ""),
+                "location": result.get("last_checkpoint", ""),
+                "last_update": result.get("last_checkpoint_time", ""),
+                "estimated_delivery": result.get("estimated_delivery"),
+                "delivered_at": result.get("delivered_at"),
+                "signed_by": result.get("signed_by"),
+                "origin": result.get("origin"),
+                "destination": result.get("destination"),
+                "tracking_url": get_tracking_url(tracking_number, carrier),
+                "events": formatted_events,
+            }
         else:
-            carrier = "International carrier"
-
-    result["carrier"] = carrier
-    result["status"] = "tracking_available"
-    result["status_detail"] = "Real-time tracking not available. Customer can track at carrier website."
-    result["tracking_url"] = _get_tracking_url(tracking_number, carrier)
-    result["guidance"] = "Provide the tracking number and URL to customer. They can check status directly."
-
-    return result
+            return {
+                "tracking_number": tracking_number,
+                "carrier": carrier,
+                "status": "error",
+                "status_detail": result.get("error", "Could not fetch tracking info"),
+                "tracking_url": get_tracking_url(tracking_number, carrier),
+                "guidance": "Tracking lookup failed. Provide the tracking URL to customer."
+            }
+    except Exception as e:
+        print(f"[track_package] Error: {e}")
+        return {
+            "tracking_number": tracking_number,
+            "carrier": carrier,
+            "status": "error",
+            "status_detail": str(e),
+            "tracking_url": _get_tracking_url(tracking_number, carrier or ""),
+        }
 
 
 def _get_tracking_url(tracking_number: str, carrier: str) -> str:
