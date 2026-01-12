@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -48,6 +49,7 @@ import { cn } from '@/lib/utils';
 const API_URL = '/api';
 
 export default function Tracking() {
+  const { getAuthHeader } = useAuth();
   const [shipments, setShipments] = useState([]);
   const [stats, setStats] = useState({
     total: 0,
@@ -93,7 +95,9 @@ export default function Tracking() {
       }
       params.append('limit', '200');
 
-      const response = await fetch(`${API_URL}/tracking/shipments?${params}`);
+      const response = await fetch(`${API_URL}/tracking/shipments?${params}`, {
+        headers: getAuthHeader()
+      });
       if (!response.ok) throw new Error('Failed to fetch shipments');
       const data = await response.json();
       setShipments(data.shipments || []);
@@ -106,7 +110,9 @@ export default function Tracking() {
   // Fetch stats
   const fetchStats = async () => {
     try {
-      const response = await fetch(`${API_URL}/tracking/stats`);
+      const response = await fetch(`${API_URL}/tracking/stats`, {
+        headers: getAuthHeader()
+      });
       if (!response.ok) throw new Error('Failed to fetch stats');
       const data = await response.json();
       setStats(data);
@@ -131,6 +137,7 @@ export default function Tracking() {
     try {
       const response = await fetch(`${API_URL}/tracking/sync`, {
         method: 'POST',
+        headers: getAuthHeader()
       });
       const data = await response.json();
       if (data.success) {
@@ -151,6 +158,7 @@ export default function Tracking() {
     try {
       const response = await fetch(`${API_URL}/tracking/check-all`, {
         method: 'POST',
+        headers: getAuthHeader()
       });
       const data = await response.json();
       if (data.success) {
@@ -202,6 +210,7 @@ export default function Tracking() {
         try {
           await fetch(`${API_URL}/tracking/check/${trackingNumber}`, {
             method: 'POST',
+            headers: getAuthHeader()
           });
         } catch (err) {
           console.error(`Check error for ${trackingNumber}:`, err);
@@ -226,6 +235,7 @@ export default function Tracking() {
     try {
       const response = await fetch(`${API_URL}/tracking/check/${trackingNumber}`, {
         method: 'POST',
+        headers: getAuthHeader()
       });
       const data = await response.json();
       if (data.success) {
@@ -251,6 +261,7 @@ export default function Tracking() {
     try {
       const response = await fetch(`${API_URL}/tracking/mark-followup-sent/${trackingId}`, {
         method: 'POST',
+        headers: getAuthHeader()
       });
       if (response.ok) {
         await fetchShipments();
@@ -268,7 +279,7 @@ export default function Tracking() {
     try {
       const response = await fetch(`${API_URL}/tracking/followup/preview`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
         body: JSON.stringify({
           customer_email: shipment.customer_email,
           customer_name: shipment.customer_name,
@@ -297,6 +308,7 @@ export default function Tracking() {
     try {
       const response = await fetch(`${API_URL}/tracking/followup/send/${trackingId}`, {
         method: 'POST',
+        headers: getAuthHeader()
       });
       const data = await response.json();
       if (data.success) {
@@ -322,6 +334,7 @@ export default function Tracking() {
     try {
       const response = await fetch(`${API_URL}/tracking/followup/send-all`, {
         method: 'POST',
+        headers: getAuthHeader()
       });
       const data = await response.json();
       if (data.success) {
