@@ -421,6 +421,88 @@ app.get('/api/fetch-korealy-emails', async (req, res) => {
   }
 });
 
+// API: Send email via Gmail OAuth
+app.post('/api/send-email', async (req, res) => {
+  try {
+    const { to, subject, body, html, from_name } = req.body;
+
+    if (!to || !subject || !body) {
+      return res.status(400).json({ error: 'Missing required fields: to, subject, body' });
+    }
+
+    const fromEmail = process.env.GMAIL_USER_EMAIL;
+    const fromDisplay = from_name || 'Emma R';
+
+    // Build the email in RFC 2822 format
+    const boundary = `boundary_${Date.now()}`;
+
+    let emailContent;
+    if (html) {
+      // Multipart email with both plain text and HTML
+      emailContent = [
+        `From: ${fromDisplay} <${fromEmail}>`,
+        `To: ${to}`,
+        `Subject: ${subject}`,
+        'MIME-Version: 1.0',
+        `Content-Type: multipart/alternative; boundary="${boundary}"`,
+        '',
+        `--${boundary}`,
+        'Content-Type: text/plain; charset="UTF-8"',
+        '',
+        body,
+        '',
+        `--${boundary}`,
+        'Content-Type: text/html; charset="UTF-8"',
+        '',
+        html,
+        '',
+        `--${boundary}--`
+      ].join('\r\n');
+    } else {
+      // Plain text only
+      emailContent = [
+        `From: ${fromDisplay} <${fromEmail}>`,
+        `To: ${to}`,
+        `Subject: ${subject}`,
+        'MIME-Version: 1.0',
+        'Content-Type: text/plain; charset="UTF-8"',
+        '',
+        body
+      ].join('\r\n');
+    }
+
+    // Base64 encode for Gmail API
+    const encodedMessage = Buffer.from(emailContent)
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+
+    // Send via Gmail API
+    const result = await gmail.users.messages.send({
+      userId: 'me',
+      requestBody: {
+        raw: encodedMessage
+      }
+    });
+
+    console.log(`📧 Email sent to ${to}: ${subject} (messageId: ${result.data.id})`);
+
+    res.json({
+      success: true,
+      messageId: result.data.id,
+      to: to
+    });
+
+  } catch (error) {
+    console.error('Gmail send error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // API: Update Shopify order with tracking
 app.post('/api/update-shopify-tracking', async (req, res) => {
   try {
@@ -1139,6 +1221,89 @@ app.post('/api/tracking/mark-followup-sent/:trackingId', async (req, res) => {
     res.status(response.status).json(data);
   } catch (error) {
     console.error('Tracking mark followup error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ==================== DELIVERY FOLLOWUP ====================
+
+// Followup - Preview email
+app.post('/api/tracking/followup/preview', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/tracking/followup/preview`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': req.headers.authorization || ''
+      },
+      body: JSON.stringify(req.body),
+      signal: AbortSignal.timeout(30000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Followup preview error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Followup - Send single
+app.post('/api/tracking/followup/send/:trackingId', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/tracking/followup/send/${req.params.trackingId}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(60000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Followup send error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Followup - Send all pending
+app.post('/api/tracking/followup/send-all', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/tracking/followup/send-all`, {
+      method: 'POST',
+      headers: {
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(30000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Followup send-all error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Followup - List pending
+app.get('/api/tracking/followup/pending', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/tracking/followup/pending`, {
+      headers: {
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Followup pending error:', error);
     res.status(500).json({ error: error.message });
   }
 });

@@ -69,6 +69,12 @@ export default function Tracking() {
   const [isChecking, setIsChecking] = useState(false);
   const [checkingId, setCheckingId] = useState(null);
 
+  // Followup state
+  const [followupPreview, setFollowupPreview] = useState(null);
+  const [isSendingFollowup, setIsSendingFollowup] = useState(false);
+  const [isSendingAllFollowups, setIsSendingAllFollowups] = useState(false);
+  const [followupDialogOpen, setFollowupDialogOpen] = useState(false);
+
   // Fetch shipments
   const fetchShipments = async () => {
     try {
@@ -200,6 +206,83 @@ export default function Tracking() {
     }
   };
 
+  // Preview followup email
+  const handlePreviewFollowup = async (shipment) => {
+    setIsSendingFollowup(true);
+    setFollowupPreview(null);
+    try {
+      const response = await fetch(`${API_URL}/tracking/followup/preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customer_email: shipment.customer_email,
+          customer_name: shipment.customer_name,
+          order_number: shipment.order_number,
+          ordered_items: shipment.line_items || ['Skincare product'],
+        }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        setFollowupPreview({
+          ...data,
+          shipment: shipment,
+        });
+        setFollowupDialogOpen(true);
+      }
+    } catch (err) {
+      console.error('Preview followup error:', err);
+    } finally {
+      setIsSendingFollowup(false);
+    }
+  };
+
+  // Send followup for single shipment
+  const handleSendFollowup = async (trackingId) => {
+    setIsSendingFollowup(true);
+    try {
+      const response = await fetch(`${API_URL}/tracking/followup/send/${trackingId}`, {
+        method: 'POST',
+      });
+      const data = await response.json();
+      if (data.success) {
+        setFollowupDialogOpen(false);
+        setFollowupPreview(null);
+        await fetchShipments();
+        await fetchStats();
+        // Update selected shipment if open
+        if (selectedShipment?.id === trackingId) {
+          setSelectedShipment(prev => ({ ...prev, delivery_followup_sent: true }));
+        }
+      }
+    } catch (err) {
+      console.error('Send followup error:', err);
+    } finally {
+      setIsSendingFollowup(false);
+    }
+  };
+
+  // Send all pending followups
+  const handleSendAllFollowups = async () => {
+    setIsSendingAllFollowups(true);
+    try {
+      const response = await fetch(`${API_URL}/tracking/followup/send-all`, {
+        method: 'POST',
+      });
+      const data = await response.json();
+      if (data.success) {
+        // Refresh after a delay to let background task complete
+        setTimeout(async () => {
+          await fetchShipments();
+          await fetchStats();
+          setIsSendingAllFollowups(false);
+        }, 3000);
+      }
+    } catch (err) {
+      console.error('Send all followups error:', err);
+      setIsSendingAllFollowups(false);
+    }
+  };
+
   // Filter shipments by search
   const filteredShipments = useMemo(() => {
     if (!search) return shipments;
@@ -288,10 +371,20 @@ export default function Tracking() {
             <RefreshCw className={cn("h-4 w-4 mr-2", isSyncing && "animate-spin")} />
             {isSyncing ? 'Syncing...' : 'Sync Shopify'}
           </Button>
-          <Button onClick={handleCheckAll} disabled={isChecking}>
+          <Button onClick={handleCheckAll} disabled={isChecking} variant="outline">
             <Play className={cn("h-4 w-4 mr-2", isChecking && "animate-pulse")} />
             {isChecking ? 'Checking...' : 'Check All'}
           </Button>
+          {stats.followup_pending > 0 && (
+            <Button
+              onClick={handleSendAllFollowups}
+              disabled={isSendingAllFollowups}
+              className="bg-amber-600 hover:bg-amber-700"
+            >
+              <Send className={cn("h-4 w-4 mr-2", isSendingAllFollowups && "animate-pulse")} />
+              {isSendingAllFollowups ? 'Sending...' : `Send ${stats.followup_pending} Followups`}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -628,14 +721,111 @@ export default function Tracking() {
                 </a>
 
                 {selectedShipment.status === 'delivered' && !selectedShipment.delivery_followup_sent && (
-                  <Button
-                    onClick={() => handleMarkFollowup(selectedShipment.id)}
-                    className="bg-amber-600 hover:bg-amber-700"
-                  >
-                    <Send className="h-4 w-4 mr-2" />
-                    Mark Followup Sent
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => handleMarkFollowup(selectedShipment.id)}
+                    >
+                      <CheckCircle className="h-4 w-4 mr-2" />
+                      Mark Sent
+                    </Button>
+                    <Button
+                      onClick={() => handlePreviewFollowup(selectedShipment)}
+                      disabled={isSendingFollowup}
+                      className="bg-amber-600 hover:bg-amber-700"
+                    >
+                      <Mail className={cn("h-4 w-4 mr-2", isSendingFollowup && "animate-pulse")} />
+                      {isSendingFollowup ? 'Loading...' : 'Preview & Send Followup'}
+                    </Button>
+                  </div>
                 )}
+
+                {selectedShipment.delivery_followup_sent && (
+                  <Badge className="bg-green-100 text-green-800">
+                    <CheckCircle className="h-3 w-3 mr-1" />
+                    Followup Sent
+                  </Badge>
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Followup Preview Dialog */}
+      <Dialog open={followupDialogOpen} onOpenChange={setFollowupDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Mail className="h-5 w-5 text-amber-600" />
+              Preview Followup Email
+            </DialogTitle>
+            <DialogDescription>
+              Review the email before sending to {followupPreview?.shipment?.customer_email}
+            </DialogDescription>
+          </DialogHeader>
+
+          {followupPreview && (
+            <div className="space-y-4">
+              {/* To/From */}
+              <div className="grid grid-cols-2 gap-4 p-3 bg-slate-50 rounded-lg text-sm">
+                <div>
+                  <span className="text-slate-500">To:</span>{' '}
+                  <span className="font-medium">{followupPreview.shipment?.customer_email}</span>
+                </div>
+                <div>
+                  <span className="text-slate-500">From:</span>{' '}
+                  <span className="font-medium">Emma (emma@miraiskin.co)</span>
+                </div>
+              </div>
+
+              {/* Subject */}
+              <div className="p-3 bg-slate-50 rounded-lg">
+                <div className="text-xs text-slate-500 mb-1">Subject</div>
+                <div className="font-medium">{followupPreview.subject}</div>
+              </div>
+
+              {/* Body */}
+              <div className="p-4 bg-white border border-slate-200 rounded-lg">
+                <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                  {followupPreview.body}
+                </div>
+              </div>
+
+              {/* Recommendations */}
+              {followupPreview.recommendations && followupPreview.recommendations.length > 0 && (
+                <div className="p-3 bg-amber-50 rounded-lg border border-amber-200">
+                  <div className="text-xs text-amber-700 mb-2 font-medium">
+                    Product Recommendations Mentioned
+                  </div>
+                  <div className="space-y-1">
+                    {followupPreview.recommendations.map((rec, i) => (
+                      <div key={i} className="text-sm flex items-center gap-2">
+                        <Package className="h-3 w-3 text-amber-600" />
+                        <span>{rec.name}</span>
+                        <Badge variant="outline" className="text-xs">{rec.concern}</Badge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="flex justify-end gap-3 pt-4 border-t">
+                <Button
+                  variant="outline"
+                  onClick={() => setFollowupDialogOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => handleSendFollowup(followupPreview.shipment?.id)}
+                  disabled={isSendingFollowup}
+                  className="bg-amber-600 hover:bg-amber-700"
+                >
+                  <Send className={cn("h-4 w-4 mr-2", isSendingFollowup && "animate-pulse")} />
+                  {isSendingFollowup ? 'Sending...' : 'Send Email'}
+                </Button>
               </div>
             </div>
           )}

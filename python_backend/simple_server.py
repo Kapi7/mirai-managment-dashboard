@@ -2844,6 +2844,265 @@ async def mark_followup_sent(tracking_id: int, user: dict = Depends(get_current_
     return {"success": True, "message": "Marked as followup sent"}
 
 
+# ==================== DELIVERY FOLLOWUP SYSTEM ====================
+
+class FollowupPreviewRequest(BaseModel):
+    customer_email: str
+    customer_name: str
+    order_number: str
+    ordered_items: List[str]
+
+
+@app.post("/tracking/followup/preview")
+async def preview_followup_email(req: FollowupPreviewRequest, user: dict = Depends(get_current_user)):
+    """
+    Preview a followup email before sending.
+    """
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'emma_service'))
+    try:
+        from followup_service import generate_followup_email
+    except ImportError:
+        raise HTTPException(status_code=500, detail="Followup service not available")
+
+    result = generate_followup_email(
+        customer_name=req.customer_name,
+        customer_email=req.customer_email,
+        order_number=req.order_number,
+        ordered_items=req.ordered_items,
+    )
+
+    return {
+        "success": True,
+        "preview": {
+            "subject": result.get("subject"),
+            "body": result.get("body"),
+            "recommendations": result.get("recommendations", []),
+        }
+    }
+
+
+@app.post("/tracking/followup/send/{tracking_id}")
+async def send_followup_for_shipment(tracking_id: int, user: dict = Depends(get_current_user)):
+    """
+    Generate and send followup email for a specific delivered shipment.
+    """
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import ShipmentTracking
+    from sqlalchemy import select
+
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'emma_service'))
+    try:
+        from followup_service import process_delivery_followup
+    except ImportError:
+        raise HTTPException(status_code=500, detail="Followup service not available")
+
+    async with get_db() as db:
+        result = await db.execute(
+            select(ShipmentTracking).where(ShipmentTracking.id == tracking_id)
+        )
+        shipment = result.scalar_one_or_none()
+
+        if not shipment:
+            raise HTTPException(status_code=404, detail="Shipment not found")
+
+        if shipment.status != "delivered":
+            raise HTTPException(status_code=400, detail="Shipment not yet delivered")
+
+        if shipment.delivery_followup_sent:
+            raise HTTPException(status_code=400, detail="Followup already sent for this shipment")
+
+        # Get order items from Shopify if we don't have them
+        ordered_items = []
+        shopify_store = os.getenv("SHOPIFY_STORE")
+        shopify_token = os.getenv("SHOPIFY_ACCESS_TOKEN") or os.getenv("SHOPIFY_TOKEN")
+
+        if shipment.order_id and shopify_store and shopify_token:
+            try:
+                import requests
+                url = f"https://{shopify_store}/admin/api/2024-01/orders/{shipment.order_id}.json"
+                headers = {"X-Shopify-Access-Token": shopify_token}
+                response = requests.get(url, headers=headers, timeout=30)
+                if response.status_code == 200:
+                    order_data = response.json().get("order", {})
+                    ordered_items = [item.get("title", "") for item in order_data.get("line_items", [])]
+            except Exception as e:
+                print(f"[followup] Error fetching order items: {e}")
+
+        # If still no items, use generic list
+        if not ordered_items:
+            ordered_items = ["Korean skincare products"]
+
+        # Process the followup
+        followup_result = process_delivery_followup(
+            customer_email=shipment.customer_email,
+            customer_name=shipment.customer_name or "Customer",
+            order_number=shipment.order_number or str(shipment.order_id),
+            ordered_items=ordered_items,
+            delivered_date=shipment.delivered_at,
+            send_email=True,
+        )
+
+        if followup_result.get("email_sent"):
+            shipment.delivery_followup_sent = True
+            await db.commit()
+
+        return {
+            "success": followup_result.get("email_sent", False),
+            "email": followup_result.get("email_generated", {}),
+            "sent": followup_result.get("email_sent", False),
+            "error": followup_result.get("send_error"),
+        }
+
+
+@app.post("/tracking/followup/send-all")
+async def send_all_pending_followups(
+    background_tasks: BackgroundTasks,
+    limit: int = 10,
+    user: dict = Depends(get_current_user)
+):
+    """
+    Queue sending followup emails for all delivered shipments that haven't had followup sent.
+    """
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import ShipmentTracking
+    from sqlalchemy import select
+
+    async with get_db() as db:
+        result = await db.execute(
+            select(ShipmentTracking)
+            .where(
+                ShipmentTracking.status == "delivered",
+                ShipmentTracking.delivery_followup_sent == False,
+            )
+            .limit(limit)
+        )
+        pending_shipments = result.scalars().all()
+
+        shipment_ids = [s.id for s in pending_shipments]
+
+    if not shipment_ids:
+        return {"success": True, "message": "No pending followups", "count": 0}
+
+    # Queue background task
+    background_tasks.add_task(send_followups_background, shipment_ids)
+
+    return {
+        "success": True,
+        "message": f"Queued {len(shipment_ids)} followup emails",
+        "count": len(shipment_ids),
+    }
+
+
+async def send_followups_background(shipment_ids: List[int]):
+    """Background task to send multiple followup emails."""
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'emma_service'))
+    from followup_service import process_delivery_followup
+    from database.connection import get_db
+    from database.models import ShipmentTracking
+    from sqlalchemy import select
+    import asyncio
+    import requests
+
+    shopify_store = os.getenv("SHOPIFY_STORE")
+    shopify_token = os.getenv("SHOPIFY_ACCESS_TOKEN") or os.getenv("SHOPIFY_TOKEN")
+
+    for shipment_id in shipment_ids:
+        try:
+            async with get_db() as db:
+                result = await db.execute(
+                    select(ShipmentTracking).where(ShipmentTracking.id == shipment_id)
+                )
+                shipment = result.scalar_one_or_none()
+
+                if not shipment or shipment.delivery_followup_sent:
+                    continue
+
+                # Get order items
+                ordered_items = []
+                if shipment.order_id and shopify_store and shopify_token:
+                    try:
+                        url = f"https://{shopify_store}/admin/api/2024-01/orders/{shipment.order_id}.json"
+                        headers = {"X-Shopify-Access-Token": shopify_token}
+                        response = requests.get(url, headers=headers, timeout=30)
+                        if response.status_code == 200:
+                            order_data = response.json().get("order", {})
+                            ordered_items = [item.get("title", "") for item in order_data.get("line_items", [])]
+                    except Exception as e:
+                        print(f"[followup] Error fetching order items: {e}")
+
+                if not ordered_items:
+                    ordered_items = ["Korean skincare products"]
+
+                # Send followup
+                followup_result = process_delivery_followup(
+                    customer_email=shipment.customer_email,
+                    customer_name=shipment.customer_name or "Customer",
+                    order_number=shipment.order_number or str(shipment.order_id),
+                    ordered_items=ordered_items,
+                    send_email=True,
+                )
+
+                if followup_result.get("email_sent"):
+                    shipment.delivery_followup_sent = True
+                    await db.commit()
+                    print(f"[followup] Sent followup for order #{shipment.order_number} to {shipment.customer_email}")
+
+            # Rate limit - don't spam
+            await asyncio.sleep(2)
+
+        except Exception as e:
+            print(f"[followup] Error processing shipment {shipment_id}: {e}")
+
+
+@app.get("/tracking/followup/pending")
+async def list_pending_followups(limit: int = 50, user: dict = Depends(get_current_user)):
+    """
+    List all delivered shipments that need followup emails.
+    """
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import ShipmentTracking
+    from sqlalchemy import select, desc
+
+    async with get_db() as db:
+        result = await db.execute(
+            select(ShipmentTracking)
+            .where(
+                ShipmentTracking.status == "delivered",
+                ShipmentTracking.delivery_followup_sent == False,
+            )
+            .order_by(desc(ShipmentTracking.delivered_at))
+            .limit(limit)
+        )
+        shipments = result.scalars().all()
+
+        return {
+            "pending": [
+                {
+                    "id": s.id,
+                    "order_number": s.order_number,
+                    "customer_email": s.customer_email,
+                    "customer_name": s.customer_name,
+                    "delivered_at": s.delivered_at.isoformat() if s.delivered_at else None,
+                    "delivery_address_country": s.delivery_address_country,
+                }
+                for s in shipments
+            ],
+            "count": len(shipments),
+        }
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8080))
