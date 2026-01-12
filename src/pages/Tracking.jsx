@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Table,
   TableBody,
@@ -67,7 +68,9 @@ export default function Tracking() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
+  const [isCheckingSelected, setIsCheckingSelected] = useState(false);
   const [checkingId, setCheckingId] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(new Set());
 
   // Followup state
   const [followupPreview, setFollowupPreview] = useState(null);
@@ -162,6 +165,58 @@ export default function Tracking() {
       console.error('Check all error:', err);
       setError(err.message);
       setIsChecking(false);
+    }
+  };
+
+  // Toggle selection for a single shipment
+  const toggleSelection = (trackingNumber) => {
+    setSelectedIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(trackingNumber)) {
+        newSet.delete(trackingNumber);
+      } else {
+        newSet.add(trackingNumber);
+      }
+      return newSet;
+    });
+  };
+
+  // Select/deselect all visible shipments
+  const toggleSelectAll = () => {
+    if (selectedIds.size === filteredShipments.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredShipments.map(s => s.tracking_number)));
+    }
+  };
+
+  // Check selected trackings
+  const handleCheckSelected = async () => {
+    if (selectedIds.size === 0) return;
+
+    setIsCheckingSelected(true);
+    try {
+      // Check each selected tracking sequentially
+      for (const trackingNumber of selectedIds) {
+        setCheckingId(trackingNumber);
+        try {
+          await fetch(`${API_URL}/tracking/check/${trackingNumber}`, {
+            method: 'POST',
+          });
+        } catch (err) {
+          console.error(`Check error for ${trackingNumber}:`, err);
+        }
+      }
+      // Refresh data after all checks
+      await fetchShipments();
+      await fetchStats();
+      setSelectedIds(new Set());
+    } catch (err) {
+      console.error('Check selected error:', err);
+      setError(err.message);
+    } finally {
+      setIsCheckingSelected(false);
+      setCheckingId(null);
     }
   };
 
@@ -371,6 +426,12 @@ export default function Tracking() {
             <RefreshCw className={cn("h-4 w-4 mr-2", isSyncing && "animate-spin")} />
             {isSyncing ? 'Syncing...' : 'Sync Shopify'}
           </Button>
+          {selectedIds.size > 0 && (
+            <Button onClick={handleCheckSelected} disabled={isCheckingSelected} variant="default">
+              <Play className={cn("h-4 w-4 mr-2", isCheckingSelected && "animate-pulse")} />
+              {isCheckingSelected ? `Checking ${selectedIds.size}...` : `Check Selected (${selectedIds.size})`}
+            </Button>
+          )}
           <Button onClick={handleCheckAll} disabled={isChecking} variant="outline">
             <Play className={cn("h-4 w-4 mr-2", isChecking && "animate-pulse")} />
             {isChecking ? 'Checking...' : 'Check All'}
@@ -509,6 +570,12 @@ export default function Tracking() {
             <Table>
               <TableHeader>
                 <TableRow className="bg-slate-50">
+                  <TableHead className="w-[40px]">
+                    <Checkbox
+                      checked={filteredShipments.length > 0 && selectedIds.size === filteredShipments.length}
+                      onCheckedChange={toggleSelectAll}
+                    />
+                  </TableHead>
                   <TableHead className="w-[100px]">Order</TableHead>
                   <TableHead>Customer</TableHead>
                   <TableHead>Tracking</TableHead>
@@ -524,10 +591,17 @@ export default function Tracking() {
                     key={shipment.id}
                     className={cn(
                       "cursor-pointer hover:bg-slate-50",
-                      shipment.delay_detected && "bg-red-50 hover:bg-red-100"
+                      shipment.delay_detected && "bg-red-50 hover:bg-red-100",
+                      selectedIds.has(shipment.tracking_number) && "bg-blue-50 hover:bg-blue-100"
                     )}
                     onClick={() => openDetail(shipment)}
                   >
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={selectedIds.has(shipment.tracking_number)}
+                        onCheckedChange={() => toggleSelection(shipment.tracking_number)}
+                      />
+                    </TableCell>
                     <TableCell>
                       <span className="font-medium">#{shipment.order_number}</span>
                     </TableCell>
