@@ -6,7 +6,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Package, RefreshCw, Loader2, Mail, History, AlertCircle, CheckCircle2, Undo2 } from "lucide-react";
+import { Package, RefreshCw, Loader2, Mail, History, AlertCircle, CheckCircle2, Undo2, Send, Bell } from "lucide-react";
 
 export default function KorealyProcessor() {
     const [pendingEmails, setPendingEmails] = useState([]);
@@ -63,16 +63,16 @@ export default function KorealyProcessor() {
 
             setMessage({
                 type: 'success',
-                text: `✅ Tracking added for order #${email.orderNumber}`
+                text: `✅ Tracking added for order #${email.orderNumber} — Customer notified via email`
             });
 
             // Remove from pending list locally instead of refetching
             setPendingEmails(prev => prev.filter(e => e.id !== email.id));
 
-            // Move to all emails with shopify tracking
+            // Move to all emails with shopify tracking and mark as notified
             setAllEmails(prev => prev.map(e =>
                 e.id === email.id
-                    ? { ...e, shopifyTracking: email.korealyTracking }
+                    ? { ...e, shopifyTracking: email.korealyTracking, customerNotified: true, notifiedAt: new Date().toISOString() }
                     : e
             ));
         } catch (error) {
@@ -128,14 +128,14 @@ export default function KorealyProcessor() {
 
         setMessage({
             type: failedCount === 0 ? 'success' : 'error',
-            text: `✅ Updated ${successCount} orders${failedCount > 0 ? `, ${failedCount} failed` : ''}${skippedCount > 0 ? `, ${skippedCount} skipped (N/A values)` : ''}`
+            text: `✅ Updated ${successCount} orders — Customers notified via email${failedCount > 0 ? `, ${failedCount} failed` : ''}${skippedCount > 0 ? `, ${skippedCount} skipped (N/A values)` : ''}`
         });
 
-        // Update state locally
+        // Update state locally with notification status
         setPendingEmails(prev => prev.filter(e => !successfulIds.includes(e.id)));
         setAllEmails(prev => prev.map(e =>
             successfulIds.includes(e.id)
-                ? { ...e, shopifyTracking: e.korealyTracking }
+                ? { ...e, shopifyTracking: e.korealyTracking, customerNotified: true, notifiedAt: new Date().toISOString() }
                 : e
         ));
 
@@ -375,7 +375,8 @@ export default function KorealyProcessor() {
                                         <th className="text-left p-3 font-semibold text-slate-700">Date</th>
                                         <th className="text-left p-3 font-semibold text-slate-700">Carrier</th>
                                         <th className="text-left p-3 font-semibold text-slate-700">Korealy Tracking</th>
-                                        <th className="text-left p-3 font-semibold text-slate-700">Shopify Tracking</th>
+                                        <th className="text-left p-3 font-semibold text-slate-700">Shopify Status</th>
+                                        <th className="text-center p-3 font-semibold text-slate-700">Customer Email</th>
                                         <th className="text-center p-3 font-semibold text-slate-700">Action</th>
                                     </tr>
                                 </thead>
@@ -402,9 +403,22 @@ export default function KorealyProcessor() {
                                             </td>
                                             <td className="p-3 font-mono text-xs">
                                                 {email.shopifyTracking ? (
-                                                    <span className="text-green-700">{email.shopifyTracking}</span>
+                                                    <span className="text-green-700 flex items-center gap-1">
+                                                        <CheckCircle2 className="w-3 h-3" />
+                                                        Synced
+                                                    </span>
                                                 ) : (
-                                                    <span className="text-slate-400">—</span>
+                                                    <span className="text-slate-400">Pending</span>
+                                                )}
+                                            </td>
+                                            <td className="p-3 text-center">
+                                                {email.shopifyTracking ? (
+                                                    <Badge className="bg-green-100 text-green-700 border-green-200 gap-1">
+                                                        <Bell className="w-3 h-3" />
+                                                        Notified
+                                                    </Badge>
+                                                ) : (
+                                                    <span className="text-slate-400 text-xs">—</span>
                                                 )}
                                             </td>
                                             <td className="p-3 text-center">

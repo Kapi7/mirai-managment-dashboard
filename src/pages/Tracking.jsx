@@ -592,90 +592,128 @@ export default function Tracking() {
                   <TableHead className="w-[100px]">Order</TableHead>
                   <TableHead>Customer</TableHead>
                   <TableHead>Tracking</TableHead>
-                  <TableHead className="w-[120px]">Status</TableHead>
-                  <TableHead>Last Update</TableHead>
-                  <TableHead className="w-[100px]">Shipped</TableHead>
+                  <TableHead className="w-[130px]">Status</TableHead>
+                  <TableHead>Current Location</TableHead>
+                  <TableHead className="w-[110px]">Timeline</TableHead>
                   <TableHead className="w-[80px]"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredShipments.map((shipment) => (
-                  <TableRow
-                    key={shipment.id}
-                    className={cn(
-                      "cursor-pointer hover:bg-slate-50",
-                      shipment.delay_detected && "bg-red-50 hover:bg-red-100",
-                      selectedIds.has(shipment.tracking_number) && "bg-blue-50 hover:bg-blue-100"
-                    )}
-                    onClick={() => openDetail(shipment)}
-                  >
-                    <TableCell onClick={(e) => e.stopPropagation()}>
-                      <Checkbox
-                        checked={selectedIds.has(shipment.tracking_number)}
-                        onCheckedChange={() => toggleSelection(shipment.tracking_number)}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <span className="font-medium">#{shipment.order_number}</span>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-col">
-                        <span className="font-medium truncate max-w-[150px]">{shipment.customer_name || '-'}</span>
-                        <span className="text-xs text-slate-500 truncate max-w-[150px]">{shipment.customer_email}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-col">
-                        <span className="font-mono text-xs">{shipment.tracking_number?.substring(0, 20)}...</span>
-                        <span className="text-xs text-slate-500">{shipment.carrier || 'Korea Post'}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>{getStatusBadge(shipment.status, shipment.delay_detected)}</TableCell>
-                    <TableCell>
-                      <div className="flex flex-col">
-                        <span className="text-sm truncate max-w-[200px]">{shipment.last_checkpoint || '-'}</span>
-                        {shipment.last_checkpoint_time && (
-                          <span className="text-xs text-slate-500">
-                            {formatDistanceToNow(new Date(shipment.last_checkpoint_time), { addSuffix: true })}
+                {filteredShipments.map((shipment) => {
+                  // Calculate days in transit
+                  const shippedDate = shipment.shipped_at ? new Date(shipment.shipped_at) : null;
+                  const daysInTransit = shippedDate ? Math.floor((new Date() - shippedDate) / (1000 * 60 * 60 * 24)) : null;
+
+                  return (
+                    <TableRow
+                      key={shipment.id}
+                      className={cn(
+                        "cursor-pointer hover:bg-slate-50",
+                        shipment.delay_detected && "bg-red-50 hover:bg-red-100",
+                        selectedIds.has(shipment.tracking_number) && "bg-blue-50 hover:bg-blue-100"
+                      )}
+                      onClick={() => openDetail(shipment)}
+                    >
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <Checkbox
+                          checked={selectedIds.has(shipment.tracking_number)}
+                          onCheckedChange={() => toggleSelection(shipment.tracking_number)}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <span className="font-medium">#{shipment.order_number}</span>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col">
+                          <span className="font-medium truncate max-w-[140px]">{shipment.customer_name || '-'}</span>
+                          <span className="text-xs text-slate-500 flex items-center gap-1">
+                            <Globe className="h-3 w-3" />
+                            {shipment.delivery_address_country || 'Unknown'}
                           </span>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <span className="text-xs text-slate-500">
-                        {shipment.shipped_at ? formatDistanceToNow(new Date(shipment.shipped_at), { addSuffix: true }) : '-'}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleCheckSingle(shipment.tracking_number);
-                          }}
-                          disabled={checkingId === shipment.tracking_number}
-                        >
-                          <RefreshCw className={cn(
-                            "h-4 w-4",
-                            checkingId === shipment.tracking_number && "animate-spin"
-                          )} />
-                        </Button>
-                        <a
-                          href={getTrackingUrl(shipment.tracking_number, shipment.carrier)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <Button variant="ghost" size="sm">
-                            <ExternalLink className="h-4 w-4" />
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col">
+                          <span className="font-mono text-xs">{shipment.tracking_number?.substring(0, 18)}...</span>
+                          <span className="text-xs text-slate-500">{shipment.carrier || 'Korea Post'}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col gap-1">
+                          {getStatusBadge(shipment.status, shipment.delay_detected)}
+                          {shipment.status === 'delivered' && shipment.delivery_followup_sent && (
+                            <Badge className="bg-amber-100 text-amber-700 text-xs w-fit">
+                              <Mail className="h-2.5 w-2.5 mr-0.5" />
+                              Followup
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col">
+                          <span className="text-sm truncate max-w-[200px] flex items-center gap-1">
+                            <MapPin className="h-3 w-3 text-slate-400 flex-shrink-0" />
+                            {shipment.last_checkpoint || 'Awaiting scan'}
+                          </span>
+                          {shipment.last_checkpoint_time && (
+                            <span className="text-xs text-slate-500">
+                              {formatDistanceToNow(new Date(shipment.last_checkpoint_time), { addSuffix: true })}
+                            </span>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col">
+                          {daysInTransit !== null && (
+                            <span className={cn(
+                              "text-sm font-medium",
+                              daysInTransit > 14 ? "text-red-600" : daysInTransit > 7 ? "text-amber-600" : "text-slate-600"
+                            )}>
+                              {shipment.status === 'delivered' ? (
+                                <span className="text-green-600">Delivered</span>
+                              ) : (
+                                `${daysInTransit}d in transit`
+                              )}
+                            </span>
+                          )}
+                          {shipment.estimated_delivery && shipment.status !== 'delivered' && (
+                            <span className="text-xs text-slate-500">
+                              ETA: {format(new Date(shipment.estimated_delivery), 'MMM d')}
+                            </span>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCheckSingle(shipment.tracking_number);
+                            }}
+                            disabled={checkingId === shipment.tracking_number}
+                          >
+                            <RefreshCw className={cn(
+                              "h-4 w-4",
+                              checkingId === shipment.tracking_number && "animate-spin"
+                            )} />
                           </Button>
-                        </a>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                          <a
+                            href={getTrackingUrl(shipment.tracking_number, shipment.carrier)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <Button variant="ghost" size="sm">
+                              <ExternalLink className="h-4 w-4" />
+                            </Button>
+                          </a>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           )}
@@ -697,13 +735,18 @@ export default function Tracking() {
 
           {selectedShipment && (
             <div className="space-y-6">
-              {/* Status */}
+              {/* Status Header */}
               <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg">
                 <div className="flex items-center gap-3">
                   {getStatusBadge(selectedShipment.status, selectedShipment.delay_detected)}
                   {selectedShipment.delay_detected && selectedShipment.delay_days > 0 && (
                     <span className="text-sm text-red-600">
                       {selectedShipment.delay_days} days delayed
+                    </span>
+                  )}
+                  {selectedShipment.shipped_at && (
+                    <span className="text-sm text-slate-600">
+                      {Math.floor((new Date() - new Date(selectedShipment.shipped_at)) / (1000 * 60 * 60 * 24))} days in transit
                     </span>
                   )}
                 </div>
@@ -719,6 +762,68 @@ export default function Tracking() {
                   )} />
                   Refresh Status
                 </Button>
+              </div>
+
+              {/* Journey Progress */}
+              <div className="p-4 bg-gradient-to-r from-blue-50 to-green-50 rounded-lg border">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-slate-600 font-medium">Shipment Journey</span>
+                  {selectedShipment.estimated_delivery && selectedShipment.status !== 'delivered' && (
+                    <span className="text-xs text-slate-500">
+                      ETA: {format(new Date(selectedShipment.estimated_delivery), 'MMM d, yyyy')}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex flex-col items-center">
+                    <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center">
+                      <Package className="h-4 w-4 text-white" />
+                    </div>
+                    <span className="text-xs text-slate-500 mt-1">Shipped</span>
+                  </div>
+                  <div className={cn(
+                    "flex-1 h-1 rounded",
+                    ['in_transit', 'out_for_delivery', 'delivered'].includes(selectedShipment.status)
+                      ? "bg-blue-500"
+                      : "bg-slate-200"
+                  )} />
+                  <div className="flex flex-col items-center">
+                    <div className={cn(
+                      "w-8 h-8 rounded-full flex items-center justify-center",
+                      ['in_transit', 'out_for_delivery', 'delivered'].includes(selectedShipment.status)
+                        ? "bg-blue-600"
+                        : "bg-slate-200"
+                    )}>
+                      <Truck className={cn(
+                        "h-4 w-4",
+                        ['in_transit', 'out_for_delivery', 'delivered'].includes(selectedShipment.status)
+                          ? "text-white"
+                          : "text-slate-400"
+                      )} />
+                    </div>
+                    <span className="text-xs text-slate-500 mt-1">In Transit</span>
+                  </div>
+                  <div className={cn(
+                    "flex-1 h-1 rounded",
+                    ['out_for_delivery', 'delivered'].includes(selectedShipment.status)
+                      ? "bg-green-500"
+                      : "bg-slate-200"
+                  )} />
+                  <div className="flex flex-col items-center">
+                    <div className={cn(
+                      "w-8 h-8 rounded-full flex items-center justify-center",
+                      selectedShipment.status === 'delivered'
+                        ? "bg-green-600"
+                        : "bg-slate-200"
+                    )}>
+                      <CheckCircle className={cn(
+                        "h-4 w-4",
+                        selectedShipment.status === 'delivered' ? "text-white" : "text-slate-400"
+                      )} />
+                    </div>
+                    <span className="text-xs text-slate-500 mt-1">Delivered</span>
+                  </div>
+                </div>
               </div>
 
               {/* Details Grid */}
@@ -768,12 +873,14 @@ export default function Tracking() {
 
                 <div className="space-y-1">
                   <div className="text-xs text-slate-500 flex items-center gap-1">
-                    <Timer className="h-3 w-3" /> ETA
+                    <Timer className="h-3 w-3" /> Delivered At
                   </div>
                   <div className="font-medium">
-                    {selectedShipment.estimated_delivery
-                      ? format(new Date(selectedShipment.estimated_delivery), 'MMM d, yyyy')
-                      : '-'
+                    {selectedShipment.delivered_at
+                      ? format(new Date(selectedShipment.delivered_at), 'MMM d, yyyy')
+                      : selectedShipment.estimated_delivery
+                        ? `ETA: ${format(new Date(selectedShipment.estimated_delivery), 'MMM d')}`
+                        : '-'
                     }
                   </div>
                 </div>
@@ -783,14 +890,41 @@ export default function Tracking() {
               {selectedShipment.last_checkpoint && (
                 <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
                   <div className="text-xs text-blue-600 mb-1 flex items-center gap-1">
-                    <MapPin className="h-3 w-3" /> Last Checkpoint
+                    <MapPin className="h-3 w-3" /> Current Location
                   </div>
                   <div className="font-medium text-blue-900">{selectedShipment.last_checkpoint}</div>
                   {selectedShipment.last_checkpoint_time && (
                     <div className="text-sm text-blue-700 mt-1">
-                      {format(new Date(selectedShipment.last_checkpoint_time), 'MMM d, yyyy h:mm a')}
+                      {format(new Date(selectedShipment.last_checkpoint_time), 'MMM d, yyyy h:mm a')} ({formatDistanceToNow(new Date(selectedShipment.last_checkpoint_time), { addSuffix: true })})
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* Items shipped */}
+              {selectedShipment.line_items && (
+                <div className="p-4 bg-slate-50 rounded-lg border">
+                  <div className="text-xs text-slate-600 mb-2 flex items-center gap-1">
+                    <Box className="h-3 w-3" /> Items in Shipment
+                  </div>
+                  <div className="text-sm text-slate-700">
+                    {typeof selectedShipment.line_items === 'string'
+                      ? selectedShipment.line_items.split(',').map((item, i) => (
+                          <div key={i} className="flex items-center gap-2 py-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                            {item.trim()}
+                          </div>
+                        ))
+                      : Array.isArray(selectedShipment.line_items)
+                        ? selectedShipment.line_items.map((item, i) => (
+                            <div key={i} className="flex items-center gap-2 py-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                              {item}
+                            </div>
+                          ))
+                        : '-'
+                    }
+                  </div>
                 </div>
               )}
 
