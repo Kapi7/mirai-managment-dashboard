@@ -16,7 +16,7 @@ import json
 
 
 AFTERSHIP_API_KEY = os.getenv("AFTERSHIP_API_KEY")
-AFTERSHIP_BASE_URL = "https://api.aftership.com/v4"
+AFTERSHIP_BASE_URL = "https://api.aftership.com/tracking/2024-10"
 
 # Carrier code mapping for AfterShip
 CARRIER_CODES = {
@@ -31,19 +31,24 @@ CARRIER_CODES = {
     "fedex": "fedex",
     "cj logistics": "cj-logistics",
     "cj대한통운": "cj-logistics",
+    "gofo": "gofo",
+    "other": None,  # Let AfterShip auto-detect
 }
 
 
-def get_carrier_code(carrier_name: str) -> str:
+def get_carrier_code(carrier_name: str) -> Optional[str]:
     """Convert carrier name to AfterShip carrier code."""
     if not carrier_name:
-        return "korea-post"  # Default for Mirai
-    return CARRIER_CODES.get(carrier_name.lower().strip(), "korea-post")
+        return None  # Let AfterShip auto-detect
+    carrier_lower = carrier_name.lower().strip()
+    if carrier_lower in CARRIER_CODES:
+        return CARRIER_CODES[carrier_lower]
+    return None  # Let AfterShip auto-detect for unknown carriers
 
 
 def check_tracking_aftership(tracking_number: str, carrier: Optional[str] = None) -> Dict[str, Any]:
     """
-    Check tracking status via AfterShip API.
+    Check tracking status via AfterShip API (2024-10 version).
 
     Returns:
         {
@@ -68,51 +73,79 @@ def check_tracking_aftership(tracking_number: str, carrier: Optional[str] = None
     carrier_code = get_carrier_code(carrier) if carrier else None
 
     headers = {
-        "aftership-api-key": AFTERSHIP_API_KEY,
+        "as-api-key": AFTERSHIP_API_KEY,
         "Content-Type": "application/json"
     }
 
-    # First, try to get existing tracking
     try:
-        # Try to get tracking by number
-        url = f"{AFTERSHIP_BASE_URL}/trackings/{carrier_code}/{tracking_number}" if carrier_code else f"{AFTERSHIP_BASE_URL}/trackings/{tracking_number}"
-        response = requests.get(url, headers=headers, timeout=30)
+        # First, try to find existing tracking by searching (don't filter by slug - AfterShip may detect different carrier)
+        search_url = f"{AFTERSHIP_BASE_URL}/trackings"
+        params = {"tracking_numbers": tracking_number}
 
-        if response.status_code == 404:
-            # Tracking not found, create it
+        response = requests.get(search_url, headers=headers, params=params, timeout=30)
+
+        tracking = None
+        if response.status_code == 200:
+            data = response.json()
+            trackings = data.get("data", {}).get("trackings", [])
+            if trackings:
+                tracking = trackings[0]
+
+        # If not found, create new tracking
+        if not tracking:
             create_url = f"{AFTERSHIP_BASE_URL}/trackings"
             payload = {
-                "tracking": {
-                    "tracking_number": tracking_number,
-                }
+                "tracking_number": tracking_number,
             }
             if carrier_code:
-                payload["tracking"]["slug"] = carrier_code
+                payload["slug"] = carrier_code
 
             create_response = requests.post(create_url, headers=headers, json=payload, timeout=30)
 
             if create_response.status_code in [200, 201]:
-                # Wait a moment and fetch again
-                response = requests.get(url, headers=headers, timeout=30)
+                # 2024 API returns tracking directly in data, not data.tracking
+                resp_data = create_response.json().get("data", {})
+                tracking = resp_data if "tracking_number" in resp_data else resp_data.get("tracking", {})
             else:
-                return {
-                    "success": False,
-                    "error": f"Failed to create tracking: {create_response.text}",
-                    "status": "unknown"
-                }
+                create_json = create_response.json()
+                # Check if tracking already exists - fetch it instead
+                if create_json.get("meta", {}).get("code") == 4003:
+                    # Tracking already exists, get its ID and fetch it
+                    existing_id = create_json.get("data", {}).get("id")
+                    existing_slug = create_json.get("data", {}).get("slug")
+                    if existing_id:
+                        fetch_url = f"{AFTERSHIP_BASE_URL}/trackings/{existing_id}"
+                        fetch_response = requests.get(fetch_url, headers=headers, timeout=30)
+                        if fetch_response.status_code == 200:
+                            resp_data = fetch_response.json().get("data", {})
+                            tracking = resp_data if "tracking_number" in resp_data else resp_data.get("tracking", {})
 
-        if response.status_code == 200:
-            data = response.json()
-            tracking = data.get("data", {}).get("tracking", {})
+                # Try without carrier code if it failed and tracking not found yet
+                if not tracking and carrier_code:
+                    payload.pop("slug", None)
+                    create_response = requests.post(create_url, headers=headers, json=payload, timeout=30)
+                    if create_response.status_code in [200, 201]:
+                        resp_data = create_response.json().get("data", {})
+                        tracking = resp_data if "tracking_number" in resp_data else resp_data.get("tracking", {})
 
+                if not tracking:
+                    return {
+                        "success": False,
+                        "error": f"Failed to create tracking: {create_response.text}",
+                        "status": "unknown"
+                    }
+
+        if tracking:
             # Parse checkpoints
             checkpoints = tracking.get("checkpoints", [])
             last_checkpoint = checkpoints[-1] if checkpoints else {}
 
-            # Determine status
-            tag = tracking.get("tag", "Pending").lower()
+            # Determine status from tag
+            tag = tracking.get("tag", "Pending")
+            tag_lower = tag.lower().replace(" ", "").replace("_", "") if tag else "pending"
             status_map = {
                 "pending": "pending",
+                "inforeceived": "pending",
                 "infotransit": "in_transit",
                 "intransit": "in_transit",
                 "outfordelivery": "out_for_delivery",
@@ -120,21 +153,22 @@ def check_tracking_aftership(tracking_number: str, carrier: Optional[str] = None
                 "exception": "exception",
                 "expired": "expired",
                 "attemptfail": "exception",
+                "availableforpickup": "out_for_delivery",
             }
-            status = status_map.get(tag.replace(" ", "").replace("_", ""), "in_transit")
+            status = status_map.get(tag_lower, "in_transit")
 
             # Parse dates
-            delivered_at = None
-            if status == "delivered" and last_checkpoint:
-                delivered_at = last_checkpoint.get("checkpoint_time")
-
-            estimated_delivery = tracking.get("expected_delivery")
+            delivered_at = tracking.get("shipment_delivery_date")
+            estimated_delivery = None
+            edd = tracking.get("courier_estimated_delivery_date") or {}
+            if isinstance(edd, dict):
+                estimated_delivery = edd.get("estimated_delivery_date")
 
             return {
                 "success": True,
                 "status": status,
                 "status_detail": tracking.get("subtag_message", ""),
-                "tag": tracking.get("tag"),
+                "tag": tag,
                 "checkpoints": checkpoints,
                 "last_checkpoint": last_checkpoint.get("message", "") if last_checkpoint else "",
                 "last_checkpoint_time": last_checkpoint.get("checkpoint_time") if last_checkpoint else None,
@@ -148,7 +182,7 @@ def check_tracking_aftership(tracking_number: str, carrier: Optional[str] = None
         else:
             return {
                 "success": False,
-                "error": f"AfterShip API error: {response.status_code} - {response.text}",
+                "error": "Could not find or create tracking",
                 "status": "unknown"
             }
 
