@@ -3571,7 +3571,17 @@ async def check_single_tracking(tracking_number: str, user: dict = Depends(get_c
     result = check_tracking_aftership(tracking_number, verbose=True)
 
     if not result.get("success"):
-        return {"success": False, "error": result.get("error", "Unknown error")}
+        error = result.get("error", "Unknown error")
+        # Check if rate limited
+        if result.get("rate_limited") or error == "rate_limit":
+            print(f"⚠️ [CHECK] Rate limited for {tracking_number}")
+            return {
+                "success": False,
+                "error": "rate_limit",
+                "message": result.get("message", "AfterShip API limit reached. Try again later."),
+                "rate_limited": True
+            }
+        return {"success": False, "error": error}
 
     # Update database if exists
     async with get_db() as db:

@@ -319,11 +319,16 @@ export default function Tracking() {
             last_checkpoint: data.last_checkpoint,
           }));
         }
+      } else if (data.rate_limited) {
+        toast({
+          title: "API Limit Reached",
+          description: data.message || "AfterShip daily limit reached. Updates will resume tomorrow.",
+          variant: "destructive",
+        });
       } else {
         toast({
-          title: "Check Issue",
-          description: data.error || "Could not get tracking update.",
-          variant: "destructive",
+          title: "No Update Available",
+          description: "Carrier hasn't provided new info yet. Try again later.",
         });
       }
     } catch (err) {
@@ -596,6 +601,45 @@ export default function Tracking() {
       shipment.tracking_number?.toLowerCase().includes(s)
     );
   }, [shipments, search]);
+
+  // Calculate estimated delivery based on shipping from Korea
+  const getEstimatedDelivery = (shipment) => {
+    // If AfterShip provided an ETA, use it
+    if (shipment.estimated_delivery) {
+      return { date: new Date(shipment.estimated_delivery), source: 'carrier' };
+    }
+
+    // Otherwise calculate based on typical times from Korea
+    if (!shipment.shipped_at) return null;
+
+    const shippedDate = new Date(shipment.shipped_at);
+    const country = (shipment.delivery_address_country || '').toLowerCase();
+
+    // Typical delivery days from Korea (business days, adding buffer)
+    let minDays = 14;
+    let maxDays = 21;
+
+    if (country.includes('united states') || country.includes('us') || country === 'usa') {
+      minDays = 12; maxDays = 19;
+    } else if (country.includes('canada') || country === 'ca') {
+      minDays = 14; maxDays = 21;
+    } else if (country.includes('australia') || country === 'au') {
+      minDays = 14; maxDays = 21;
+    } else if (country.includes('united kingdom') || country === 'uk' || country === 'gb') {
+      minDays = 14; maxDays = 21;
+    } else if (['japan', 'singapore', 'hong kong', 'taiwan', 'jp', 'sg', 'hk', 'tw'].some(c => country.includes(c))) {
+      minDays = 7; maxDays = 14;
+    } else if (['germany', 'france', 'netherlands', 'de', 'fr', 'nl'].some(c => country.includes(c))) {
+      minDays = 14; maxDays = 25;
+    }
+
+    const estimatedMin = new Date(shippedDate);
+    estimatedMin.setDate(estimatedMin.getDate() + minDays);
+    const estimatedMax = new Date(shippedDate);
+    estimatedMax.setDate(estimatedMax.getDate() + maxDays);
+
+    return { minDate: estimatedMin, maxDate: estimatedMax, source: 'estimated' };
+  };
 
   // Status badge helper
   const getStatusBadge = (status, delayDetected = false) => {
@@ -1094,11 +1138,22 @@ export default function Tracking() {
                               )}
                             </span>
                           )}
-                          {shipment.estimated_delivery && shipment.status !== 'delivered' && (
-                            <span className="text-xs text-slate-500">
-                              ETA: {format(new Date(shipment.estimated_delivery), 'MMM d')}
-                            </span>
-                          )}
+                          {shipment.status !== 'delivered' && (() => {
+                            const eta = getEstimatedDelivery(shipment);
+                            if (!eta) return null;
+                            if (eta.source === 'carrier') {
+                              return (
+                                <span className="text-xs text-green-600 font-medium">
+                                  ETA: {format(eta.date, 'MMM d')}
+                                </span>
+                              );
+                            }
+                            return (
+                              <span className="text-xs text-slate-500">
+                                Est: {format(eta.minDate, 'MMM d')} - {format(eta.maxDate, 'MMM d')}
+                              </span>
+                            );
+                          })()}
                         </div>
                       </TableCell>
                       <TableCell>
@@ -1186,11 +1241,22 @@ export default function Tracking() {
               <div className="p-4 bg-gradient-to-r from-blue-50 to-green-50 rounded-lg border">
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-xs text-slate-600 font-medium">Shipment Journey</span>
-                  {selectedShipment.estimated_delivery && selectedShipment.status !== 'delivered' && (
-                    <span className="text-xs text-slate-500">
-                      ETA: {format(new Date(selectedShipment.estimated_delivery), 'MMM d, yyyy')}
-                    </span>
-                  )}
+                  {selectedShipment.status !== 'delivered' && (() => {
+                    const eta = getEstimatedDelivery(selectedShipment);
+                    if (!eta) return null;
+                    if (eta.source === 'carrier') {
+                      return (
+                        <span className="text-xs text-green-600 font-medium">
+                          ETA: {format(eta.date, 'MMM d, yyyy')}
+                        </span>
+                      );
+                    }
+                    return (
+                      <span className="text-xs text-slate-500">
+                        Estimated: {format(eta.minDate, 'MMM d')} - {format(eta.maxDate, 'MMM d')}
+                      </span>
+                    );
+                  })()}
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="flex flex-col items-center">
@@ -1291,14 +1357,19 @@ export default function Tracking() {
 
                 <div className="space-y-1">
                   <div className="text-xs text-slate-500 flex items-center gap-1">
-                    <Timer className="h-3 w-3" /> Delivered At
+                    <Timer className="h-3 w-3" /> {selectedShipment.delivered_at ? 'Delivered At' : 'Expected'}
                   </div>
                   <div className="font-medium">
                     {selectedShipment.delivered_at
                       ? format(new Date(selectedShipment.delivered_at), 'MMM d, yyyy')
-                      : selectedShipment.estimated_delivery
-                        ? `ETA: ${format(new Date(selectedShipment.estimated_delivery), 'MMM d')}`
-                        : '-'
+                      : (() => {
+                          const eta = getEstimatedDelivery(selectedShipment);
+                          if (!eta) return '-';
+                          if (eta.source === 'carrier') {
+                            return format(eta.date, 'MMM d, yyyy');
+                          }
+                          return `${format(eta.minDate, 'MMM d')} - ${format(eta.maxDate, 'MMM d')}`;
+                        })()
                     }
                   </div>
                 </div>

@@ -123,6 +123,18 @@ def check_tracking_aftership(tracking_number: str, carrier: Optional[str] = None
                 tracking = resp_data if "tracking_number" in resp_data else resp_data.get("tracking", {})
                 if verbose:
                     print(f"{log_prefix} Created tracking, tag={tracking.get('tag')}")
+            elif create_response.status_code == 429:
+                # Rate limit exceeded
+                create_json = create_response.json()
+                reset_time = create_json.get("meta", {}).get("message", "").split("reset at ")[-1].split(".")[0] if "reset at" in str(create_json) else "tomorrow"
+                print(f"{log_prefix} RATE LIMIT: AfterShip API limit exceeded, resets at {reset_time}")
+                return {
+                    "success": False,
+                    "error": "rate_limit",
+                    "message": f"AfterShip API limit reached. Resets at {reset_time}",
+                    "status": "pending",
+                    "rate_limited": True
+                }
             else:
                 create_json = create_response.json()
                 print(f"{log_prefix} Create failed: {create_json.get('meta', {}).get('code')}: {create_json.get('meta', {}).get('message', '')}")
