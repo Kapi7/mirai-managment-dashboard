@@ -3,6 +3,12 @@ set -e
 
 echo "🚀 Starting Mirai Dashboard services..."
 
+# Copy secret files if they exist (Render Secret Files feature)
+if [ -f /etc/secrets/google-ads.yaml ]; then
+    echo "📄 Copying google-ads.yaml from Render secrets..."
+    cp /etc/secrets/google-ads.yaml python_backend/google-ads.yaml
+fi
+
 # Start Python backend
 echo "📊 Starting Python backend on port 8080..."
 cd python_backend
