@@ -1163,6 +1163,68 @@ app.get('/api/support/recent-trackings', async (req, res) => {
   }
 });
 
+// ==================== ACTIVITY CENTER ====================
+
+// Activity - Get activity log
+app.get('/api/support/activity-log', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const queryString = new URLSearchParams(req.query).toString();
+    const response = await fetch(`${pythonBackendUrl}/support/activity-log${queryString ? '?' + queryString : ''}`, {
+      headers: {
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(30000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Activity log error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Activity - Get resolution stats
+app.get('/api/support/resolution-stats', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const queryString = new URLSearchParams(req.query).toString();
+    const response = await fetch(`${pythonBackendUrl}/support/resolution-stats${queryString ? '?' + queryString : ''}`, {
+      headers: {
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(30000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Resolution stats error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Activity - Get sent emails
+app.get('/api/support/sent-emails', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const queryString = new URLSearchParams(req.query).toString();
+    const response = await fetch(`${pythonBackendUrl}/support/sent-emails${queryString ? '?' + queryString : ''}`, {
+      headers: {
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(30000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Sent emails error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ==================== TRACKING DASHBOARD ====================
 
 // Tracking - List shipments
