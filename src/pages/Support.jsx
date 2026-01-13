@@ -446,8 +446,9 @@ export default function Support() {
   const getTicketStatusBadge = (status) => {
     const variants = {
       needs_attention: { icon: AlertCircle, label: 'Needs Attention', color: 'text-red-600 bg-red-50' },
-      pending: { icon: Clock, label: 'Pending', color: 'text-yellow-600 bg-yellow-50' },
+      pending: { icon: Clock, label: 'Pending AI', color: 'text-yellow-600 bg-yellow-50' },
       draft_ready: { icon: Bot, label: 'Draft Ready', color: 'text-blue-600 bg-blue-50' },
+      awaiting_reply: { icon: Send, label: 'Awaiting Reply', color: 'text-purple-600 bg-purple-50' },
       resolved: { icon: CheckCircle, label: 'Resolved', color: 'text-green-600 bg-green-50' },
       sent: { icon: Send, label: 'Sent', color: 'text-indigo-600 bg-indigo-50' },
     };
@@ -481,19 +482,11 @@ export default function Support() {
 
     // First, filter by main view (active vs resolved)
     if (mainView === 'resolved') {
-      // Show only resolved/closed tickets
-      result = result.filter(t =>
-        t.resolution ||
-        t.latest_status === 'resolved' ||
-        t.ticket_status === 'resolved'
-      );
+      // Show only resolved/closed tickets (has explicit resolution)
+      result = result.filter(t => t.resolution || t.ticket_status === 'resolved');
     } else {
-      // Show only active tickets (needs attention, pending, draft_ready, sent but not resolved)
-      result = result.filter(t =>
-        !t.resolution &&
-        t.latest_status !== 'resolved' &&
-        t.ticket_status !== 'resolved'
-      );
+      // Show active tickets: needs_attention, awaiting_reply, or anything without resolution
+      result = result.filter(t => !t.resolution && t.ticket_status !== 'resolved');
     }
 
     // Filter by search
@@ -524,24 +517,46 @@ export default function Support() {
     return result;
   }, [tickets, search, statusFilter, mainView]);
 
-  // Count tickets for tabs
-  const { activeCount, resolvedCount, needsAttentionCount } = useMemo(() => {
-    const active = tickets.filter(t =>
-      !t.resolution &&
-      t.latest_status !== 'resolved' &&
-      t.ticket_status !== 'resolved'
-    );
-    const resolved = tickets.filter(t =>
-      t.resolution ||
-      t.latest_status === 'resolved' ||
-      t.ticket_status === 'resolved'
-    );
-    const needsAttention = active.filter(t => t.ticket_status === 'needs_attention').length;
+  // Count tickets for tabs and stats
+  const { activeCount, resolvedCount, todayActiveCount, pendingCount, draftReadyCount, awaitingReplyCount } = useMemo(() => {
+    // Active = not resolved (no resolution set)
+    const active = tickets.filter(t => !t.resolution && t.ticket_status !== 'resolved');
+
+    // Resolved = has explicit resolution
+    const resolved = tickets.filter(t => t.resolution || t.ticket_status === 'resolved');
+
+    // Today's active tickets
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayActive = active.filter(t => t.last_activity && new Date(t.last_activity) >= today).length;
+
+    // Status counts from active tickets
+    // Pending = needs attention (waiting for AI or processing)
+    const pending = active.filter(t =>
+      t.ticket_status === 'needs_attention' ||
+      t.latest_status === 'pending'
+    ).length;
+
+    // Draft Ready = has AI draft waiting for approval
+    const draftReady = active.filter(t =>
+      t.has_pending_draft ||
+      t.latest_status === 'draft_ready'
+    ).length;
+
+    // Awaiting Reply = response sent, waiting for customer
+    const awaitingReply = active.filter(t =>
+      t.ticket_status === 'awaiting_reply' ||
+      t.latest_status === 'sent' ||
+      t.latest_status === 'approved'
+    ).length;
 
     return {
       activeCount: active.length,
       resolvedCount: resolved.length,
-      needsAttentionCount: needsAttention
+      todayActiveCount: todayActive,
+      pendingCount: pending,
+      draftReadyCount: draftReady,
+      awaitingReplyCount: awaitingReply
     };
   }, [tickets]);
 
@@ -571,15 +586,10 @@ export default function Support() {
         >
           <AlertCircle className="h-4 w-4 mr-2" />
           Needs Attention
-          {needsAttentionCount > 0 && (
-            <Badge className={cn(
-              "ml-2 text-xs",
-              mainView === 'active' ? "bg-white text-blue-700" : "bg-red-100 text-red-700"
-            )}>
-              {needsAttentionCount}
-            </Badge>
-          )}
-          <Badge variant="secondary" className="ml-1 text-xs">
+          <Badge className={cn(
+            "ml-2 text-xs",
+            mainView === 'active' ? "bg-white text-blue-700" : "bg-red-100 text-red-700"
+          )}>
             {activeCount}
           </Badge>
         </Button>
@@ -625,10 +635,10 @@ export default function Support() {
         <div className="grid grid-cols-5 gap-3">
           {[
             { key: 'all', label: 'Active Tickets', value: activeCount, color: 'slate', icon: Users },
-            { key: 'pending', label: 'Pending AI', value: stats.pending, color: 'yellow', icon: Clock },
-            { key: 'draft_ready', label: 'Draft Ready', value: stats.draft_ready, color: 'blue', icon: Bot },
-            { key: 'sent', label: 'Awaiting Reply', value: stats.sent, color: 'green', icon: Send },
-            { key: 'today', label: 'Today', value: stats.today_count, color: 'indigo', icon: Calendar },
+            { key: 'pending', label: 'Pending AI', value: pendingCount, color: 'yellow', icon: Clock },
+            { key: 'draft_ready', label: 'Draft Ready', value: draftReadyCount, color: 'blue', icon: Bot },
+            { key: 'sent', label: 'Awaiting Reply', value: awaitingReplyCount, color: 'purple', icon: Send },
+            { key: 'today', label: 'Today', value: todayActiveCount, color: 'indigo', icon: Calendar },
           ].map(({ key, label, value, color, icon: Icon }) => (
             <Card
               key={key}

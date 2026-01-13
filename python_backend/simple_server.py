@@ -2592,8 +2592,8 @@ async def get_support_tickets(
         filters = []
         if inbox_type and inbox_type != 'all':
             filters.append(SupportEmail.inbox_type == inbox_type)
-        # Only show customer emails by default (hide suppliers)
-        filters.append(SupportEmail.sender_type.in_(['customer', None]))
+        # Only show customer emails by default (hide suppliers and unclassified)
+        filters.append(SupportEmail.sender_type == 'customer')
 
         # Get customer tickets with aggregated data
         query = (
@@ -2657,12 +2657,20 @@ async def get_support_tickets(
             )
             customer_emails = emails_result.scalars().all()
 
-            # Determine overall ticket status (priority: pending > draft_ready > sent)
+            # Determine overall ticket status
+            # Only mark as resolved if explicitly resolved with a resolution type
             statuses = [e.status for e in customer_emails]
-            if 'pending' in statuses or 'draft_ready' in statuses:
+            resolutions = [e.resolution for e in customer_emails if e.resolution]
+
+            if resolutions:
+                # Has explicit resolution - ticket is resolved
+                ticket_status = 'resolved'
+            elif 'pending' in statuses or 'draft_ready' in statuses:
+                # Has pending or draft - needs attention
                 ticket_status = 'needs_attention'
             elif 'sent' in statuses or 'approved' in statuses:
-                ticket_status = 'resolved'
+                # Response sent, awaiting customer reply
+                ticket_status = 'awaiting_reply'
             else:
                 ticket_status = latest_email.status
 
@@ -2673,6 +2681,9 @@ async def get_support_tickets(
             intents = list(set(e.intent for e in customer_emails if e.intent))
             subjects = list(set(e.subject for e in customer_emails if e.subject))
 
+            # Get the resolution from the most recent resolved email
+            resolution = next((e.resolution for e in customer_emails if e.resolution), None)
+
             tickets.append({
                 "customer_email": row.customer_email,
                 "customer_name": row.customer_name or row.customer_email.split('@')[0],
@@ -2681,6 +2692,7 @@ async def get_support_tickets(
                 "last_activity": row.last_activity.isoformat() if row.last_activity else None,
                 "first_contact": row.first_contact.isoformat() if row.first_contact else None,
                 "ticket_status": ticket_status,
+                "resolution": resolution,
                 "has_pending_draft": has_draft and latest_email.status == 'draft_ready',
                 "latest_subject": latest_email.subject,
                 "latest_status": latest_email.status,
