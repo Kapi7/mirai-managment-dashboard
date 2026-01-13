@@ -15,7 +15,7 @@ from sync_jobs.base_sync import BaseSyncJob, run_sync
 
 
 def create_google_ads_yaml_from_env():
-    """Create google-ads.yaml from environment variables if it doesn't exist"""
+    """Create google-ads.yaml from environment variables"""
     config_path = "google-ads.yaml"
 
     # Check if we have the required env vars
@@ -23,19 +23,23 @@ def create_google_ads_yaml_from_env():
     client_id = os.getenv("GOOGLE_ADS_CLIENT_ID", "").strip()
     client_secret = os.getenv("GOOGLE_ADS_CLIENT_SECRET", "").strip()
     refresh_token = os.getenv("GOOGLE_ADS_REFRESH_TOKEN", "").strip()
-    client_customer_id = os.getenv("GOOGLE_ADS_CUSTOMER_ID", "").strip()
+    customer_id = os.getenv("GOOGLE_ADS_CUSTOMER_ID", "").strip()
     login_customer_id = os.getenv("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "").strip()
+
+    # Debug: Print what we found
+    print(f"🔍 [DEBUG] GOOGLE_ADS_DEVELOPER_TOKEN: {developer_token[:10]}..." if developer_token else "🔍 [DEBUG] GOOGLE_ADS_DEVELOPER_TOKEN: NOT SET")
+    print(f"🔍 [DEBUG] GOOGLE_ADS_LOGIN_CUSTOMER_ID: {login_customer_id}" if login_customer_id else "🔍 [DEBUG] GOOGLE_ADS_LOGIN_CUSTOMER_ID: NOT SET")
+    print(f"🔍 [DEBUG] GOOGLE_ADS_CUSTOMER_ID: {customer_id}" if customer_id else "🔍 [DEBUG] GOOGLE_ADS_CUSTOMER_ID: NOT SET")
 
     if not all([developer_token, client_id, client_secret, refresh_token]):
         print("⚠️ Missing Google Ads env vars (need GOOGLE_ADS_DEVELOPER_TOKEN, CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN)")
         return None
 
-    # Create the yaml content
+    # Create the yaml content (standard google-ads.yaml format)
     yaml_content = f"""developer_token: {developer_token}
 client_id: {client_id}
 client_secret: {client_secret}
 refresh_token: {refresh_token}
-client_customer_id: '{client_customer_id}'
 login_customer_id: '{login_customer_id}'
 use_proto_plus: true
 """
@@ -44,7 +48,11 @@ use_proto_plus: true
     with open(config_path, 'w') as f:
         f.write(yaml_content)
 
-    print(f"✅ Created {config_path} from environment variables")
+    print(f"✅ Created {config_path} from environment variables (login_customer_id={login_customer_id})")
+
+    # Also print the file contents for verification
+    print(f"📄 Config file contents:\n{yaml_content}")
+
     return config_path
 
 
