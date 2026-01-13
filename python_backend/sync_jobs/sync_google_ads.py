@@ -62,22 +62,21 @@ class SyncGoogleAds(BaseSyncJob):
         """Run the sync"""
         await init_db()
 
-        # Check if google-ads.yaml exists
-        config_path = os.getenv("GOOGLE_ADS_CONFIG", "google-ads.yaml")
-        if not os.path.exists(config_path):
-            # Try alternate locations
-            alt_paths = [
-                os.path.join(os.path.dirname(os.path.dirname(__file__)), "google-ads.yaml"),
-                "/app/google-ads.yaml"
-            ]
-            for path in alt_paths:
-                if os.path.exists(path):
-                    config_path = path
-                    break
-            else:
-                # Try to create from environment variables
-                config_path = create_google_ads_yaml_from_env()
-                if not config_path:
+        # Always create google-ads.yaml from environment variables to ensure latest credentials
+        config_path = create_google_ads_yaml_from_env()
+        if not config_path:
+            # Fallback to existing file only if env vars are missing
+            config_path = os.getenv("GOOGLE_ADS_CONFIG", "google-ads.yaml")
+            if not os.path.exists(config_path):
+                alt_paths = [
+                    os.path.join(os.path.dirname(os.path.dirname(__file__)), "google-ads.yaml"),
+                    "/app/google-ads.yaml"
+                ]
+                for path in alt_paths:
+                    if os.path.exists(path):
+                        config_path = path
+                        break
+                else:
                     print("⚠️ google-ads.yaml not found and couldn't create from env, skipping Google Ads sync")
                     return
 
