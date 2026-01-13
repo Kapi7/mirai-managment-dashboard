@@ -2178,7 +2178,8 @@ async def approve_support_email(email_id: int, user: dict = Depends(get_current_
             content=ai_draft,
             final_content=ai_draft,
             approved_by=user.get("user_id"),
-            approved_at=datetime.utcnow()
+            approved_at=datetime.utcnow(),
+            sent_at=datetime.utcnow()  # Mark as sent for Activity Center tracking
         )
         db.add(outbound)
         email.status = "approved"
