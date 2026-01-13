@@ -1225,6 +1225,27 @@ app.get('/api/support/sent-emails', async (req, res) => {
   }
 });
 
+// Activity - Migrate sent_at for existing approved emails
+app.post('/api/support/migrate-sent-at', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/support/migrate-sent-at`, {
+      method: 'POST',
+      headers: {
+        'Authorization': req.headers.authorization || '',
+        'Content-Type': 'application/json'
+      },
+      signal: AbortSignal.timeout(30000)
+    });
+
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Migrate sent_at error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ==================== TRACKING DASHBOARD ====================
 
 // Tracking - List shipments

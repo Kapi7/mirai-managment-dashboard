@@ -2188,6 +2188,40 @@ async def approve_support_email(email_id: int, user: dict = Depends(get_current_
         return {"success": True, "message": "Email approved for sending"}
 
 
+@app.post("/support/migrate-sent-at")
+async def migrate_sent_at(user: dict = Depends(get_current_user)):
+    """
+    One-time migration: Set sent_at = approved_at for messages that were approved but don't have sent_at.
+    This backfills Activity Center tracking for existing approved emails.
+    """
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import SupportMessage
+    from sqlalchemy import select, update, and_
+
+    async with get_db() as db:
+        # Find messages with approved_at but no sent_at
+        result = await db.execute(
+            update(SupportMessage)
+            .where(and_(
+                SupportMessage.approved_at.isnot(None),
+                SupportMessage.sent_at.is_(None)
+            ))
+            .values(sent_at=SupportMessage.approved_at)
+        )
+
+        updated_count = result.rowcount
+        await db.commit()
+
+        return {
+            "success": True,
+            "message": f"Migrated {updated_count} messages: set sent_at = approved_at",
+            "updated_count": updated_count
+        }
+
+
 @app.post("/support/emails/{email_id}/reject")
 async def reject_support_email(email_id: int, user: dict = Depends(get_current_user)):
     """Reject/archive email"""
