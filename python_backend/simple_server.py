@@ -2140,7 +2140,10 @@ async def update_support_email(
 @app.post("/support/emails/{email_id}/approve")
 async def approve_support_email(email_id: int, user: dict = Depends(get_current_user)):
     """Approve AI draft and mark for sending"""
+    print(f"📧 [APPROVE] Starting approval for email_id={email_id}, user={user.get('email', 'unknown')}")
+
     if not DB_SERVICE_AVAILABLE:
+        print(f"❌ [APPROVE] Database not available")
         raise HTTPException(status_code=503, detail="Database not available")
 
     from database.connection import get_db, is_db_configured
@@ -2157,7 +2160,10 @@ async def approve_support_email(email_id: int, user: dict = Depends(get_current_
         email = result.scalar_one_or_none()
 
         if not email:
+            print(f"❌ [APPROVE] Email {email_id} not found")
             raise HTTPException(status_code=404, detail="Email not found")
+
+        print(f"📧 [APPROVE] Found email from {email.customer_email}, subject: {email.subject[:50] if email.subject else 'N/A'}")
 
         # Get latest AI draft
         ai_draft = None
@@ -2167,7 +2173,10 @@ async def approve_support_email(email_id: int, user: dict = Depends(get_current_
                 break
 
         if not ai_draft:
+            print(f"❌ [APPROVE] No AI draft found for email {email_id}")
             raise HTTPException(status_code=400, detail="No AI draft to approve")
+
+        print(f"📧 [APPROVE] Found AI draft ({len(ai_draft)} chars), creating outbound message")
 
         # Create approved outbound message
         outbound = SupportMessage(
@@ -2185,6 +2194,7 @@ async def approve_support_email(email_id: int, user: dict = Depends(get_current_
         email.status = "approved"
         await db.commit()
 
+        print(f"✅ [APPROVE] Email {email_id} approved successfully by user {user.get('user_id')}")
         return {"success": True, "message": "Email approved for sending"}
 
 
@@ -2225,7 +2235,10 @@ async def migrate_sent_at(user: dict = Depends(get_current_user)):
 @app.post("/support/emails/{email_id}/reject")
 async def reject_support_email(email_id: int, user: dict = Depends(get_current_user)):
     """Reject/archive email"""
+    print(f"📧 [REJECT] Starting rejection for email_id={email_id}, user={user.get('email', 'unknown')}")
+
     if not DB_SERVICE_AVAILABLE:
+        print(f"❌ [REJECT] Database not available")
         raise HTTPException(status_code=503, detail="Database not available")
 
     from database.connection import get_db, is_db_configured
@@ -2239,11 +2252,14 @@ async def reject_support_email(email_id: int, user: dict = Depends(get_current_u
         email = result.scalar_one_or_none()
 
         if not email:
+            print(f"❌ [REJECT] Email {email_id} not found")
             raise HTTPException(status_code=404, detail="Email not found")
 
+        print(f"📧 [REJECT] Rejecting email from {email.customer_email}")
         email.status = "rejected"
         await db.commit()
 
+        print(f"✅ [REJECT] Email {email_id} rejected successfully")
         return {"success": True, "message": "Email rejected"}
 
 
@@ -2257,7 +2273,10 @@ async def resolve_support_email(email_id: int, req: ResolveRequest, user: dict =
     """
     Mark a support ticket as resolved with a resolution type.
     """
+    print(f"📧 [RESOLVE] Starting resolution for email_id={email_id}, resolution={req.resolution}, user={user.get('email', 'unknown')}")
+
     if not DB_SERVICE_AVAILABLE:
+        print(f"❌ [RESOLVE] Database not available")
         raise HTTPException(status_code=503, detail="Database not available")
 
     from database.connection import get_db, is_db_configured
@@ -2271,13 +2290,17 @@ async def resolve_support_email(email_id: int, req: ResolveRequest, user: dict =
         email = result.scalar_one_or_none()
 
         if not email:
+            print(f"❌ [RESOLVE] Email {email_id} not found")
             raise HTTPException(status_code=404, detail="Email not found")
+
+        print(f"📧 [RESOLVE] Resolving email from {email.customer_email}, resolution: {req.resolution}")
 
         # Calculate resolution time
         resolution_time = None
         if email.received_at:
             from datetime import datetime
             resolution_time = int((datetime.utcnow() - email.received_at).total_seconds() / 60)
+            print(f"📧 [RESOLVE] Resolution time: {resolution_time} minutes")
 
         # Update ticket
         email.status = "resolved"
@@ -2289,6 +2312,7 @@ async def resolve_support_email(email_id: int, req: ResolveRequest, user: dict =
 
         await db.commit()
 
+        print(f"✅ [RESOLVE] Email {email_id} resolved as '{req.resolution}' by user {user.get('user_id')}")
         return {
             "success": True,
             "message": f"Ticket resolved as: {req.resolution}",
@@ -2312,7 +2336,10 @@ async def regenerate_ai_response(
     Optional request body:
         user_hints: Manager guidance on how Emma should respond (e.g., "Offer a 10% discount", "Be more apologetic")
     """
+    print(f"📧 [REGENERATE] Starting AI regeneration for email_id={email_id}, user={user.get('email', 'unknown')}")
+
     if not DB_SERVICE_AVAILABLE:
+        print(f"❌ [REGENERATE] Database not available")
         raise HTTPException(status_code=503, detail="Database not available")
 
     import httpx
@@ -2330,11 +2357,15 @@ async def regenerate_ai_response(
         email = result.scalar_one_or_none()
 
         if not email:
+            print(f"❌ [REGENERATE] Email {email_id} not found")
             raise HTTPException(status_code=404, detail="Email not found")
+
+        print(f"📧 [REGENERATE] Found email from {email.customer_email}")
 
         # Get the latest inbound message
         inbound_msgs = [m for m in email.messages if m.direction == "inbound"]
         if not inbound_msgs:
+            print(f"❌ [REGENERATE] No inbound message found for email {email_id}")
             raise HTTPException(status_code=400, detail="No inbound message to respond to")
 
         latest_msg = inbound_msgs[-1]
@@ -2342,14 +2373,16 @@ async def regenerate_ai_response(
         # Set status to pending while generating
         email.status = "pending"
         await db.commit()
+        print(f"📧 [REGENERATE] Status set to pending, calling Emma service")
 
     # Call Emma service to regenerate the AI response
     emma_url = os.getenv("EMMA_SERVICE_URL", "https://emma-service.onrender.com")
+    print(f"📧 [REGENERATE] Emma URL: {emma_url}")
 
     # Extract user hints if provided
     user_hints = req.user_hints if req else None
     if user_hints:
-        print(f"📧 [regenerate] Manager hints provided: {user_hints[:100]}...")
+        print(f"📧 [REGENERATE] Manager hints provided: {user_hints[:100]}...")
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -2364,14 +2397,17 @@ async def regenerate_ai_response(
             if user_hints:
                 payload["user_hints"] = user_hints
 
+            print(f"📧 [REGENERATE] Sending request to Emma: {payload.get('customer_email')}")
             response = await client.post(
                 f"{emma_url}/generate-email-draft",
                 json=payload
             )
 
             if response.status_code == 200:
+                print(f"✅ [REGENERATE] Emma responded successfully for email {email_id}")
                 return {"success": True, "message": "AI response generation started"}
             else:
+                print(f"❌ [REGENERATE] Emma error: status {response.status_code}, body: {response.text[:200]}")
                 # Update status to failed
                 async with get_db() as db:
                     result = await db.execute(
@@ -2385,6 +2421,7 @@ async def regenerate_ai_response(
                 return {"success": False, "error": f"Emma service error: {response.status_code}"}
 
     except Exception as e:
+        print(f"❌ [REGENERATE] Exception calling Emma: {str(e)}")
         # Update status to failed
         async with get_db() as db:
             result = await db.execute(
@@ -3409,7 +3446,10 @@ async def get_tracking_stats(user: dict = Depends(get_current_user)):
 @app.post("/tracking/sync")
 async def sync_shipments_from_shopify(user: dict = Depends(get_current_user)):
     """Sync shipments from Shopify fulfillments."""
+    print(f"🚚 [SYNC] Starting Shopify sync, user={user.get('email', 'unknown')}")
+
     if not DB_SERVICE_AVAILABLE:
+        print(f"❌ [SYNC] Database not available")
         raise HTTPException(status_code=503, detail="Database not available")
 
     from database.connection import get_db, is_db_configured
@@ -3417,12 +3457,16 @@ async def sync_shipments_from_shopify(user: dict = Depends(get_current_user)):
     from sqlalchemy import select
 
     if not is_db_configured():
+        print(f"❌ [SYNC] Database not configured")
         raise HTTPException(status_code=503, detail="Database not configured")
 
     shopify_store = os.getenv("SHOPIFY_STORE")
     shopify_token = os.getenv("SHOPIFY_ACCESS_TOKEN") or os.getenv("SHOPIFY_TOKEN")
 
+    print(f"🚚 [SYNC] Shopify store: {shopify_store}, token: {'set' if shopify_token else 'missing'}")
+
     if not shopify_store or not shopify_token:
+        print(f"❌ [SYNC] Missing Shopify credentials")
         raise HTTPException(
             status_code=500,
             detail=f"Shopify credentials not configured. SHOPIFY_STORE={'set' if shopify_store else 'missing'}, TOKEN={'set' if shopify_token else 'missing'}"
@@ -3483,6 +3527,7 @@ async def sync_shipments_from_shopify(user: dict = Depends(get_current_user)):
 
             await db.commit()
 
+        print(f"✅ [SYNC] Completed: synced={synced}, updated={updated}, total_from_shopify={len(shopify_shipments)}")
         return {
             "success": True,
             "synced": synced,
@@ -3491,13 +3536,17 @@ async def sync_shipments_from_shopify(user: dict = Depends(get_current_user)):
         }
     except Exception as e:
         import traceback
+        print(f"❌ [SYNC] Failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}\n{traceback.format_exc()}")
 
 
 @app.post("/tracking/check/{tracking_number}")
 async def check_single_tracking(tracking_number: str, user: dict = Depends(get_current_user)):
     """Check tracking status for a single package via AfterShip."""
+    print(f"🚚 [CHECK] Checking tracking {tracking_number}, user={user.get('email', 'unknown')}")
+
     if not DB_SERVICE_AVAILABLE:
+        print(f"❌ [CHECK] Database not available")
         raise HTTPException(status_code=503, detail="Database not available")
 
     from database.connection import get_db, is_db_configured
@@ -3505,6 +3554,7 @@ async def check_single_tracking(tracking_number: str, user: dict = Depends(get_c
     from sqlalchemy import select
 
     if not is_db_configured():
+        print(f"❌ [CHECK] Database not configured")
         raise HTTPException(status_code=503, detail="Database not configured")
 
     # Import tracking service
@@ -3512,11 +3562,12 @@ async def check_single_tracking(tracking_number: str, user: dict = Depends(get_c
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'emma_service'))
     try:
         from tracking_service import check_tracking_aftership, detect_delays
-    except ImportError:
+    except ImportError as e:
+        print(f"❌ [CHECK] Tracking service import failed: {e}")
         raise HTTPException(status_code=500, detail="Tracking service not available")
 
     # Get from AfterShip (always verbose for debugging)
-    print(f"[tracking] Checking {tracking_number} via AfterShip...")
+    print(f"🚚 [CHECK] Calling AfterShip API for {tracking_number}...")
     result = check_tracking_aftership(tracking_number, verbose=True)
 
     if not result.get("success"):
@@ -4171,7 +4222,10 @@ Guidelines:
 @app.post("/tracking/followup/approve/{tracking_id}")
 async def approve_and_send_followup(tracking_id: int, user: dict = Depends(get_current_user)):
     """Approve the draft and send the followup email."""
+    print(f"📬 [FOLLOWUP-APPROVE] Starting approval for tracking_id={tracking_id}, user={user.get('email', 'unknown')}")
+
     if not DB_SERVICE_AVAILABLE:
+        print(f"❌ [FOLLOWUP-APPROVE] Database not available")
         raise HTTPException(status_code=503, detail="Database not available")
 
     from database.connection import get_db
@@ -4182,7 +4236,8 @@ async def approve_and_send_followup(tracking_id: int, user: dict = Depends(get_c
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'emma_service'))
     try:
         from followup_service import send_followup_email
-    except ImportError:
+    except ImportError as e:
+        print(f"❌ [FOLLOWUP-APPROVE] Followup service import failed: {e}")
         raise HTTPException(status_code=500, detail="Followup service not available")
 
     async with get_db() as db:
@@ -4192,14 +4247,20 @@ async def approve_and_send_followup(tracking_id: int, user: dict = Depends(get_c
         shipment = result.scalar_one_or_none()
 
         if not shipment:
+            print(f"❌ [FOLLOWUP-APPROVE] Shipment {tracking_id} not found")
             raise HTTPException(status_code=404, detail="Shipment not found")
 
+        print(f"📬 [FOLLOWUP-APPROVE] Found shipment for {shipment.customer_email}, order #{shipment.order_number}")
+
         if not shipment.followup_draft_subject or not shipment.followup_draft_body:
+            print(f"❌ [FOLLOWUP-APPROVE] No draft found for shipment {tracking_id}")
             raise HTTPException(status_code=400, detail="No draft to send. Generate a draft first.")
 
         if shipment.delivery_followup_sent:
+            print(f"❌ [FOLLOWUP-APPROVE] Followup already sent for shipment {tracking_id}")
             raise HTTPException(status_code=400, detail="Followup already sent for this shipment")
 
+        print(f"📬 [FOLLOWUP-APPROVE] Sending followup email to {shipment.customer_email}")
         # Send the stored draft
         send_result = send_followup_email(
             to_email=shipment.customer_email,
@@ -4211,12 +4272,14 @@ async def approve_and_send_followup(tracking_id: int, user: dict = Depends(get_c
             shipment.delivery_followup_sent = True
             shipment.followup_status = 'sent'
             await db.commit()
+            print(f"✅ [FOLLOWUP-APPROVE] Followup sent successfully to {shipment.customer_email}")
             return {
                 "success": True,
                 "message": f"Followup email sent to {shipment.customer_email}",
                 "messageId": send_result.get("messageId"),
             }
         else:
+            print(f"❌ [FOLLOWUP-APPROVE] Failed to send: {send_result.get('error', 'Unknown error')}")
             return {
                 "success": False,
                 "error": send_result.get("error", "Failed to send email"),
@@ -4226,7 +4289,10 @@ async def approve_and_send_followup(tracking_id: int, user: dict = Depends(get_c
 @app.post("/tracking/followup/reject/{tracking_id}")
 async def reject_followup(tracking_id: int, user: dict = Depends(get_current_user)):
     """Reject/skip the followup for this shipment."""
+    print(f"📬 [FOLLOWUP-REJECT] Rejecting followup for tracking_id={tracking_id}, user={user.get('email', 'unknown')}")
+
     if not DB_SERVICE_AVAILABLE:
+        print(f"❌ [FOLLOWUP-REJECT] Database not available")
         raise HTTPException(status_code=503, detail="Database not available")
 
     from database.connection import get_db
@@ -4240,13 +4306,17 @@ async def reject_followup(tracking_id: int, user: dict = Depends(get_current_use
         shipment = result.scalar_one_or_none()
 
         if not shipment:
+            print(f"❌ [FOLLOWUP-REJECT] Shipment {tracking_id} not found")
             raise HTTPException(status_code=404, detail="Shipment not found")
+
+        print(f"📬 [FOLLOWUP-REJECT] Rejecting followup for {shipment.customer_email}, order #{shipment.order_number}")
 
         # Mark as rejected - won't show in pending anymore
         shipment.followup_status = 'rejected'
         shipment.delivery_followup_sent = True  # Mark as "handled" so it doesn't show up again
         await db.commit()
 
+        print(f"✅ [FOLLOWUP-REJECT] Followup rejected for order #{shipment.order_number}")
         return {
             "success": True,
             "message": f"Followup rejected for order #{shipment.order_number}",

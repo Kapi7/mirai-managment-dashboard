@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/components/ui/use-toast';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -50,6 +51,7 @@ const API_URL = '/api';
 
 export default function Tracking() {
   const { getAuthHeader } = useAuth();
+  const { toast } = useToast();
   const [shipments, setShipments] = useState([]);
   const [stats, setStats] = useState({
     total: 0,
@@ -146,11 +148,26 @@ export default function Tracking() {
       });
       const data = await response.json();
       if (data.success) {
+        toast({
+          title: "Sync Complete",
+          description: `Synced ${data.synced || 0} shipments from Shopify.`,
+        });
         await fetchShipments();
         await fetchStats();
+      } else {
+        toast({
+          title: "Sync Issue",
+          description: data.error || "Some shipments may not have synced correctly.",
+          variant: "destructive",
+        });
       }
     } catch (err) {
       console.error('Sync error:', err);
+      toast({
+        title: "Sync Failed",
+        description: "Failed to sync from Shopify. Please try again.",
+        variant: "destructive",
+      });
       setError(err.message);
     } finally {
       setIsSyncing(false);
@@ -160,6 +177,10 @@ export default function Tracking() {
   // Check all active trackings
   const handleCheckAll = async () => {
     setIsChecking(true);
+    toast({
+      title: "Checking Trackings",
+      description: "Updating status for all active shipments...",
+    });
     try {
       const response = await fetch(`${API_URL}/tracking/check-all`, {
         method: 'POST',
@@ -171,11 +192,27 @@ export default function Tracking() {
         setTimeout(async () => {
           await fetchShipments();
           await fetchStats();
+          toast({
+            title: "Update Complete",
+            description: `Checked ${data.checked || 'all'} active shipments.`,
+          });
           setIsChecking(false);
         }, 3000);
+      } else {
+        toast({
+          title: "Check Issue",
+          description: data.error || "Some trackings may not have updated.",
+          variant: "destructive",
+        });
+        setIsChecking(false);
       }
     } catch (err) {
       console.error('Check all error:', err);
+      toast({
+        title: "Check Failed",
+        description: "Failed to check trackings. Please try again.",
+        variant: "destructive",
+      });
       setError(err.message);
       setIsChecking(false);
     }
@@ -208,6 +245,11 @@ export default function Tracking() {
     if (selectedIds.size === 0) return;
 
     setIsCheckingSelected(true);
+    const count = selectedIds.size;
+    toast({
+      title: "Checking Selected",
+      description: `Updating ${count} selected shipment(s)...`,
+    });
     try {
       // Check each selected tracking sequentially
       for (const trackingNumber of selectedIds) {
@@ -224,9 +266,18 @@ export default function Tracking() {
       // Refresh data after all checks
       await fetchShipments();
       await fetchStats();
+      toast({
+        title: "Update Complete",
+        description: `Successfully checked ${count} shipment(s).`,
+      });
       setSelectedIds(new Set());
     } catch (err) {
       console.error('Check selected error:', err);
+      toast({
+        title: "Check Failed",
+        description: "Failed to check selected trackings.",
+        variant: "destructive",
+      });
       setError(err.message);
     } finally {
       setIsCheckingSelected(false);
@@ -244,6 +295,10 @@ export default function Tracking() {
       });
       const data = await response.json();
       if (data.success) {
+        toast({
+          title: "Status Updated",
+          description: `Tracking updated: ${data.status || 'checked'}`,
+        });
         await fetchShipments();
         if (selectedShipment?.tracking_number === trackingNumber) {
           setSelectedShipment(prev => ({
@@ -253,9 +308,20 @@ export default function Tracking() {
             last_checkpoint: data.last_checkpoint,
           }));
         }
+      } else {
+        toast({
+          title: "Check Issue",
+          description: data.error || "Could not get tracking update.",
+          variant: "destructive",
+        });
       }
     } catch (err) {
       console.error('Check error:', err);
+      toast({
+        title: "Check Failed",
+        description: "Failed to check tracking status.",
+        variant: "destructive",
+      });
     } finally {
       setCheckingId(null);
     }
@@ -269,11 +335,26 @@ export default function Tracking() {
         headers: getAuthHeader()
       });
       if (response.ok) {
+        toast({
+          title: "Marked as Sent",
+          description: "Followup has been marked as sent.",
+        });
         await fetchShipments();
         await fetchStats();
+      } else {
+        toast({
+          title: "Error",
+          description: "Failed to mark followup as sent.",
+          variant: "destructive",
+        });
       }
     } catch (err) {
       console.error('Mark followup error:', err);
+      toast({
+        title: "Error",
+        description: "Failed to mark followup as sent.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -309,10 +390,21 @@ export default function Tracking() {
             shipment: shipment,
           });
           setFollowupDialogOpen(true);
+        } else {
+          toast({
+            title: "Generation Failed",
+            description: data.error || "Failed to generate followup email draft.",
+            variant: "destructive",
+          });
         }
       }
     } catch (err) {
       console.error('Preview followup error:', err);
+      toast({
+        title: "Error",
+        description: "Failed to load followup preview.",
+        variant: "destructive",
+      });
     } finally {
       setIsSendingFollowup(false);
     }
@@ -330,15 +422,30 @@ export default function Tracking() {
       });
       const data = await response.json();
       if (data.success) {
+        toast({
+          title: "Draft Regenerated",
+          description: "New followup email draft has been generated.",
+        });
         setFollowupPreview(prev => ({
           ...prev,
           subject: data.draft.subject,
           body: data.draft.body,
         }));
         setRegenerateInstructions('');
+      } else {
+        toast({
+          title: "Regenerate Failed",
+          description: data.error || "Failed to regenerate draft.",
+          variant: "destructive",
+        });
       }
     } catch (err) {
       console.error('Regenerate error:', err);
+      toast({
+        title: "Error",
+        description: "Failed to regenerate followup draft.",
+        variant: "destructive",
+      });
     } finally {
       setIsRegenerating(false);
     }
@@ -354,6 +461,10 @@ export default function Tracking() {
       });
       const data = await response.json();
       if (data.success) {
+        toast({
+          title: "Followup Sent",
+          description: "Delivery followup email has been sent to customer.",
+        });
         setFollowupDialogOpen(false);
         setFollowupPreview(null);
         await fetchShipments();
@@ -363,9 +474,19 @@ export default function Tracking() {
         }
       } else {
         console.error('Approve failed:', data.error);
+        toast({
+          title: "Send Failed",
+          description: data.error || "Failed to send followup email.",
+          variant: "destructive",
+        });
       }
     } catch (err) {
       console.error('Approve followup error:', err);
+      toast({
+        title: "Error",
+        description: "Failed to send followup email. Please try again.",
+        variant: "destructive",
+      });
     } finally {
       setIsSendingFollowup(false);
     }
@@ -380,13 +501,28 @@ export default function Tracking() {
       });
       const data = await response.json();
       if (data.success) {
+        toast({
+          title: "Followup Skipped",
+          description: "This customer will not receive a followup email.",
+        });
         setFollowupDialogOpen(false);
         setFollowupPreview(null);
         await fetchShipments();
         await fetchStats();
+      } else {
+        toast({
+          title: "Error",
+          description: "Failed to skip followup.",
+          variant: "destructive",
+        });
       }
     } catch (err) {
       console.error('Reject followup error:', err);
+      toast({
+        title: "Error",
+        description: "Failed to skip followup.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -398,6 +534,10 @@ export default function Tracking() {
   // Send all pending followups
   const handleSendAllFollowups = async () => {
     setIsSendingAllFollowups(true);
+    toast({
+      title: "Sending Followups",
+      description: "Sending all pending delivery followup emails...",
+    });
     try {
       const response = await fetch(`${API_URL}/tracking/followup/send-all`, {
         method: 'POST',
@@ -409,11 +549,27 @@ export default function Tracking() {
         setTimeout(async () => {
           await fetchShipments();
           await fetchStats();
+          toast({
+            title: "Followups Sent",
+            description: `Sent ${data.sent || 'all pending'} followup emails.`,
+          });
           setIsSendingAllFollowups(false);
         }, 3000);
+      } else {
+        toast({
+          title: "Send Issue",
+          description: data.error || "Some followups may not have sent.",
+          variant: "destructive",
+        });
+        setIsSendingAllFollowups(false);
       }
     } catch (err) {
       console.error('Send all followups error:', err);
+      toast({
+        title: "Send Failed",
+        description: "Failed to send followup emails.",
+        variant: "destructive",
+      });
       setIsSendingAllFollowups(false);
     }
   };

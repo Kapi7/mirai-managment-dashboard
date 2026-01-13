@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/components/ui/use-toast';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -62,6 +63,7 @@ const API_URL = '/api';
 
 export default function Support() {
   const { getAuthHeader } = useAuth();
+  const { toast } = useToast();
   const [tickets, setTickets] = useState([]);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [customerDetails, setCustomerDetails] = useState(null);
@@ -113,7 +115,9 @@ export default function Support() {
       if (activeInbox && activeInbox !== 'all') params.append('inbox_type', activeInbox);
       params.append('limit', '100');
 
-      const response = await fetch(`${API_URL}/support/tickets?${params}`);
+      const response = await fetch(`${API_URL}/support/tickets?${params}`, {
+        headers: getAuthHeader()
+      });
       if (!response.ok) throw new Error('Failed to fetch tickets');
       const data = await response.json();
       setTickets(data.tickets || []);
@@ -160,7 +164,9 @@ export default function Support() {
   // Fetch stats
   const fetchStats = async () => {
     try {
-      const response = await fetch(`${API_URL}/support/stats`);
+      const response = await fetch(`${API_URL}/support/stats`, {
+        headers: getAuthHeader()
+      });
       if (!response.ok) throw new Error('Failed to fetch stats');
       const data = await response.json();
       setStats(data);
@@ -173,7 +179,9 @@ export default function Support() {
   const fetchCustomerDetails = async (email) => {
     setDetailsLoading(true);
     try {
-      const response = await fetch(`${API_URL}/support/customer/${encodeURIComponent(email)}/details`);
+      const response = await fetch(`${API_URL}/support/customer/${encodeURIComponent(email)}/details`, {
+        headers: getAuthHeader()
+      });
       if (!response.ok) throw new Error('Failed to fetch customer details');
       const data = await response.json();
       setCustomerDetails(data);
@@ -229,13 +237,23 @@ export default function Support() {
     setIsSending(true);
     try {
       const response = await fetch(`${API_URL}/support/emails/${customerDetails.current_email_id}/approve`, {
-        method: 'POST'
+        method: 'POST',
+        headers: getAuthHeader()
       });
       if (!response.ok) throw new Error('Failed to approve');
+      toast({
+        title: "Email Sent",
+        description: "Response has been sent to the customer.",
+      });
       await fetchCustomerDetails(selectedCustomer.customer_email);
       handleRefresh();
     } catch (err) {
       console.error('Failed to approve:', err);
+      toast({
+        title: "Error",
+        description: "Failed to send response. Please try again.",
+        variant: "destructive",
+      });
     }
     setIsSending(false);
   };
@@ -247,14 +265,23 @@ export default function Support() {
     try {
       const response = await fetch(`${API_URL}/support/emails/${customerDetails.current_email_id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
         body: JSON.stringify({ final_content: editDraft })
       });
       if (!response.ok) throw new Error('Failed to update');
+      toast({
+        title: "Email Sent",
+        description: "Edited response has been sent to the customer.",
+      });
       await fetchCustomerDetails(selectedCustomer.customer_email);
       handleRefresh();
     } catch (err) {
       console.error('Failed to update:', err);
+      toast({
+        title: "Error",
+        description: "Failed to send edited response. Please try again.",
+        variant: "destructive",
+      });
     }
     setIsSending(false);
   };
@@ -266,14 +293,24 @@ export default function Support() {
     try {
       const response = await fetch(`${API_URL}/support/emails/${customerDetails.current_email_id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
         body: JSON.stringify({ final_content: manualResponse, status: 'approved' })
       });
       if (!response.ok) throw new Error('Failed to send');
+      toast({
+        title: "Email Sent",
+        description: "Manual response has been sent to the customer.",
+      });
+      setManualResponse('');
       await fetchCustomerDetails(selectedCustomer.customer_email);
       handleRefresh();
     } catch (err) {
       console.error('Failed to send:', err);
+      toast({
+        title: "Error",
+        description: "Failed to send manual response. Please try again.",
+        variant: "destructive",
+      });
     }
     setIsSending(false);
   };
@@ -283,13 +320,23 @@ export default function Support() {
     if (!customerDetails?.current_email_id) return;
     try {
       const response = await fetch(`${API_URL}/support/emails/${customerDetails.current_email_id}/reject`, {
-        method: 'POST'
+        method: 'POST',
+        headers: getAuthHeader()
       });
       if (!response.ok) throw new Error('Failed to reject');
+      toast({
+        title: "Draft Rejected",
+        description: "AI draft has been rejected. You can regenerate or write manually.",
+      });
       await fetchCustomerDetails(selectedCustomer.customer_email);
       handleRefresh();
     } catch (err) {
       console.error('Failed to reject:', err);
+      toast({
+        title: "Error",
+        description: "Failed to reject draft. Please try again.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -300,18 +347,28 @@ export default function Support() {
     try {
       const response = await fetch(`${API_URL}/support/emails/${customerDetails.current_email_id}/resolve`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
         body: JSON.stringify({
           resolution: resolutionType,
           resolution_notes: resolutionNotes,
         }),
       });
       if (!response.ok) throw new Error('Failed to resolve ticket');
+      toast({
+        title: "Ticket Resolved",
+        description: `Ticket marked as ${resolutionType.replace('_', ' ')}.`,
+      });
+      setResolutionNotes('');
       await fetchCustomerDetails(selectedCustomer.customer_email);
       await fetchTickets();
+      await fetchStats();
     } catch (err) {
       console.error('Failed to resolve ticket:', err);
-      setError(err.message);
+      toast({
+        title: "Error",
+        description: "Failed to resolve ticket. Please try again.",
+        variant: "destructive",
+      });
     } finally {
       setIsResolving(false);
     }
@@ -328,23 +385,35 @@ export default function Support() {
 
       const response = await fetch(`${API_URL}/support/emails/${customerDetails.current_email_id}/regenerate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
         body: JSON.stringify(requestBody)
       });
       const data = await response.json();
       if (data.success) {
         if (withHints) setUserHints('');
+        toast({
+          title: "Generating Response",
+          description: "AI is generating a new response...",
+        });
         setTimeout(() => {
           fetchCustomerDetails(selectedCustomer.customer_email);
           handleRefresh();
         }, 2000);
       } else {
         console.error('Failed to regenerate:', data.error);
-        alert(`Failed to generate AI response: ${data.error || 'Unknown error'}`);
+        toast({
+          title: "Generation Failed",
+          description: data.error || 'Failed to generate AI response.',
+          variant: "destructive",
+        });
       }
     } catch (err) {
       console.error('Failed to regenerate:', err);
-      alert('Failed to generate AI response. Please try again.');
+      toast({
+        title: "Error",
+        description: "Failed to generate AI response. Please try again.",
+        variant: "destructive",
+      });
     }
     setIsRegenerating(false);
   };
