@@ -2818,6 +2818,367 @@ async def get_recent_trackings(limit: int = 10, user: dict = Depends(get_current
         }
 
 
+# ==================== ACTIVITY CENTER ====================
+
+@app.get("/support/activity-log")
+async def get_activity_log(
+    days: int = 7,
+    activity_type: str = "all",
+    user: dict = Depends(get_current_user)
+):
+    """
+    Get activity log for manager review.
+    Shows resolved tickets, sent emails, and sent followups.
+    """
+    if not DB_SERVICE_AVAILABLE:
+        return {"activities": [], "summary": {}}
+
+    from database.connection import get_db, is_db_configured
+    from database.models import SupportEmail, SupportMessage, ShipmentTracking, User
+    from sqlalchemy import select, desc, func, and_, or_
+    from datetime import datetime, timedelta
+
+    if not is_db_configured():
+        return {"activities": [], "summary": {}}
+
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+
+    async with get_db() as db:
+        activities = []
+
+        # 1. Get resolved tickets
+        if activity_type in ["all", "resolved"]:
+            resolved_query = (
+                select(SupportEmail, User)
+                .outerjoin(User, SupportEmail.resolved_by == User.id)
+                .where(
+                    and_(
+                        SupportEmail.resolution.isnot(None),
+                        SupportEmail.resolved_at >= cutoff
+                    )
+                )
+                .order_by(desc(SupportEmail.resolved_at))
+                .limit(100)
+            )
+            resolved_result = await db.execute(resolved_query)
+            for email, agent in resolved_result:
+                activities.append({
+                    "id": f"resolved_{email.id}",
+                    "type": "resolved",
+                    "timestamp": email.resolved_at.isoformat() if email.resolved_at else None,
+                    "customer_email": email.customer_email,
+                    "customer_name": email.customer_name,
+                    "subject": email.subject,
+                    "action": email.resolution,
+                    "details": email.resolution_notes,
+                    "agent": agent.name if agent else "System",
+                    "order_number": email.order_number,
+                })
+
+        # 2. Get sent support replies
+        if activity_type in ["all", "sent"]:
+            sent_query = (
+                select(SupportMessage, SupportEmail, User)
+                .join(SupportEmail, SupportMessage.email_id == SupportEmail.id)
+                .outerjoin(User, SupportMessage.approved_by == User.id)
+                .where(
+                    and_(
+                        SupportMessage.sent_at.isnot(None),
+                        SupportMessage.sent_at >= cutoff,
+                        SupportMessage.direction == "outbound"
+                    )
+                )
+                .order_by(desc(SupportMessage.sent_at))
+                .limit(100)
+            )
+            sent_result = await db.execute(sent_query)
+            for msg, email, agent in sent_result:
+                content = msg.final_content or msg.ai_draft or ""
+                activities.append({
+                    "id": f"sent_{msg.id}",
+                    "type": "sent_reply",
+                    "timestamp": msg.sent_at.isoformat() if msg.sent_at else None,
+                    "customer_email": email.customer_email,
+                    "customer_name": email.customer_name,
+                    "subject": f"RE: {email.subject}",
+                    "action": "sent",
+                    "details": content[:200] + "..." if len(content) > 200 else content,
+                    "agent": agent.name if agent else "System",
+                    "ticket_id": email.id,
+                })
+
+        # 3. Get sent delivery followups
+        if activity_type in ["all", "followup"]:
+            followup_query = (
+                select(ShipmentTracking)
+                .where(
+                    and_(
+                        ShipmentTracking.followup_status == "sent",
+                        ShipmentTracking.delivered_at >= cutoff
+                    )
+                )
+                .order_by(desc(ShipmentTracking.delivered_at))
+                .limit(100)
+            )
+            followup_result = await db.execute(followup_query)
+            for tracking in followup_result.scalars():
+                activities.append({
+                    "id": f"followup_{tracking.id}",
+                    "type": "followup_sent",
+                    "timestamp": tracking.delivered_at.isoformat() if tracking.delivered_at else None,
+                    "customer_email": tracking.customer_email,
+                    "customer_name": tracking.customer_name,
+                    "subject": tracking.followup_draft_subject or "Delivery followup",
+                    "action": "followup_sent",
+                    "details": (tracking.followup_draft_body[:200] + "...") if tracking.followup_draft_body and len(tracking.followup_draft_body) > 200 else tracking.followup_draft_body,
+                    "agent": "System",
+                    "order_number": tracking.order_number,
+                })
+
+        # Sort all activities by timestamp
+        activities.sort(key=lambda x: x.get("timestamp") or "", reverse=True)
+
+        # Get summary counts
+        resolved_today = await db.execute(
+            select(func.count(SupportEmail.id))
+            .where(and_(SupportEmail.resolved_at >= today_start, SupportEmail.resolution.isnot(None)))
+        )
+        sent_today = await db.execute(
+            select(func.count(SupportMessage.id))
+            .where(and_(SupportMessage.sent_at >= today_start, SupportMessage.direction == "outbound"))
+        )
+        followups_today = await db.execute(
+            select(func.count(ShipmentTracking.id))
+            .where(and_(ShipmentTracking.followup_status == "sent", ShipmentTracking.delivered_at >= today_start))
+        )
+
+        return {
+            "activities": activities[:100],
+            "summary": {
+                "resolved_today": resolved_today.scalar() or 0,
+                "sent_today": sent_today.scalar() or 0,
+                "followups_today": followups_today.scalar() or 0,
+            }
+        }
+
+
+@app.get("/support/resolution-stats")
+async def get_resolution_stats(
+    days: int = 30,
+    user: dict = Depends(get_current_user)
+):
+    """
+    Get resolution statistics for manager review.
+    Shows resolution type breakdown, response times, and agent performance.
+    """
+    if not DB_SERVICE_AVAILABLE:
+        return {}
+
+    from database.connection import get_db, is_db_configured
+    from database.models import SupportEmail, User
+    from sqlalchemy import select, func, and_, case
+    from datetime import datetime, timedelta
+
+    if not is_db_configured():
+        return {}
+
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    week_ago = datetime.utcnow() - timedelta(days=7)
+    two_weeks_ago = datetime.utcnow() - timedelta(days=14)
+
+    async with get_db() as db:
+        # Total resolved in period
+        total_resolved = await db.execute(
+            select(func.count(SupportEmail.id))
+            .where(and_(SupportEmail.resolved_at >= cutoff, SupportEmail.resolution.isnot(None)))
+        )
+        total_resolved_count = total_resolved.scalar() or 0
+
+        # Total tickets in period
+        total_tickets = await db.execute(
+            select(func.count(SupportEmail.id))
+            .where(SupportEmail.received_at >= cutoff)
+        )
+        total_tickets_count = total_tickets.scalar() or 0
+
+        # Resolution rate
+        resolution_rate = total_resolved_count / total_tickets_count if total_tickets_count > 0 else 0
+
+        # Avg resolution time
+        avg_resolution = await db.execute(
+            select(func.avg(SupportEmail.resolution_time_minutes))
+            .where(and_(SupportEmail.resolved_at >= cutoff, SupportEmail.resolution_time_minutes.isnot(None)))
+        )
+        avg_resolution_time = avg_resolution.scalar() or 0
+
+        # Avg first response time
+        avg_response = await db.execute(
+            select(func.avg(SupportEmail.response_time_minutes))
+            .where(and_(SupportEmail.received_at >= cutoff, SupportEmail.response_time_minutes.isnot(None)))
+        )
+        avg_response_time = avg_response.scalar() or 0
+
+        # Resolution type breakdown
+        resolution_breakdown = await db.execute(
+            select(SupportEmail.resolution, func.count(SupportEmail.id))
+            .where(and_(SupportEmail.resolved_at >= cutoff, SupportEmail.resolution.isnot(None)))
+            .group_by(SupportEmail.resolution)
+        )
+        by_resolution_type = {row[0]: row[1] for row in resolution_breakdown}
+
+        # Agent performance
+        agent_stats = await db.execute(
+            select(
+                User.id,
+                User.name,
+                func.count(SupportEmail.id).label("resolved"),
+                func.avg(SupportEmail.resolution_time_minutes).label("avg_time")
+            )
+            .join(SupportEmail, SupportEmail.resolved_by == User.id)
+            .where(and_(SupportEmail.resolved_at >= cutoff, SupportEmail.resolution.isnot(None)))
+            .group_by(User.id, User.name)
+            .order_by(func.count(SupportEmail.id).desc())
+        )
+        by_agent = [
+            {"agent_id": row[0], "agent_name": row[1], "resolved": row[2], "avg_time": int(row[3] or 0)}
+            for row in agent_stats
+        ]
+
+        # Trend: this week vs last week
+        this_week = await db.execute(
+            select(func.count(SupportEmail.id))
+            .where(and_(SupportEmail.resolved_at >= week_ago, SupportEmail.resolution.isnot(None)))
+        )
+        last_week = await db.execute(
+            select(func.count(SupportEmail.id))
+            .where(and_(
+                SupportEmail.resolved_at >= two_weeks_ago,
+                SupportEmail.resolved_at < week_ago,
+                SupportEmail.resolution.isnot(None)
+            ))
+        )
+        this_week_count = this_week.scalar() or 0
+        last_week_count = last_week.scalar() or 0
+        change_pct = ((this_week_count - last_week_count) / last_week_count * 100) if last_week_count > 0 else 0
+
+        return {
+            "total_resolved": total_resolved_count,
+            "total_tickets": total_tickets_count,
+            "resolution_rate": round(resolution_rate, 2),
+            "avg_resolution_time_minutes": int(avg_resolution_time),
+            "avg_first_response_minutes": int(avg_response_time),
+            "by_resolution_type": by_resolution_type,
+            "by_agent": by_agent,
+            "trend": {
+                "this_week": this_week_count,
+                "last_week": last_week_count,
+                "change_pct": round(change_pct, 1)
+            }
+        }
+
+
+@app.get("/support/sent-emails")
+async def get_sent_emails(
+    days: int = 7,
+    email_type: str = "all",
+    user: dict = Depends(get_current_user)
+):
+    """
+    Get all sent emails from the system.
+    Includes support replies and delivery followups.
+    """
+    if not DB_SERVICE_AVAILABLE:
+        return {"emails": [], "total_sent": 0, "by_type": {}}
+
+    from database.connection import get_db, is_db_configured
+    from database.models import SupportEmail, SupportMessage, ShipmentTracking, User
+    from sqlalchemy import select, desc, func, and_
+    from datetime import datetime, timedelta
+
+    if not is_db_configured():
+        return {"emails": [], "total_sent": 0, "by_type": {}}
+
+    cutoff = datetime.utcnow() - timedelta(days=days)
+
+    async with get_db() as db:
+        emails = []
+
+        # 1. Get sent support replies
+        if email_type in ["all", "support"]:
+            sent_query = (
+                select(SupportMessage, SupportEmail, User)
+                .join(SupportEmail, SupportMessage.email_id == SupportEmail.id)
+                .outerjoin(User, SupportMessage.approved_by == User.id)
+                .where(
+                    and_(
+                        SupportMessage.sent_at.isnot(None),
+                        SupportMessage.sent_at >= cutoff,
+                        SupportMessage.direction == "outbound"
+                    )
+                )
+                .order_by(desc(SupportMessage.sent_at))
+                .limit(200)
+            )
+            sent_result = await db.execute(sent_query)
+            for msg, email, agent in sent_result:
+                content = msg.final_content or msg.ai_draft or ""
+                emails.append({
+                    "id": msg.id,
+                    "type": "support_reply",
+                    "sent_at": msg.sent_at.isoformat() if msg.sent_at else None,
+                    "to_email": email.customer_email,
+                    "to_name": email.customer_name,
+                    "subject": f"RE: {email.subject}",
+                    "preview": content[:150] + "..." if len(content) > 150 else content,
+                    "approved_by": agent.name if agent else None,
+                    "ticket_id": email.id,
+                })
+
+        # 2. Get sent delivery followups
+        if email_type in ["all", "followup"]:
+            followup_query = (
+                select(ShipmentTracking)
+                .where(
+                    and_(
+                        ShipmentTracking.followup_status == "sent",
+                        ShipmentTracking.delivered_at >= cutoff
+                    )
+                )
+                .order_by(desc(ShipmentTracking.delivered_at))
+                .limit(200)
+            )
+            followup_result = await db.execute(followup_query)
+            for tracking in followup_result.scalars():
+                body = tracking.followup_draft_body or ""
+                emails.append({
+                    "id": tracking.id,
+                    "type": "delivery_followup",
+                    "sent_at": tracking.delivered_at.isoformat() if tracking.delivered_at else None,
+                    "to_email": tracking.customer_email,
+                    "to_name": tracking.customer_name,
+                    "subject": tracking.followup_draft_subject or "Delivery followup",
+                    "preview": body[:150] + "..." if len(body) > 150 else body,
+                    "order_number": tracking.order_number,
+                })
+
+        # Sort by sent_at
+        emails.sort(key=lambda x: x.get("sent_at") or "", reverse=True)
+
+        # Count by type
+        support_count = len([e for e in emails if e["type"] == "support_reply"])
+        followup_count = len([e for e in emails if e["type"] == "delivery_followup"])
+
+        return {
+            "emails": emails[:100],
+            "total_sent": len(emails),
+            "by_type": {
+                "support_reply": support_count,
+                "delivery_followup": followup_count
+            }
+        }
+
+
 # ==================== TRACKING DASHBOARD ====================
 
 @app.get("/tracking/shipments")

@@ -12,7 +12,8 @@ import {
   Users,
   LogOut,
   MessageSquare,
-  Truck
+  Truck,
+  ClipboardList
 } from "lucide-react";
 import {
   Sidebar,
@@ -59,6 +60,7 @@ const navigationSections = [
     items: [
       { title: "Support Inbox", url: createPageUrl("Support"), icon: MessageSquare },
       { title: "Tracking", url: createPageUrl("Tracking"), icon: Truck },
+      { title: "Activity Center", url: createPageUrl("Activity"), icon: ClipboardList },
     ]
   },
   {
