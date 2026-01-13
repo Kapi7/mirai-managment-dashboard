@@ -164,7 +164,8 @@ def _cycle_account(account: Dict[str, Any]):
                 continue
             seen_set.add(num)
 
-            typ, msg_data = M.fetch(num, '(RFC822)')
+            # Use BODY.PEEK[] to fetch without marking as read
+            typ, msg_data = M.fetch(num, '(BODY.PEEK[])')
             if typ != 'OK' or not msg_data:
                 continue
 

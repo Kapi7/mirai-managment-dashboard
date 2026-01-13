@@ -46,7 +46,7 @@ def get_carrier_code(carrier_name: str) -> Optional[str]:
     return None  # Let AfterShip auto-detect for unknown carriers
 
 
-def check_tracking_aftership(tracking_number: str, carrier: Optional[str] = None) -> Dict[str, Any]:
+def check_tracking_aftership(tracking_number: str, carrier: Optional[str] = None, verbose: bool = False) -> Dict[str, Any]:
     """
     Check tracking status via AfterShip API (2024-10 version).
 
@@ -63,12 +63,18 @@ def check_tracking_aftership(tracking_number: str, carrier: Optional[str] = None
             "error": str  # if failed
         }
     """
+    log_prefix = f"[AfterShip:{tracking_number}]"
+
     if not AFTERSHIP_API_KEY:
+        print(f"{log_prefix} ERROR: AFTERSHIP_API_KEY not configured")
         return {
             "success": False,
             "error": "AFTERSHIP_API_KEY not configured",
             "status": "unknown"
         }
+
+    if verbose:
+        print(f"{log_prefix} Starting check with carrier={carrier}")
 
     carrier_code = get_carrier_code(carrier) if carrier else None
 
@@ -82,6 +88,8 @@ def check_tracking_aftership(tracking_number: str, carrier: Optional[str] = None
         search_url = f"{AFTERSHIP_BASE_URL}/trackings"
         params = {"tracking_numbers": tracking_number}
 
+        if verbose:
+            print(f"{log_prefix} Searching for existing tracking...")
         response = requests.get(search_url, headers=headers, params=params, timeout=30)
 
         tracking = None
@@ -90,9 +98,15 @@ def check_tracking_aftership(tracking_number: str, carrier: Optional[str] = None
             trackings = data.get("data", {}).get("trackings", [])
             if trackings:
                 tracking = trackings[0]
+                if verbose:
+                    print(f"{log_prefix} Found existing tracking, tag={tracking.get('tag')}, checkpoints={len(tracking.get('checkpoints', []))}")
+        else:
+            print(f"{log_prefix} Search failed: status={response.status_code}, response={response.text[:200]}")
 
         # If not found, create new tracking
         if not tracking:
+            if verbose:
+                print(f"{log_prefix} Not found, creating new tracking with carrier_code={carrier_code}")
             create_url = f"{AFTERSHIP_BASE_URL}/trackings"
             payload = {
                 "tracking_number": tracking_number,
@@ -101,13 +115,17 @@ def check_tracking_aftership(tracking_number: str, carrier: Optional[str] = None
                 payload["slug"] = carrier_code
 
             create_response = requests.post(create_url, headers=headers, json=payload, timeout=30)
+            print(f"{log_prefix} Create response: status={create_response.status_code}")
 
             if create_response.status_code in [200, 201]:
                 # 2024 API returns tracking directly in data, not data.tracking
                 resp_data = create_response.json().get("data", {})
                 tracking = resp_data if "tracking_number" in resp_data else resp_data.get("tracking", {})
+                if verbose:
+                    print(f"{log_prefix} Created tracking, tag={tracking.get('tag')}")
             else:
                 create_json = create_response.json()
+                print(f"{log_prefix} Create failed: {create_json.get('meta', {}).get('code')}: {create_json.get('meta', {}).get('message', '')}")
                 # Check if tracking already exists - fetch it instead
                 if create_json.get("meta", {}).get("code") == 4003:
                     # Tracking already exists, get its ID and fetch it
@@ -164,7 +182,7 @@ def check_tracking_aftership(tracking_number: str, carrier: Optional[str] = None
             if isinstance(edd, dict):
                 estimated_delivery = edd.get("estimated_delivery_date")
 
-            return {
+            result = {
                 "success": True,
                 "status": status,
                 "status_detail": tracking.get("subtag_message", ""),
@@ -179,6 +197,8 @@ def check_tracking_aftership(tracking_number: str, carrier: Optional[str] = None
                 "destination": tracking.get("destination_country_iso3"),
                 "signed_by": tracking.get("signed_by"),
             }
+            print(f"{log_prefix} Result: status={status}, tag={tag}, checkpoints={len(checkpoints)}, detail={tracking.get('subtag_message', '')[:50]}")
+            return result
         else:
             return {
                 "success": False,

@@ -3119,8 +3119,9 @@ async def check_single_tracking(tracking_number: str, user: dict = Depends(get_c
     except ImportError:
         raise HTTPException(status_code=500, detail="Tracking service not available")
 
-    # Get from AfterShip
-    result = check_tracking_aftership(tracking_number)
+    # Get from AfterShip (always verbose for debugging)
+    print(f"[tracking] Checking {tracking_number} via AfterShip...")
+    result = check_tracking_aftership(tracking_number, verbose=True)
 
     if not result.get("success"):
         return {"success": False, "error": result.get("error", "Unknown error")}
@@ -3264,7 +3265,8 @@ async def check_trackings_background(tracking_numbers: List[str]):
 
     for tracking_number in tracking_numbers:
         try:
-            result = check_tracking_aftership(tracking_number)
+            print(f"[tracking:batch] Checking {tracking_number}...")
+            result = check_tracking_aftership(tracking_number, verbose=True)
 
             if result.get("success"):
                 async with get_db() as db:
