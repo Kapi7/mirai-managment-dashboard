@@ -80,6 +80,7 @@ export default function Support() {
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [showTrackings, setShowTrackings] = useState(false);
   const [error, setError] = useState(null);
+  const [mainView, setMainView] = useState('active'); // 'active' or 'resolved'
   const [activeInbox, setActiveInbox] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [search, setSearch] = useState('');
@@ -474,9 +475,26 @@ export default function Support() {
     return <Badge className={cn('text-xs', config.color)}>{config.label}</Badge>;
   };
 
-  // Filter tickets
+  // Filter tickets based on mainView (active vs resolved)
   const filteredTickets = useMemo(() => {
     let result = tickets;
+
+    // First, filter by main view (active vs resolved)
+    if (mainView === 'resolved') {
+      // Show only resolved/closed tickets
+      result = result.filter(t =>
+        t.resolution ||
+        t.latest_status === 'resolved' ||
+        t.ticket_status === 'resolved'
+      );
+    } else {
+      // Show only active tickets (needs attention, pending, draft_ready, sent but not resolved)
+      result = result.filter(t =>
+        !t.resolution &&
+        t.latest_status !== 'resolved' &&
+        t.ticket_status !== 'resolved'
+      );
+    }
 
     // Filter by search
     if (search.trim()) {
@@ -489,21 +507,42 @@ export default function Support() {
       );
     }
 
-    // Filter by status
-    if (statusFilter && statusFilter !== 'all') {
+    // Filter by status (only for active view)
+    if (mainView === 'active' && statusFilter && statusFilter !== 'all') {
       if (statusFilter === 'pending' || statusFilter === 'draft_ready') {
         result = result.filter(t => t.ticket_status === 'needs_attention' || t.latest_status === statusFilter);
+      } else if (statusFilter === 'today') {
+        // Today's tickets
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        result = result.filter(t => t.last_activity && new Date(t.last_activity) >= today);
       } else {
         result = result.filter(t => t.latest_status === statusFilter);
       }
     }
 
     return result;
-  }, [tickets, search, statusFilter]);
+  }, [tickets, search, statusFilter, mainView]);
 
-  // Count tickets needing attention
-  const needsAttentionCount = useMemo(() => {
-    return tickets.filter(t => t.ticket_status === 'needs_attention').length;
+  // Count tickets for tabs
+  const { activeCount, resolvedCount, needsAttentionCount } = useMemo(() => {
+    const active = tickets.filter(t =>
+      !t.resolution &&
+      t.latest_status !== 'resolved' &&
+      t.ticket_status !== 'resolved'
+    );
+    const resolved = tickets.filter(t =>
+      t.resolution ||
+      t.latest_status === 'resolved' ||
+      t.ticket_status === 'resolved'
+    );
+    const needsAttention = active.filter(t => t.ticket_status === 'needs_attention').length;
+
+    return {
+      activeCount: active.length,
+      resolvedCount: resolved.length,
+      needsAttentionCount: needsAttention
+    };
   }, [tickets]);
 
   return (
@@ -511,15 +550,8 @@ export default function Support() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-slate-900">Support Tickets</h1>
-          <p className="text-slate-500 mt-1">
-            Customer cases grouped by conversation
-            {needsAttentionCount > 0 && (
-              <Badge className="ml-2 bg-red-100 text-red-700">
-                {needsAttentionCount} need attention
-              </Badge>
-            )}
-          </p>
+          <h1 className="text-3xl font-bold text-slate-900">Support Inbox</h1>
+          <p className="text-slate-500 mt-1">Manage customer support tickets</p>
         </div>
         <Button onClick={handleRefresh} disabled={isRefreshing}>
           <RefreshCw className={cn("h-4 w-4 mr-2", isRefreshing && "animate-spin")} />
@@ -527,55 +559,148 @@ export default function Support() {
         </Button>
       </div>
 
-      {/* Inbox Tabs */}
-      <div className="flex items-center gap-4 border-b border-slate-200 pb-4">
-        <Tabs value={activeInbox} onValueChange={setActiveInbox} className="w-full">
-          <TabsList className="grid w-full max-w-md grid-cols-3">
-            <TabsTrigger value="all" className="flex items-center gap-2">
-              <Inbox className="h-4 w-4" />
-              All Tickets
-            </TabsTrigger>
-            <TabsTrigger value="emma" className="flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-pink-500" />
-              Emma (Sales)
-            </TabsTrigger>
-            <TabsTrigger value="support" className="flex items-center gap-2">
-              <MessageSquare className="h-4 w-4 text-blue-500" />
-              Support
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
+      {/* Main Navigation Tabs - Active vs Resolved */}
+      <div className="flex items-center gap-2">
+        <Button
+          variant={mainView === 'active' ? 'default' : 'outline'}
+          onClick={() => setMainView('active')}
+          className={cn(
+            "relative",
+            mainView === 'active' && "bg-blue-600 hover:bg-blue-700"
+          )}
+        >
+          <AlertCircle className="h-4 w-4 mr-2" />
+          Needs Attention
+          {needsAttentionCount > 0 && (
+            <Badge className={cn(
+              "ml-2 text-xs",
+              mainView === 'active' ? "bg-white text-blue-700" : "bg-red-100 text-red-700"
+            )}>
+              {needsAttentionCount}
+            </Badge>
+          )}
+          <Badge variant="secondary" className="ml-1 text-xs">
+            {activeCount}
+          </Badge>
+        </Button>
+        <Button
+          variant={mainView === 'resolved' ? 'default' : 'outline'}
+          onClick={() => setMainView('resolved')}
+          className={cn(
+            mainView === 'resolved' && "bg-green-600 hover:bg-green-700"
+          )}
+        >
+          <CheckCircle className="h-4 w-4 mr-2" />
+          Resolved
+          <Badge variant="secondary" className="ml-2 text-xs">
+            {resolvedCount}
+          </Badge>
+        </Button>
+
+        {/* Inbox Type Filter (secondary, only for active view) */}
+        {mainView === 'active' && (
+          <div className="ml-4 flex items-center gap-1 border-l pl-4">
+            <span className="text-sm text-slate-500 mr-2">Filter:</span>
+            <Tabs value={activeInbox} onValueChange={setActiveInbox}>
+              <TabsList className="h-8">
+                <TabsTrigger value="all" className="text-xs h-7 px-3">
+                  All
+                </TabsTrigger>
+                <TabsTrigger value="emma" className="text-xs h-7 px-3">
+                  <Sparkles className="h-3 w-3 mr-1 text-pink-500" />
+                  Emma
+                </TabsTrigger>
+                <TabsTrigger value="support" className="text-xs h-7 px-3">
+                  <MessageSquare className="h-3 w-3 mr-1 text-blue-500" />
+                  Support
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </div>
+        )}
       </div>
 
-      {/* Quick Stats */}
-      <div className="grid grid-cols-5 gap-3">
-        {[
-          { key: 'all', label: 'Total Tickets', value: tickets.length, color: 'slate', icon: Users },
-          { key: 'pending', label: 'Pending', value: stats.pending, color: 'yellow', icon: Clock },
-          { key: 'draft_ready', label: 'Draft Ready', value: stats.draft_ready, color: 'blue', icon: Bot },
-          { key: 'sent', label: 'Sent', value: stats.sent, color: 'green', icon: Send },
-          { key: 'today', label: 'Today', value: stats.today_count, color: 'indigo', icon: Calendar },
-        ].map(({ key, label, value, color, icon: Icon }) => (
-          <Card
-            key={key}
-            className={cn(
-              "cursor-pointer hover:shadow-md transition-shadow",
-              statusFilter === key && `ring-2 ring-${color}-500`
-            )}
-            onClick={() => setStatusFilter(statusFilter === key ? 'all' : key)}
-          >
+      {/* Quick Stats - Only show for Active view */}
+      {mainView === 'active' && (
+        <div className="grid grid-cols-5 gap-3">
+          {[
+            { key: 'all', label: 'Active Tickets', value: activeCount, color: 'slate', icon: Users },
+            { key: 'pending', label: 'Pending AI', value: stats.pending, color: 'yellow', icon: Clock },
+            { key: 'draft_ready', label: 'Draft Ready', value: stats.draft_ready, color: 'blue', icon: Bot },
+            { key: 'sent', label: 'Awaiting Reply', value: stats.sent, color: 'green', icon: Send },
+            { key: 'today', label: 'Today', value: stats.today_count, color: 'indigo', icon: Calendar },
+          ].map(({ key, label, value, color, icon: Icon }) => (
+            <Card
+              key={key}
+              className={cn(
+                "cursor-pointer hover:shadow-md transition-shadow",
+                statusFilter === key && "ring-2 ring-blue-500"
+              )}
+              onClick={() => setStatusFilter(statusFilter === key ? 'all' : key)}
+            >
+              <CardContent className="p-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs text-slate-500">{label}</p>
+                    <p className={cn("text-xl font-bold", `text-${color}-600`)}>{value || 0}</p>
+                  </div>
+                  <Icon className={cn("h-5 w-5", `text-${color}-500`)} />
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* Resolved Stats - Only show for Resolved view */}
+      {mainView === 'resolved' && (
+        <div className="grid grid-cols-4 gap-3">
+          <Card>
             <CardContent className="p-3">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-xs text-slate-500">{label}</p>
-                  <p className={`text-xl font-bold text-${color}-600`}>{value || 0}</p>
+                  <p className="text-xs text-slate-500">Total Resolved</p>
+                  <p className="text-xl font-bold text-green-600">{resolvedCount}</p>
                 </div>
-                <Icon className={`h-5 w-5 text-${color}-500`} />
+                <CheckCircle className="h-5 w-5 text-green-500" />
               </div>
             </CardContent>
           </Card>
-        ))}
-      </div>
+          <Card>
+            <CardContent className="p-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-slate-500">Resolution Rate</p>
+                  <p className="text-xl font-bold text-blue-600">{stats.resolution_rate || 0}%</p>
+                </div>
+                <TrendingUp className="h-5 w-5 text-blue-500" />
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-slate-500">AI Draft Rate</p>
+                  <p className="text-xl font-bold text-purple-600">{stats.ai_draft_rate || 0}%</p>
+                </div>
+                <Sparkles className="h-5 w-5 text-purple-500" />
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-slate-500">This Week</p>
+                  <p className="text-xl font-bold text-slate-600">{stats.week_count || 0}</p>
+                </div>
+                <Calendar className="h-5 w-5 text-slate-500" />
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Recent Trackings Collapse */}
       <Card>
@@ -762,8 +887,17 @@ export default function Support() {
         <CardHeader className="py-3">
           <div className="flex items-center justify-between">
             <CardTitle className="flex items-center gap-2 text-base">
-              <Users className="h-4 w-4" />
-              Customer Tickets
+              {mainView === 'active' ? (
+                <>
+                  <AlertCircle className="h-4 w-4 text-blue-600" />
+                  <span>Tickets Needing Attention</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle className="h-4 w-4 text-green-600" />
+                  <span>Resolved Tickets</span>
+                </>
+              )}
               <Badge variant="secondary">{filteredTickets.length}</Badge>
             </CardTitle>
             <div className="relative">
@@ -784,9 +918,19 @@ export default function Support() {
             </div>
           ) : filteredTickets.length === 0 ? (
             <div className="text-center py-12 text-slate-500">
-              <Users className="h-12 w-12 mx-auto mb-3 opacity-30" />
-              <p className="font-medium">No tickets found</p>
-              <p className="text-sm">Customer inquiries will appear here</p>
+              {mainView === 'active' ? (
+                <>
+                  <CheckCircle className="h-12 w-12 mx-auto mb-3 opacity-30 text-green-500" />
+                  <p className="font-medium text-green-700">All caught up!</p>
+                  <p className="text-sm">No tickets need your attention right now</p>
+                </>
+              ) : (
+                <>
+                  <Archive className="h-12 w-12 mx-auto mb-3 opacity-30" />
+                  <p className="font-medium">No resolved tickets</p>
+                  <p className="text-sm">Resolved tickets will appear here</p>
+                </>
+              )}
             </div>
           ) : (
             <div className="divide-y">
@@ -841,6 +985,13 @@ export default function Support() {
                             <Target className="h-3 w-3" />
                             {ticket.intents.join(', ')}
                           </span>
+                        )}
+                        {/* Show resolution type for resolved tickets */}
+                        {mainView === 'resolved' && ticket.resolution && (
+                          <Badge className="bg-green-100 text-green-700 text-xs">
+                            <CheckCircle className="h-3 w-3 mr-1" />
+                            {ticket.resolution.replace('_', ' ')}
+                          </Badge>
                         )}
                       </div>
                     </div>
@@ -970,7 +1121,7 @@ export default function Support() {
                         <div className="mt-3 p-3 bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg border border-purple-200">
                           <div className="flex items-center gap-2 mb-2">
                             <Sparkles className="h-4 w-4 text-purple-600" />
-                            <span className="font-medium text-sm text-purple-700">Emma's Draft</span>
+                            <span className="font-medium text-sm text-purple-700">Emma&apos;s Draft</span>
                             <Badge className="bg-purple-100 text-purple-700 text-xs">Ready for Review</Badge>
                           </div>
                           <div className="text-sm whitespace-pre-wrap">{msg.ai_draft}</div>
