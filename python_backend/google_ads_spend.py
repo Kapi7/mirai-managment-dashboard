@@ -152,6 +152,14 @@ def _reauthorize_and_update_yaml(config_path: str) -> str:
     return creds.refresh_token
 
 def _build_client(config_path: str) -> GoogleAdsClient:
+    print(f"🔍 [GADS] Loading config from: {config_path}")
+    if os.path.exists(config_path):
+        cfg = _load_yaml(config_path)
+        print(f"🔍 [GADS] Config developer_token: {cfg.get('developer_token', 'NOT SET')[:10]}..." if cfg.get('developer_token') else "🔍 [GADS] Config developer_token: NOT SET")
+        print(f"🔍 [GADS] Config login_customer_id: {cfg.get('login_customer_id', 'NOT SET')}")
+        print(f"🔍 [GADS] Config client_id: {cfg.get('client_id', 'NOT SET')[:20]}..." if cfg.get('client_id') else "🔍 [GADS] Config client_id: NOT SET")
+    else:
+        print(f"⚠️ [GADS] Config file not found: {config_path}")
     return GoogleAdsClient.load_from_storage(path=config_path)
 
 # --------------------- GAQL pieces ---------------------
@@ -360,24 +368,36 @@ def _union_account_ids(client: GoogleAdsClient, config_path: str) -> List[str]:
     discover = os.getenv("GOOGLE_ADS_DISCOVER", "1") == "1"
     excludes = set(_parse_id_list(os.getenv("GOOGLE_ADS_EXCLUDE_IDS", "")))
 
+    # Always log for debugging
+    print(f"🔍 [GADS] GOOGLE_ADS_CUSTOMER_ID={single or 'NOT SET'}")
+    print(f"🔍 [GADS] GOOGLE_ADS_CUSTOMER_IDS={os.getenv('GOOGLE_ADS_CUSTOMER_IDS', 'NOT SET')}")
+    print(f"🔍 [GADS] GOOGLE_ADS_DISCOVER={os.getenv('GOOGLE_ADS_DISCOVER', '1 (default)')}")
+    print(f"🔍 [GADS] explicit accounts from env: {explicit}")
+
     discovered: List[str] = []
     if discover:
         cfg = _load_yaml(config_path)
         login_id = _only_digits(cfg.get("login_customer_id") or os.getenv("LOGIN_CUSTOMER_ID", ""))
+        print(f"🔍 [GADS] login_customer_id from yaml: {cfg.get('login_customer_id', 'NOT SET')}")
+        print(f"🔍 [GADS] LOGIN_CUSTOMER_ID from env: {os.getenv('LOGIN_CUSTOMER_ID', 'NOT SET')}")
+        print(f"🔍 [GADS] Using login_id for discovery: {login_id}")
         if login_id:
             try:
+                print(f"🔍 [GADS] Attempting to discover leaf accounts under MCC {login_id}...")
                 discovered = _discover_leaf_accounts(client, login_id)
+                print(f"✅ [GADS] Discovered accounts: {discovered}")
             except Exception as e:
-                if os.getenv("GOOGLE_ADS_DEBUG", "0") == "1":
-                    print(f"[GADS] discovery failed (continuing with explicit list only): {e}")
-        elif os.getenv("GOOGLE_ADS_DEBUG", "0") == "1":
-            print("[GADS] no login_customer_id configured; skipping discovery.")
+                print(f"⚠️ [GADS] Discovery failed: {e}")
+                print(f"⚠️ [GADS] Will continue with explicit accounts only: {explicit}")
+        else:
+            print("⚠️ [GADS] No login_customer_id configured; skipping discovery.")
+    else:
+        print("🔍 [GADS] Discovery disabled (GOOGLE_ADS_DISCOVER=0)")
 
     union = sorted(set(explicit) | set(discovered))
     final = [cid for cid in union if cid not in excludes]
 
-    if os.getenv("GOOGLE_ADS_DEBUG", "0") == "1":
-        print(f"[GADS] accounts_final={final} explicit={explicit} discovered={discovered} exclude={list(excludes)}")
+    print(f"✅ [GADS] Final account list to query: {final}")
 
     return final
 
