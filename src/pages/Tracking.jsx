@@ -138,6 +138,17 @@ export default function Tracking() {
     loadData();
   }, [statusFilter]);
 
+  // Auto-refresh stats every 30 seconds
+  useEffect(() => {
+    const refreshInterval = setInterval(() => {
+      // Silent refresh (no loading state)
+      fetchShipments();
+      fetchStats();
+    }, 30000);
+
+    return () => clearInterval(refreshInterval);
+  }, [statusFilter]);
+
   // Sync from Shopify
   const handleSync = async () => {
     setIsSyncing(true);
