@@ -60,7 +60,9 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-const API_URL = '/api';
+// Meta Ads API is on the Python backend (same as Reports/Pricing)
+const API_URL = import.meta.env.VITE_REPORT_API_URL ||
+  (import.meta.env.DEV ? 'http://localhost:8080' : '/reports-api');
 
 // Health score color helper
 const getHealthColor = (score) => {
