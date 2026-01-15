@@ -49,12 +49,13 @@ const navigationSections = [
       { title: "Reports", url: createPageUrl("Reports"), icon: BarChart3 },
     ]
   },
-  {
-    label: "Marketing",
-    items: [
-      { title: "Meta Ads", url: createPageUrl("Marketing"), icon: Target },
-    ]
-  },
+  // Marketing section hidden until backend is deployed
+  // {
+  //   label: "Marketing",
+  //   items: [
+  //     { title: "Meta Ads", url: createPageUrl("Marketing"), icon: Target },
+  //   ]
+  // },
   {
     label: "Operations",
     items: [
