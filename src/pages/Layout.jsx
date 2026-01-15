@@ -13,7 +13,8 @@ import {
   LogOut,
   MessageSquare,
   Truck,
-  ClipboardList
+  ClipboardList,
+  Target
 } from "lucide-react";
 import {
   Sidebar,
@@ -46,6 +47,12 @@ const navigationSections = [
     label: "Analytics",
     items: [
       { title: "Reports", url: createPageUrl("Reports"), icon: BarChart3 },
+    ]
+  },
+  {
+    label: "Marketing",
+    items: [
+      { title: "Meta Ads", url: createPageUrl("Marketing"), icon: Target },
     ]
   },
   {

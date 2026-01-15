@@ -754,6 +754,466 @@ async def sync_korealy_to_shopify(req: KorealySyncRequest):
         )
 
 
+# ---------- Meta Ads Decision Engine ----------
+
+from meta_decision_engine import create_engine, EngineConfig
+
+class MetaAdsConfigRequest(BaseModel):
+    """Configuration for decision engine"""
+    target_cpa: Optional[float] = 18.50
+    max_cpa: Optional[float] = 25.0
+    min_ctr: Optional[float] = 0.8
+    auto_pause_underperformers: Optional[bool] = False
+    auto_scale_winners: Optional[bool] = False
+
+
+@app.get("/meta-ads/status")
+async def meta_ads_quick_status(date_range: str = "today"):
+    """
+    Get quick campaign status overview
+
+    Returns spend, clicks, CTR, conversions, CPA, health score
+    """
+    try:
+        access_token = os.getenv("META_ACCESS_TOKEN")
+        if not access_token:
+            raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
+
+        engine = create_engine(access_token)
+        status = engine.get_quick_status(date_range)
+        return status
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get status: {str(e)}")
+
+
+@app.get("/meta-ads/analysis")
+async def meta_ads_full_analysis(date_range: str = "today", campaign_id: str = None):
+    """
+    Run full campaign analysis with AI recommendations
+
+    Returns metrics, decisions, alerts, and recommendations
+    """
+    try:
+        access_token = os.getenv("META_ACCESS_TOKEN")
+        if not access_token:
+            raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
+
+        engine = create_engine(access_token)
+        report = engine.analyze_campaign(campaign_id, date_range)
+        return report
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to analyze: {str(e)}")
+
+
+@app.get("/meta-ads/decisions")
+async def meta_ads_get_decisions(date_range: str = "today"):
+    """
+    Get optimization decisions only
+
+    Returns list of recommended actions (scale, pause, maintain)
+    """
+    try:
+        access_token = os.getenv("META_ACCESS_TOKEN")
+        if not access_token:
+            raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
+
+        engine = create_engine(access_token)
+        report = engine.analyze_campaign(date_range=date_range)
+
+        return {
+            "timestamp": report["timestamp"],
+            "health_score": report["health_score"],
+            "decisions": report["decisions"],
+            "alerts": report["alerts"],
+            "recommendations": report["recommendations"]
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get decisions: {str(e)}")
+
+
+@app.post("/meta-ads/execute-decision")
+async def meta_ads_execute_decision(entity_id: str, action: str):
+    """
+    Execute a specific decision (pause/activate an ad/adset)
+
+    Args:
+        entity_id: The ad/adset/campaign ID
+        action: PAUSE or ACTIVE
+    """
+    try:
+        access_token = os.getenv("META_ACCESS_TOKEN")
+        if not access_token:
+            raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
+
+        if action not in ["PAUSE", "ACTIVE", "PAUSED"]:
+            raise HTTPException(status_code=400, detail="Action must be PAUSE or ACTIVE")
+
+        from meta_decision_engine import MetaAdsClient
+        client = MetaAdsClient(access_token, "668790152408430")
+        result = client.update_status(entity_id, action.replace("PAUSE", "PAUSED"))
+
+        return {"success": True, "entity_id": entity_id, "new_status": action}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to execute: {str(e)}")
+
+
+@app.get("/meta-ads/campaigns")
+async def meta_ads_get_campaigns():
+    """
+    Get all campaigns with their ad sets and ads
+    """
+    try:
+        access_token = os.getenv("META_ACCESS_TOKEN")
+        if not access_token:
+            raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
+
+        from meta_decision_engine import MetaAdsClient
+        client = MetaAdsClient(access_token, "668790152408430")
+
+        campaigns = client.get_campaigns()
+        result = []
+
+        for campaign in campaigns:
+            campaign_data = {
+                "id": campaign["id"],
+                "name": campaign["name"],
+                "status": campaign.get("effective_status"),
+                "objective": campaign.get("objective"),
+                "adsets": []
+            }
+
+            adsets = client.get_adsets(campaign["id"])
+            for adset in adsets:
+                adset_data = {
+                    "id": adset["id"],
+                    "name": adset["name"],
+                    "status": adset.get("effective_status"),
+                    "ads": []
+                }
+
+                ads = client.get_ads(adset["id"])
+                for ad in ads:
+                    adset_data["ads"].append({
+                        "id": ad["id"],
+                        "name": ad["name"],
+                        "status": ad.get("effective_status")
+                    })
+
+                campaign_data["adsets"].append(adset_data)
+
+            result.append(campaign_data)
+
+        return {"campaigns": result}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get campaigns: {str(e)}")
+
+
+# ---------- Meta Ads Campaign Creation Endpoints ----------
+
+class CreateCampaignRequest(BaseModel):
+    """Request body for creating a campaign"""
+    name: str
+    objective: str = "OUTCOME_SALES"  # OUTCOME_SALES, OUTCOME_LEADS, OUTCOME_AWARENESS
+    status: str = "PAUSED"  # Start paused for safety
+
+
+class CreateAdSetRequest(BaseModel):
+    """Request body for creating an ad set"""
+    campaign_id: str
+    name: str
+    daily_budget: int  # In cents (2500 = €25)
+    targeting: Dict[str, Any]
+    optimization_goal: str = "OFFSITE_CONVERSIONS"
+    status: str = "PAUSED"
+
+
+class CreateAdRequest(BaseModel):
+    """Request body for creating an ad"""
+    adset_id: str
+    creative_id: str
+    name: str
+    status: str = "PAUSED"
+
+
+class UpdateBudgetRequest(BaseModel):
+    """Request body for updating ad set budget"""
+    adset_id: str
+    daily_budget: int  # In cents
+
+
+@app.post("/meta-ads/campaigns/create")
+async def meta_ads_create_campaign(req: CreateCampaignRequest):
+    """
+    Create a new Meta Ads campaign
+
+    Default status is PAUSED for safety - activate manually after review.
+    """
+    try:
+        access_token = os.getenv("META_ACCESS_TOKEN")
+        if not access_token:
+            raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
+
+        from meta_decision_engine import MetaAdsClient
+        client = MetaAdsClient(access_token, "668790152408430")
+
+        result = client.create_campaign(
+            name=req.name,
+            objective=req.objective,
+            status=req.status
+        )
+
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"].get("message", str(result["error"])))
+
+        return {
+            "success": True,
+            "campaign_id": result.get("id"),
+            "name": req.name,
+            "status": req.status
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create campaign: {str(e)}")
+
+
+@app.post("/meta-ads/adsets/create")
+async def meta_ads_create_adset(req: CreateAdSetRequest):
+    """
+    Create a new ad set within a campaign
+
+    Targeting should include: age_min, age_max, genders, geo_locations, etc.
+    """
+    try:
+        access_token = os.getenv("META_ACCESS_TOKEN")
+        if not access_token:
+            raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
+
+        from meta_decision_engine import MetaAdsClient
+        client = MetaAdsClient(access_token, "668790152408430")
+
+        result = client.create_adset(
+            campaign_id=req.campaign_id,
+            name=req.name,
+            daily_budget=req.daily_budget,
+            targeting=req.targeting,
+            optimization_goal=req.optimization_goal,
+            status=req.status
+        )
+
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"].get("message", str(result["error"])))
+
+        return {
+            "success": True,
+            "adset_id": result.get("id"),
+            "name": req.name,
+            "daily_budget": req.daily_budget,
+            "status": req.status
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create ad set: {str(e)}")
+
+
+@app.post("/meta-ads/ads/create")
+async def meta_ads_create_ad(req: CreateAdRequest):
+    """
+    Create a new ad within an ad set
+
+    Requires an existing creative_id from the account.
+    """
+    try:
+        access_token = os.getenv("META_ACCESS_TOKEN")
+        if not access_token:
+            raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
+
+        from meta_decision_engine import MetaAdsClient
+        client = MetaAdsClient(access_token, "668790152408430")
+
+        result = client.create_ad(
+            adset_id=req.adset_id,
+            creative_id=req.creative_id,
+            name=req.name,
+            status=req.status
+        )
+
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"].get("message", str(result["error"])))
+
+        return {
+            "success": True,
+            "ad_id": result.get("id"),
+            "name": req.name,
+            "status": req.status
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create ad: {str(e)}")
+
+
+@app.get("/meta-ads/creatives")
+async def meta_ads_get_creatives(limit: int = 50):
+    """
+    Get available ad creatives from the account
+
+    These can be used when creating new ads.
+    """
+    try:
+        access_token = os.getenv("META_ACCESS_TOKEN")
+        if not access_token:
+            raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
+
+        from meta_decision_engine import MetaAdsClient
+        client = MetaAdsClient(access_token, "668790152408430")
+
+        creatives = client.get_creatives(limit=limit)
+
+        return {
+            "success": True,
+            "count": len(creatives),
+            "creatives": creatives
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get creatives: {str(e)}")
+
+
+@app.get("/meta-ads/interests")
+async def meta_ads_search_interests(q: str, limit: int = 20):
+    """
+    Search for targeting interests by keyword
+
+    Use these interest IDs in ad set targeting.
+    """
+    try:
+        access_token = os.getenv("META_ACCESS_TOKEN")
+        if not access_token:
+            raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
+
+        from meta_decision_engine import MetaAdsClient
+        client = MetaAdsClient(access_token, "668790152408430")
+
+        interests = client.get_targeting_interests(query=q, limit=limit)
+
+        return {
+            "success": True,
+            "query": q,
+            "count": len(interests),
+            "interests": interests
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to search interests: {str(e)}")
+
+
+@app.get("/meta-ads/audiences")
+async def meta_ads_get_audiences(limit: int = 50):
+    """
+    Get custom audiences (lookalikes, website visitors, etc.)
+
+    These can be used for ad set targeting.
+    """
+    try:
+        access_token = os.getenv("META_ACCESS_TOKEN")
+        if not access_token:
+            raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
+
+        from meta_decision_engine import MetaAdsClient
+        client = MetaAdsClient(access_token, "668790152408430")
+
+        audiences = client.get_custom_audiences(limit=limit)
+
+        return {
+            "success": True,
+            "count": len(audiences),
+            "audiences": audiences
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get audiences: {str(e)}")
+
+
+@app.post("/meta-ads/budget")
+async def meta_ads_update_budget(req: UpdateBudgetRequest):
+    """
+    Update an ad set's daily budget
+
+    Budget is in cents (e.g., 2500 = €25)
+    """
+    try:
+        access_token = os.getenv("META_ACCESS_TOKEN")
+        if not access_token:
+            raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
+
+        from meta_decision_engine import MetaAdsClient
+        client = MetaAdsClient(access_token, "668790152408430")
+
+        result = client.update_budget(req.adset_id, req.daily_budget)
+
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"].get("message", str(result["error"])))
+
+        return {
+            "success": True,
+            "adset_id": req.adset_id,
+            "new_daily_budget": req.daily_budget
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update budget: {str(e)}")
+
+
+@app.get("/meta-ads/targeting-presets")
+async def meta_ads_get_targeting_presets():
+    """
+    Get pre-built targeting presets for common use cases
+    """
+    from meta_decision_engine import MetaAdsClient
+
+    return {
+        "presets": [
+            {
+                "name": "Mirai Skincare - Women US",
+                "description": "Women 21-45 in US interested in skincare/beauty",
+                "targeting": MetaAdsClient.build_skincare_targeting_preset()
+            },
+            {
+                "name": "Broad - Women US 25-45",
+                "description": "Broad targeting for women in US",
+                "targeting": MetaAdsClient.build_targeting(
+                    age_min=25,
+                    age_max=45,
+                    genders=[1],
+                    countries=["US"]
+                )
+            },
+            {
+                "name": "All Genders US 21-55",
+                "description": "Wide audience in US",
+                "targeting": MetaAdsClient.build_targeting(
+                    age_min=21,
+                    age_max=55,
+                    genders=[1, 2],
+                    countries=["US"]
+                )
+            }
+        ]
+    }
+
+
 # ---------- Local dev entrypoint ----------
 
 if __name__ == "__main__":
