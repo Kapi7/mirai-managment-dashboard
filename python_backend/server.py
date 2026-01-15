@@ -767,6 +767,12 @@ class MetaAdsConfigRequest(BaseModel):
     auto_scale_winners: Optional[bool] = False
 
 
+# Helper to get marketing token (separate from reports token)
+def _get_marketing_token():
+    """Get Meta Marketing access token (falls back to META_ACCESS_TOKEN if not set)"""
+    return os.getenv("META_MARKETING_ACCESS_TOKEN") or os.getenv("META_ACCESS_TOKEN")
+
+
 @app.get("/meta-ads/status")
 async def meta_ads_quick_status(date_range: str = "today"):
     """
@@ -775,9 +781,9 @@ async def meta_ads_quick_status(date_range: str = "today"):
     Returns spend, clicks, CTR, conversions, CPA, health score
     """
     try:
-        access_token = os.getenv("META_ACCESS_TOKEN")
+        access_token = _get_marketing_token()
         if not access_token:
-            raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
+            raise HTTPException(status_code=500, detail="META_MARKETING_ACCESS_TOKEN not configured")
 
         engine = create_engine(access_token)
         status = engine.get_quick_status(date_range)
@@ -795,7 +801,7 @@ async def meta_ads_full_analysis(date_range: str = "today", campaign_id: str = N
     Returns metrics, decisions, alerts, and recommendations
     """
     try:
-        access_token = os.getenv("META_ACCESS_TOKEN")
+        access_token = _get_marketing_token()
         if not access_token:
             raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
 
@@ -815,7 +821,7 @@ async def meta_ads_get_decisions(date_range: str = "today"):
     Returns list of recommended actions (scale, pause, maintain)
     """
     try:
-        access_token = os.getenv("META_ACCESS_TOKEN")
+        access_token = _get_marketing_token()
         if not access_token:
             raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
 
@@ -844,7 +850,7 @@ async def meta_ads_execute_decision(entity_id: str, action: str):
         action: PAUSE or ACTIVE
     """
     try:
-        access_token = os.getenv("META_ACCESS_TOKEN")
+        access_token = _get_marketing_token()
         if not access_token:
             raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
 
@@ -867,7 +873,7 @@ async def meta_ads_get_campaigns():
     Get all campaigns with their ad sets and ads
     """
     try:
-        access_token = os.getenv("META_ACCESS_TOKEN")
+        access_token = _get_marketing_token()
         if not access_token:
             raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
 
@@ -954,7 +960,7 @@ async def meta_ads_create_campaign(req: CreateCampaignRequest):
     Default status is PAUSED for safety - activate manually after review.
     """
     try:
-        access_token = os.getenv("META_ACCESS_TOKEN")
+        access_token = _get_marketing_token()
         if not access_token:
             raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
 
@@ -991,7 +997,7 @@ async def meta_ads_create_adset(req: CreateAdSetRequest):
     Targeting should include: age_min, age_max, genders, geo_locations, etc.
     """
     try:
-        access_token = os.getenv("META_ACCESS_TOKEN")
+        access_token = _get_marketing_token()
         if not access_token:
             raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
 
@@ -1032,7 +1038,7 @@ async def meta_ads_create_ad(req: CreateAdRequest):
     Requires an existing creative_id from the account.
     """
     try:
-        access_token = os.getenv("META_ACCESS_TOKEN")
+        access_token = _get_marketing_token()
         if not access_token:
             raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
 
@@ -1070,7 +1076,7 @@ async def meta_ads_get_creatives(limit: int = 50):
     These can be used when creating new ads.
     """
     try:
-        access_token = os.getenv("META_ACCESS_TOKEN")
+        access_token = _get_marketing_token()
         if not access_token:
             raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
 
@@ -1097,7 +1103,7 @@ async def meta_ads_search_interests(q: str, limit: int = 20):
     Use these interest IDs in ad set targeting.
     """
     try:
-        access_token = os.getenv("META_ACCESS_TOKEN")
+        access_token = _get_marketing_token()
         if not access_token:
             raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
 
@@ -1125,7 +1131,7 @@ async def meta_ads_get_audiences(limit: int = 50):
     These can be used for ad set targeting.
     """
     try:
-        access_token = os.getenv("META_ACCESS_TOKEN")
+        access_token = _get_marketing_token()
         if not access_token:
             raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
 
@@ -1152,7 +1158,7 @@ async def meta_ads_update_budget(req: UpdateBudgetRequest):
     Budget is in cents (e.g., 2500 = €25)
     """
     try:
-        access_token = os.getenv("META_ACCESS_TOKEN")
+        access_token = _get_marketing_token()
         if not access_token:
             raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
 
