@@ -62,7 +62,7 @@ import { cn } from '@/lib/utils';
 
 // Meta Ads API is on the Python backend (same as Reports/Pricing)
 const API_URL = import.meta.env.VITE_REPORT_API_URL ||
-  (import.meta.env.DEV ? 'http://localhost:8080' : '/reports-api');
+  (import.meta.env.DEV ? 'http://localhost:8080' : 'https://mirai-reports.onrender.com');
 
 // Health score color helper
 const getHealthColor = (score) => {
