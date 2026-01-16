@@ -4442,8 +4442,12 @@ def _get_marketing_token():
 
 
 def _get_ad_account_id():
-    """Get Meta Ad Account ID"""
-    return os.getenv("META_AD_ACCOUNT_ID", "668790152408430")
+    """Get Meta Ad Account ID (strips 'act_' prefix if present since API client adds it)"""
+    account_id = os.getenv("META_AD_ACCOUNT_ID", "668790152408430")
+    # Strip 'act_' prefix if present - the API client adds it
+    if account_id.startswith("act_"):
+        account_id = account_id[4:]
+    return account_id
 
 
 @app.get("/meta-ads/status")

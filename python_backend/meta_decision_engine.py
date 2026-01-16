@@ -878,6 +878,10 @@ def create_engine(access_token: str = None, ad_account_id: str = None,
     token = access_token or os.getenv("META_ACCESS_TOKEN")
     account = ad_account_id or os.getenv("META_AD_ACCOUNT_ID", "668790152408430")
 
+    # Strip 'act_' prefix if present - the API client adds it
+    if account.startswith("act_"):
+        account = account[4:]
+
     engine_config = EngineConfig()
     if config:
         for key, value in config.items():
