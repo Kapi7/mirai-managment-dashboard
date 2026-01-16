@@ -3,11 +3,14 @@ Blog Content Generation Service for Mirai Skin
 
 Uses OpenAI GPT-4o to generate SEO-optimized blog articles
 for K-Beauty content with human-like writing style.
+
+Data is persisted to PostgreSQL database when available,
+with JSON file fallback for local development.
 """
 
 import os
 import json
-import uuid
+import uuid as uuid_lib
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, asdict
@@ -21,6 +24,9 @@ def _get_openai_client(api_key: str = None):
         from openai import OpenAI as _OpenAI
         OpenAI = _OpenAI
     return OpenAI(api_key=api_key)
+
+# Check if database is available
+DATABASE_AVAILABLE = bool(os.getenv("DATABASE_URL"))
 
 # Blog categories with their specific styles
 BLOG_CATEGORIES = {
@@ -126,11 +132,19 @@ class PublishedArticle:
 
 
 class BlogStorage:
-    """Simple JSON file storage for blog drafts and published articles"""
+    """
+    Storage for blog drafts and published articles.
+    Uses PostgreSQL database when available, falls back to JSON for local dev.
+    """
 
     def __init__(self):
-        os.makedirs(DATA_DIR, exist_ok=True)
-        self._ensure_file_exists()
+        self.use_db = DATABASE_AVAILABLE
+        if not self.use_db:
+            os.makedirs(DATA_DIR, exist_ok=True)
+            self._ensure_file_exists()
+            print("[BlogStorage] Using JSON file storage (no DATABASE_URL)")
+        else:
+            print("[BlogStorage] Using PostgreSQL database storage")
 
     def _ensure_file_exists(self):
         if not os.path.exists(DRAFTS_FILE):
@@ -147,9 +161,28 @@ class BlogStorage:
         with open(DRAFTS_FILE, 'w') as f:
             json.dump(data, f, indent=2)
 
+    # ============================================================
+    # SYNC METHODS (for JSON fallback and sync callers)
+    # ============================================================
+
     def save_draft(self, draft: BlogDraft) -> str:
+        """Save draft synchronously (JSON mode or blocking DB call)"""
+        if self.use_db:
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # We're in an async context, use run_coroutine_threadsafe
+                    import concurrent.futures
+                    future = asyncio.run_coroutine_threadsafe(self._save_draft_db(draft), loop)
+                    return future.result(timeout=30)
+                else:
+                    return loop.run_until_complete(self._save_draft_db(draft))
+            except RuntimeError:
+                return asyncio.run(self._save_draft_db(draft))
+
+        # JSON fallback
         data = self._load_data()
-        # Check if draft exists (update) or new (insert)
         existing_idx = next((i for i, d in enumerate(data["drafts"]) if d["id"] == draft.id), None)
         if existing_idx is not None:
             data["drafts"][existing_idx] = asdict(draft)
@@ -159,6 +192,21 @@ class BlogStorage:
         return draft.id
 
     def get_draft(self, draft_id: str) -> Optional[BlogDraft]:
+        """Get draft synchronously"""
+        if self.use_db:
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+                    future = asyncio.run_coroutine_threadsafe(self._get_draft_db(draft_id), loop)
+                    return future.result(timeout=30)
+                else:
+                    return loop.run_until_complete(self._get_draft_db(draft_id))
+            except RuntimeError:
+                return asyncio.run(self._get_draft_db(draft_id))
+
+        # JSON fallback
         data = self._load_data()
         for d in data["drafts"]:
             if d["id"] == draft_id:
@@ -166,6 +214,21 @@ class BlogStorage:
         return None
 
     def get_all_drafts(self, status: Optional[str] = None) -> List[BlogDraft]:
+        """Get all drafts synchronously"""
+        if self.use_db:
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+                    future = asyncio.run_coroutine_threadsafe(self._get_all_drafts_db(status), loop)
+                    return future.result(timeout=30)
+                else:
+                    return loop.run_until_complete(self._get_all_drafts_db(status))
+            except RuntimeError:
+                return asyncio.run(self._get_all_drafts_db(status))
+
+        # JSON fallback
         data = self._load_data()
         drafts = [BlogDraft(**d) for d in data["drafts"]]
         if status:
@@ -173,6 +236,21 @@ class BlogStorage:
         return sorted(drafts, key=lambda x: x.created_at, reverse=True)
 
     def delete_draft(self, draft_id: str) -> bool:
+        """Delete draft synchronously"""
+        if self.use_db:
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+                    future = asyncio.run_coroutine_threadsafe(self._delete_draft_db(draft_id), loop)
+                    return future.result(timeout=30)
+                else:
+                    return loop.run_until_complete(self._delete_draft_db(draft_id))
+            except RuntimeError:
+                return asyncio.run(self._delete_draft_db(draft_id))
+
+        # JSON fallback
         data = self._load_data()
         original_len = len(data["drafts"])
         data["drafts"] = [d for d in data["drafts"] if d["id"] != draft_id]
@@ -182,16 +260,278 @@ class BlogStorage:
         return False
 
     def save_published(self, article: PublishedArticle):
+        """Save published article synchronously"""
+        if self.use_db:
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+                    future = asyncio.run_coroutine_threadsafe(self._save_published_db(article), loop)
+                    return future.result(timeout=30)
+                else:
+                    return loop.run_until_complete(self._save_published_db(article))
+            except RuntimeError:
+                return asyncio.run(self._save_published_db(article))
+
+        # JSON fallback
         data = self._load_data()
         data["published"].append(asdict(article))
-        # Remove draft after publishing
         data["drafts"] = [d for d in data["drafts"] if d["id"] != article.draft_id]
         self._save_data(data)
 
     def get_all_published(self) -> List[PublishedArticle]:
+        """Get all published articles synchronously"""
+        if self.use_db:
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+                    future = asyncio.run_coroutine_threadsafe(self._get_all_published_db(), loop)
+                    return future.result(timeout=30)
+                else:
+                    return loop.run_until_complete(self._get_all_published_db())
+            except RuntimeError:
+                return asyncio.run(self._get_all_published_db())
+
+        # JSON fallback
         data = self._load_data()
         articles = [PublishedArticle(**p) for p in data["published"]]
         return sorted(articles, key=lambda x: x.published_at, reverse=True)
+
+    # ============================================================
+    # ASYNC DATABASE METHODS
+    # ============================================================
+
+    async def _save_draft_db(self, draft: BlogDraft) -> str:
+        """Save draft to database"""
+        from database.connection import get_db
+        from database.models import BlogDraft as BlogDraftModel
+        from sqlalchemy import select
+
+        async with get_db() as db:
+            # Check if exists
+            result = await db.execute(
+                select(BlogDraftModel).where(BlogDraftModel.uuid == draft.id)
+            )
+            existing = result.scalar_one_or_none()
+
+            if existing:
+                # Update
+                existing.category = draft.category
+                existing.topic = draft.topic
+                existing.keywords = draft.keywords
+                existing.title = draft.title
+                existing.body = draft.body
+                existing.meta_description = draft.meta_description
+                existing.excerpt = draft.excerpt
+                existing.suggested_tags = draft.suggested_tags
+                existing.word_count = draft.word_count
+                existing.status = draft.status
+                existing.regeneration_count = draft.regeneration_count
+                existing.regeneration_hints = draft.regeneration_hints
+            else:
+                # Insert
+                db_draft = BlogDraftModel(
+                    uuid=draft.id,
+                    category=draft.category,
+                    topic=draft.topic,
+                    keywords=draft.keywords,
+                    title=draft.title,
+                    body=draft.body,
+                    meta_description=draft.meta_description,
+                    excerpt=draft.excerpt,
+                    suggested_tags=draft.suggested_tags,
+                    word_count=draft.word_count,
+                    status=draft.status,
+                    regeneration_count=draft.regeneration_count,
+                    regeneration_hints=draft.regeneration_hints,
+                    created_by=draft.created_by,
+                )
+                db.add(db_draft)
+
+        print(f"[BlogStorage] Saved draft {draft.id} to database")
+        return draft.id
+
+    async def _get_draft_db(self, draft_id: str) -> Optional[BlogDraft]:
+        """Get draft from database"""
+        from database.connection import get_db
+        from database.models import BlogDraft as BlogDraftModel
+        from sqlalchemy import select
+
+        async with get_db() as db:
+            result = await db.execute(
+                select(BlogDraftModel).where(BlogDraftModel.uuid == draft_id)
+            )
+            db_draft = result.scalar_one_or_none()
+
+            if not db_draft:
+                return None
+
+            return BlogDraft(
+                id=db_draft.uuid,
+                category=db_draft.category,
+                topic=db_draft.topic,
+                keywords=db_draft.keywords or [],
+                title=db_draft.title,
+                body=db_draft.body,
+                meta_description=db_draft.meta_description or "",
+                excerpt=db_draft.excerpt or "",
+                suggested_tags=db_draft.suggested_tags or [],
+                word_count=db_draft.word_count or 0,
+                status=db_draft.status,
+                created_at=db_draft.created_at.isoformat() + "Z" if db_draft.created_at else "",
+                created_by=db_draft.created_by or "",
+                regeneration_count=db_draft.regeneration_count or 0,
+                regeneration_hints=db_draft.regeneration_hints,
+            )
+
+    async def _get_all_drafts_db(self, status: Optional[str] = None) -> List[BlogDraft]:
+        """Get all drafts from database"""
+        from database.connection import get_db
+        from database.models import BlogDraft as BlogDraftModel
+        from sqlalchemy import select
+
+        async with get_db() as db:
+            query = select(BlogDraftModel).order_by(BlogDraftModel.created_at.desc())
+            if status:
+                query = query.where(BlogDraftModel.status == status)
+
+            result = await db.execute(query)
+            db_drafts = result.scalars().all()
+
+            drafts = []
+            for db_draft in db_drafts:
+                drafts.append(BlogDraft(
+                    id=db_draft.uuid,
+                    category=db_draft.category,
+                    topic=db_draft.topic,
+                    keywords=db_draft.keywords or [],
+                    title=db_draft.title,
+                    body=db_draft.body,
+                    meta_description=db_draft.meta_description or "",
+                    excerpt=db_draft.excerpt or "",
+                    suggested_tags=db_draft.suggested_tags or [],
+                    word_count=db_draft.word_count or 0,
+                    status=db_draft.status,
+                    created_at=db_draft.created_at.isoformat() + "Z" if db_draft.created_at else "",
+                    created_by=db_draft.created_by or "",
+                    regeneration_count=db_draft.regeneration_count or 0,
+                    regeneration_hints=db_draft.regeneration_hints,
+                ))
+
+            return drafts
+
+    async def _delete_draft_db(self, draft_id: str) -> bool:
+        """Delete draft from database"""
+        from database.connection import get_db
+        from database.models import BlogDraft as BlogDraftModel
+        from sqlalchemy import select, delete
+
+        async with get_db() as db:
+            result = await db.execute(
+                delete(BlogDraftModel).where(BlogDraftModel.uuid == draft_id)
+            )
+            deleted = result.rowcount > 0
+
+        if deleted:
+            print(f"[BlogStorage] Deleted draft {draft_id} from database")
+        return deleted
+
+    async def _save_published_db(self, article: PublishedArticle):
+        """Save published article to database"""
+        from database.connection import get_db
+        from database.models import BlogPublished as BlogPublishedModel, BlogDraft as BlogDraftModel
+        from sqlalchemy import select, delete
+
+        async with get_db() as db:
+            # Insert published article
+            db_published = BlogPublishedModel(
+                uuid=article.id,
+                draft_uuid=article.draft_id,
+                shopify_article_id=article.shopify_article_id,
+                shopify_url=article.shopify_url,
+                title=article.title,
+                category=article.category,
+            )
+            db.add(db_published)
+
+            # Update draft status to published
+            result = await db.execute(
+                select(BlogDraftModel).where(BlogDraftModel.uuid == article.draft_id)
+            )
+            draft = result.scalar_one_or_none()
+            if draft:
+                draft.status = "published"
+
+        print(f"[BlogStorage] Saved published article {article.id} to database")
+
+    async def _get_all_published_db(self) -> List[PublishedArticle]:
+        """Get all published articles from database"""
+        from database.connection import get_db
+        from database.models import BlogPublished as BlogPublishedModel
+        from sqlalchemy import select
+
+        async with get_db() as db:
+            result = await db.execute(
+                select(BlogPublishedModel).order_by(BlogPublishedModel.published_at.desc())
+            )
+            db_articles = result.scalars().all()
+
+            articles = []
+            for db_article in db_articles:
+                articles.append(PublishedArticle(
+                    id=db_article.uuid,
+                    draft_id=db_article.draft_uuid or "",
+                    shopify_article_id=db_article.shopify_article_id or "",
+                    title=db_article.title,
+                    category=db_article.category,
+                    published_at=db_article.published_at.isoformat() + "Z" if db_article.published_at else "",
+                    shopify_url=db_article.shopify_url or "",
+                ))
+
+            return articles
+
+    # ============================================================
+    # ASYNC PUBLIC METHODS (for FastAPI endpoints)
+    # ============================================================
+
+    async def save_draft_async(self, draft: BlogDraft) -> str:
+        """Async version of save_draft for use in FastAPI"""
+        if self.use_db:
+            return await self._save_draft_db(draft)
+        return self.save_draft(draft)
+
+    async def get_draft_async(self, draft_id: str) -> Optional[BlogDraft]:
+        """Async version of get_draft for use in FastAPI"""
+        if self.use_db:
+            return await self._get_draft_db(draft_id)
+        return self.get_draft(draft_id)
+
+    async def get_all_drafts_async(self, status: Optional[str] = None) -> List[BlogDraft]:
+        """Async version of get_all_drafts for use in FastAPI"""
+        if self.use_db:
+            return await self._get_all_drafts_db(status)
+        return self.get_all_drafts(status)
+
+    async def delete_draft_async(self, draft_id: str) -> bool:
+        """Async version of delete_draft for use in FastAPI"""
+        if self.use_db:
+            return await self._delete_draft_db(draft_id)
+        return self.delete_draft(draft_id)
+
+    async def save_published_async(self, article: PublishedArticle):
+        """Async version of save_published for use in FastAPI"""
+        if self.use_db:
+            return await self._save_published_db(article)
+        return self.save_published(article)
+
+    async def get_all_published_async(self) -> List[PublishedArticle]:
+        """Async version of get_all_published for use in FastAPI"""
+        if self.use_db:
+            return await self._get_all_published_db()
+        return self.get_all_published()
 
 
 class BlogGenerator:
@@ -305,7 +645,7 @@ Make meaningful improvements based on the feedback. If asked to change tone, adj
         actual_word_count = len(clean_text.split())
 
         draft = BlogDraft(
-            id=str(uuid.uuid4()),
+            id=str(uuid_lib.uuid4()),
             category=category,
             topic=topic,
             keywords=keywords,
@@ -437,7 +777,7 @@ Make meaningful improvements based on the feedback. If asked to change tone, adj
             raise ValueError(f"Draft not found: {draft_id}")
 
         article = PublishedArticle(
-            id=str(uuid.uuid4()),
+            id=str(uuid_lib.uuid4()),
             draft_id=draft_id,
             shopify_article_id=shopify_article_id,
             title=draft.title,
@@ -559,6 +899,8 @@ class SEOAgent:
 
     Analyzes website content, identifies gaps, and proactively
     generates content suggestions that match the brand voice.
+
+    Uses PostgreSQL database when available, falls back to JSON for local dev.
     """
 
     SUGGESTIONS_FILE = os.path.join(DATA_DIR, "seo_suggestions.json")
@@ -569,9 +911,26 @@ class SEOAgent:
         if self.api_key:
             self.client = _get_openai_client(api_key=self.api_key)
         self.storage = BlogStorage()
-        os.makedirs(DATA_DIR, exist_ok=True)
+        self.use_db = DATABASE_AVAILABLE
+        if not self.use_db:
+            os.makedirs(DATA_DIR, exist_ok=True)
 
     def _load_suggestions(self) -> List[Dict]:
+        """Load suggestions from database or JSON file"""
+        if self.use_db:
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+                    future = asyncio.run_coroutine_threadsafe(self._load_suggestions_db(), loop)
+                    return future.result(timeout=30)
+                else:
+                    return loop.run_until_complete(self._load_suggestions_db())
+            except RuntimeError:
+                return asyncio.run(self._load_suggestions_db())
+
+        # JSON fallback
         try:
             if os.path.exists(self.SUGGESTIONS_FILE):
                 with open(self.SUGGESTIONS_FILE, 'r') as f:
@@ -581,8 +940,100 @@ class SEOAgent:
         return []
 
     def _save_suggestions(self, suggestions: List[Dict]):
+        """Save suggestions to database or JSON file"""
+        if self.use_db:
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    import concurrent.futures
+                    future = asyncio.run_coroutine_threadsafe(self._save_suggestions_db(suggestions), loop)
+                    future.result(timeout=30)
+                else:
+                    loop.run_until_complete(self._save_suggestions_db(suggestions))
+            except RuntimeError:
+                asyncio.run(self._save_suggestions_db(suggestions))
+            return
+
+        # JSON fallback
         with open(self.SUGGESTIONS_FILE, 'w') as f:
             json.dump(suggestions, f, indent=2)
+
+    async def _load_suggestions_db(self) -> List[Dict]:
+        """Load suggestions from database"""
+        from database.connection import get_db
+        from database.models import BlogSuggestion as BlogSuggestionModel
+        from sqlalchemy import select
+
+        async with get_db() as db:
+            result = await db.execute(
+                select(BlogSuggestionModel).order_by(BlogSuggestionModel.created_at.desc())
+            )
+            db_suggestions = result.scalars().all()
+
+            suggestions = []
+            for s in db_suggestions:
+                suggestions.append({
+                    "id": s.uuid,
+                    "category": s.category,
+                    "title": s.title,
+                    "topic": s.topic,
+                    "keywords": s.keywords or [],
+                    "reason": s.reason or "",
+                    "priority": s.priority or "medium",
+                    "word_count": s.word_count or 1000,
+                    "estimated_traffic": s.estimated_traffic or "Medium",
+                    "created_at": s.created_at.isoformat() + "Z" if s.created_at else "",
+                    "status": s.status or "suggested",
+                    "draft_id": s.draft_uuid,
+                })
+
+            return suggestions
+
+    async def _save_suggestions_db(self, suggestions: List[Dict]):
+        """Save suggestions to database"""
+        from database.connection import get_db
+        from database.models import BlogSuggestion as BlogSuggestionModel
+        from sqlalchemy import select
+
+        async with get_db() as db:
+            for s in suggestions:
+                # Check if exists
+                result = await db.execute(
+                    select(BlogSuggestionModel).where(BlogSuggestionModel.uuid == s.get("id"))
+                )
+                existing = result.scalar_one_or_none()
+
+                if existing:
+                    # Update
+                    existing.category = s.get("category")
+                    existing.title = s.get("title")
+                    existing.topic = s.get("topic")
+                    existing.keywords = s.get("keywords")
+                    existing.reason = s.get("reason")
+                    existing.priority = s.get("priority")
+                    existing.word_count = s.get("word_count")
+                    existing.estimated_traffic = s.get("estimated_traffic")
+                    existing.status = s.get("status")
+                    existing.draft_uuid = s.get("draft_id")
+                else:
+                    # Insert
+                    db_suggestion = BlogSuggestionModel(
+                        uuid=s.get("id"),
+                        category=s.get("category"),
+                        title=s.get("title"),
+                        topic=s.get("topic"),
+                        keywords=s.get("keywords"),
+                        reason=s.get("reason"),
+                        priority=s.get("priority"),
+                        word_count=s.get("word_count"),
+                        estimated_traffic=s.get("estimated_traffic"),
+                        status=s.get("status"),
+                        draft_uuid=s.get("draft_id"),
+                    )
+                    db.add(db_suggestion)
+
+        print(f"[SEOAgent] Saved {len(suggestions)} suggestions to database")
 
     def analyze_content_gaps(self, existing_articles: List[str] = None) -> Dict[str, Any]:
         """
@@ -722,7 +1173,7 @@ OUTPUT AS JSON ARRAY:
         suggestions = []
         for item in suggestions_data[:count]:
             suggestion = ContentSuggestion(
-                id=str(uuid.uuid4()),
+                id=str(uuid_lib.uuid4()),
                 category=item.get("category", "lifestyle"),
                 title=item.get("title", ""),
                 topic=item.get("topic", ""),

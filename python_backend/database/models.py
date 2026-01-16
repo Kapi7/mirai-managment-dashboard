@@ -526,3 +526,105 @@ class AIConversationLog(Base):
 
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ============================================================
+# BLOG CONTENT SYSTEM
+# ============================================================
+
+class BlogDraft(Base):
+    """Blog article drafts - AI generated content awaiting approval"""
+    __tablename__ = "blog_drafts"
+
+    id = Column(Integer, primary_key=True)
+    uuid = Column(String(50), unique=True, nullable=False, index=True)  # UUID for API reference
+
+    # Content
+    category = Column(String(50), nullable=False, index=True)  # lifestyle, reviews, skin_concerns, ingredients
+    topic = Column(Text, nullable=False)  # Original topic/prompt
+    keywords = Column(JSON)  # List of SEO keywords
+    title = Column(Text, nullable=False)
+    body = Column(Text, nullable=False)  # HTML content
+    meta_description = Column(Text)
+    excerpt = Column(Text)
+    suggested_tags = Column(JSON)  # List of tags
+    word_count = Column(Integer)
+
+    # Status
+    status = Column(String(50), default='pending_review', index=True)  # pending_review, approved, rejected, published
+
+    # Regeneration tracking
+    regeneration_count = Column(Integer, default=0)
+    regeneration_hints = Column(Text)  # Last hints used
+
+    # Creator tracking
+    created_by = Column(String(255))  # User email
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Link to published article
+    published_article_id = Column(Integer, ForeignKey("blog_published.id"))
+
+    __table_args__ = (
+        Index('idx_blog_draft_status', 'status', 'created_at'),
+    )
+
+
+class BlogPublished(Base):
+    """Published blog articles - synced to Shopify"""
+    __tablename__ = "blog_published"
+
+    id = Column(Integer, primary_key=True)
+    uuid = Column(String(50), unique=True, nullable=False, index=True)
+    draft_uuid = Column(String(50), index=True)  # Link to original draft
+
+    # Shopify integration
+    shopify_article_id = Column(String(100), index=True)  # Shopify GID
+    shopify_blog_id = Column(String(100))  # Which Shopify blog it's in
+    shopify_url = Column(Text)  # Public URL on store
+    shopify_handle = Column(String(255))  # URL slug
+
+    # Content snapshot (at time of publishing)
+    title = Column(Text, nullable=False)
+    category = Column(String(50), nullable=False)
+    excerpt = Column(Text)
+
+    # Stats
+    views = Column(Integer, default=0)
+
+    # Timestamps
+    published_at = Column(DateTime, default=datetime.utcnow, index=True)
+    published_by = Column(String(255))  # User email
+
+    __table_args__ = (
+        Index('idx_blog_published_date', 'published_at'),
+    )
+
+
+class BlogSuggestion(Base):
+    """AI-generated content suggestions from SEO agent"""
+    __tablename__ = "blog_suggestions"
+
+    id = Column(Integer, primary_key=True)
+    uuid = Column(String(50), unique=True, nullable=False, index=True)
+
+    # Suggestion content
+    category = Column(String(50), nullable=False)
+    title = Column(Text, nullable=False)
+    topic = Column(Text, nullable=False)
+    keywords = Column(JSON)  # List of SEO keywords
+    reason = Column(Text)  # Why this was suggested
+    priority = Column(String(20), default='medium')  # high, medium, low
+    word_count = Column(Integer, default=1000)
+    estimated_traffic = Column(String(20))  # High, Medium, Low
+
+    # Status
+    status = Column(String(50), default='suggested', index=True)  # suggested, generating, ready, dismissed, published
+    draft_uuid = Column(String(50))  # Link to generated draft
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_blog_suggestion_status', 'status', 'created_at'),
+    )
