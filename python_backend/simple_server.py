@@ -4434,6 +4434,305 @@ async def debug_day_orders(req: DebugDayRequest):
         return {"error": str(e), "traceback": traceback.format_exc()}
 
 
+# ==================== META ADS MARKETING ENDPOINTS ====================
+
+def _get_marketing_token():
+    """Get Meta access token for marketing operations"""
+    return os.getenv("META_ACCESS_TOKEN")
+
+
+@app.get("/meta-ads/status")
+async def meta_ads_quick_status(date_range: str = "today"):
+    """Get quick campaign status overview"""
+    try:
+        from meta_decision_engine import create_engine
+
+        access_token = _get_marketing_token()
+        if not access_token:
+            raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
+
+        engine = create_engine(access_token)
+        status = engine.get_quick_status(date_range)
+        return status
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get status: {str(e)}")
+
+
+@app.get("/meta-ads/analysis")
+async def meta_ads_full_analysis(date_range: str = "today", campaign_id: str = None):
+    """Run full campaign analysis with AI recommendations"""
+    try:
+        from meta_decision_engine import create_engine
+
+        access_token = _get_marketing_token()
+        if not access_token:
+            raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
+
+        engine = create_engine(access_token)
+        report = engine.analyze_campaign(campaign_id, date_range)
+        return report
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to analyze: {str(e)}")
+
+
+@app.get("/meta-ads/campaigns")
+async def meta_ads_list_campaigns():
+    """List all campaigns with their status"""
+    try:
+        from meta_decision_engine import MetaAdsClient
+
+        access_token = _get_marketing_token()
+        if not access_token:
+            raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
+
+        client = MetaAdsClient(access_token)
+        campaigns = client.get_campaigns()
+        return {"campaigns": campaigns}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch campaigns: {str(e)}")
+
+
+@app.get("/meta-ads/creatives")
+async def meta_ads_list_creatives():
+    """List available ad creatives"""
+    try:
+        from meta_decision_engine import MetaAdsClient
+
+        access_token = _get_marketing_token()
+        if not access_token:
+            raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
+
+        client = MetaAdsClient(access_token)
+        creatives = client.get_creatives()
+        return {"creatives": creatives}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch creatives: {str(e)}")
+
+
+@app.get("/meta-ads/audiences")
+async def meta_ads_list_audiences():
+    """List saved audiences"""
+    try:
+        from meta_decision_engine import MetaAdsClient
+
+        access_token = _get_marketing_token()
+        if not access_token:
+            raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
+
+        client = MetaAdsClient(access_token)
+        audiences = client.get_saved_audiences()
+        return {"audiences": audiences}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch audiences: {str(e)}")
+
+
+@app.get("/meta-ads/targeting-presets")
+async def meta_ads_get_presets():
+    """Get targeting presets"""
+    try:
+        from meta_decision_engine import MetaAdsClient
+
+        access_token = _get_marketing_token()
+        if not access_token:
+            raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
+
+        client = MetaAdsClient(access_token)
+        presets = client.get_targeting_presets()
+        return {"presets": presets}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch presets: {str(e)}")
+
+
+# ==================== BLOG CREATOR ENDPOINTS ====================
+
+@app.get("/blog/categories")
+async def blog_get_categories():
+    """Get all blog categories"""
+    try:
+        from blog_service import BLOG_CATEGORIES
+        return {"categories": BLOG_CATEGORIES}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get categories: {str(e)}")
+
+
+@app.get("/blog/seo-keywords/{category}")
+async def blog_get_seo_keywords(category: str):
+    """Get SEO keywords for a category"""
+    try:
+        from blog_service import BlogGenerator
+        keywords = BlogGenerator.get_seo_keywords(category)
+        return {"keywords": keywords, "category": category}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get keywords: {str(e)}")
+
+
+@app.get("/blog/drafts")
+async def blog_list_drafts():
+    """List all draft articles"""
+    try:
+        from blog_service import BlogStorage
+        from dataclasses import asdict
+
+        storage = BlogStorage()
+        drafts = storage.get_all_drafts()
+        return {
+            "drafts": [asdict(d) for d in drafts],
+            "count": len(drafts)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list drafts: {str(e)}")
+
+
+@app.get("/blog/published")
+async def blog_list_published():
+    """List all published articles"""
+    try:
+        from blog_service import BlogStorage
+        from dataclasses import asdict
+
+        storage = BlogStorage()
+        published = storage.get_all_published()
+        return {
+            "articles": [asdict(a) for a in published],
+            "count": len(published)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list published: {str(e)}")
+
+
+@app.get("/blog/shopify-blogs")
+async def blog_get_shopify_blogs():
+    """Get list of Shopify blogs"""
+    try:
+        from shopify_client import fetch_blogs
+        blogs = fetch_blogs()
+        return {"blogs": blogs}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch blogs: {str(e)}")
+
+
+class BlogGenerateRequest(BaseModel):
+    category: str
+    topic: str
+    keywords: List[str]
+    word_count: int = 1000
+
+
+@app.post("/blog/generate")
+async def blog_generate_article(req: BlogGenerateRequest):
+    """Generate a new blog article draft"""
+    try:
+        from blog_service import create_blog_generator
+        from dataclasses import asdict
+
+        generator = create_blog_generator()
+        draft = generator.generate_article(
+            category=req.category,
+            topic=req.topic,
+            keywords=req.keywords,
+            word_count=req.word_count
+        )
+
+        return {
+            "success": True,
+            "draft_id": draft.id,
+            "title": draft.title,
+            "word_count": draft.word_count,
+            "draft": asdict(draft)
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate: {str(e)}")
+
+
+@app.get("/blog/seo-agent/suggestions")
+async def seo_agent_get_suggestions(force_refresh: bool = False, count: int = 5):
+    """Get smart content suggestions from the SEO agent"""
+    try:
+        from blog_service import create_seo_agent
+
+        agent = create_seo_agent()
+
+        if force_refresh:
+            suggestions = agent.generate_smart_suggestions(count=count, force_refresh=True)
+        else:
+            suggestions = agent.get_suggestions()
+            if len(suggestions) < count:
+                suggestions = agent.generate_smart_suggestions(count=count)
+
+        return {
+            "suggestions": [
+                {
+                    "id": s.id,
+                    "category": s.category,
+                    "title": s.title,
+                    "topic": s.topic,
+                    "keywords": s.keywords,
+                    "reason": s.reason,
+                    "priority": s.priority,
+                    "word_count": s.word_count,
+                    "estimated_traffic": s.estimated_traffic,
+                    "created_at": s.created_at,
+                    "status": s.status
+                }
+                for s in suggestions
+            ],
+            "count": len(suggestions)
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get suggestions: {str(e)}")
+
+
+@app.post("/blog/seo-agent/generate/{suggestion_id}")
+async def seo_agent_generate_from_suggestion(suggestion_id: str):
+    """Generate a full article draft from a suggestion"""
+    try:
+        from blog_service import create_seo_agent
+
+        agent = create_seo_agent()
+        draft = agent.generate_from_suggestion(suggestion_id)
+
+        return {
+            "success": True,
+            "draft_id": draft.id,
+            "title": draft.title,
+            "word_count": draft.word_count,
+            "category": draft.category
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate article: {str(e)}")
+
+
+@app.post("/blog/seo-agent/dismiss/{suggestion_id}")
+async def seo_agent_dismiss_suggestion(suggestion_id: str):
+    """Dismiss a suggestion"""
+    try:
+        from blog_service import SEOAgent
+
+        agent = SEOAgent()
+        dismissed = agent.dismiss_suggestion(suggestion_id)
+
+        if not dismissed:
+            raise HTTPException(status_code=404, detail="Suggestion not found")
+
+        return {"success": True, "suggestion_id": suggestion_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to dismiss: {str(e)}")
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8080))

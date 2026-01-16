@@ -16,7 +16,7 @@ cd python_backend
 # Ensure all required packages are installed
 pip install --quiet sqlalchemy[asyncio] asyncpg psycopg2-binary PyJWT httpx 2>/dev/null || true
 
-uvicorn server:app --host 127.0.0.1 --port 8080 2>&1 | sed 's/^/[PYTHON] /' &
+uvicorn simple_server:app --host 127.0.0.1 --port 8080 2>&1 | sed 's/^/[PYTHON] /' &
 PYTHON_PID=$!
 echo "Python backend PID: $PYTHON_PID"
 
