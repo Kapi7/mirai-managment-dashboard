@@ -4441,6 +4441,11 @@ def _get_marketing_token():
     return os.getenv("META_ACCESS_TOKEN")
 
 
+def _get_ad_account_id():
+    """Get Meta Ad Account ID"""
+    return os.getenv("META_AD_ACCOUNT_ID", "668790152408430")
+
+
 @app.get("/meta-ads/status")
 async def meta_ads_quick_status(date_range: str = "today"):
     """Get quick campaign status overview"""
@@ -4484,10 +4489,11 @@ async def meta_ads_list_campaigns():
         from meta_decision_engine import MetaAdsClient
 
         access_token = _get_marketing_token()
+        ad_account_id = _get_ad_account_id()
         if not access_token:
             raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
 
-        client = MetaAdsClient(access_token)
+        client = MetaAdsClient(access_token, ad_account_id)
         campaigns = client.get_campaigns()
         return {"campaigns": campaigns}
 
@@ -4502,10 +4508,11 @@ async def meta_ads_list_creatives():
         from meta_decision_engine import MetaAdsClient
 
         access_token = _get_marketing_token()
+        ad_account_id = _get_ad_account_id()
         if not access_token:
             raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
 
-        client = MetaAdsClient(access_token)
+        client = MetaAdsClient(access_token, ad_account_id)
         creatives = client.get_creatives()
         return {"creatives": creatives}
 
@@ -4515,16 +4522,17 @@ async def meta_ads_list_creatives():
 
 @app.get("/meta-ads/audiences")
 async def meta_ads_list_audiences():
-    """List saved audiences"""
+    """List custom audiences"""
     try:
         from meta_decision_engine import MetaAdsClient
 
         access_token = _get_marketing_token()
+        ad_account_id = _get_ad_account_id()
         if not access_token:
             raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
 
-        client = MetaAdsClient(access_token)
-        audiences = client.get_saved_audiences()
+        client = MetaAdsClient(access_token, ad_account_id)
+        audiences = client.get_custom_audiences()
         return {"audiences": audiences}
 
     except Exception as e:
@@ -4533,16 +4541,39 @@ async def meta_ads_list_audiences():
 
 @app.get("/meta-ads/targeting-presets")
 async def meta_ads_get_presets():
-    """Get targeting presets"""
+    """Get targeting presets for Mirai Skin campaigns"""
     try:
         from meta_decision_engine import MetaAdsClient
 
-        access_token = _get_marketing_token()
-        if not access_token:
-            raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
-
-        client = MetaAdsClient(access_token)
-        presets = client.get_targeting_presets()
+        # Return pre-built targeting presets for Mirai Skin
+        presets = [
+            {
+                "name": "K-Beauty Enthusiasts",
+                "description": "Women 21-45 interested in Korean skincare and beauty",
+                "targeting": MetaAdsClient.build_skincare_targeting_preset()
+            },
+            {
+                "name": "Skincare Beginners",
+                "description": "Women 18-35 interested in skincare routines",
+                "targeting": MetaAdsClient.build_targeting(
+                    age_min=18, age_max=35, genders=[1], countries=["US"]
+                )
+            },
+            {
+                "name": "Anti-Aging Focus",
+                "description": "Women 35-55 interested in anti-aging skincare",
+                "targeting": MetaAdsClient.build_targeting(
+                    age_min=35, age_max=55, genders=[1], countries=["US"]
+                )
+            },
+            {
+                "name": "Broad US Women",
+                "description": "All women 21-55 in the US",
+                "targeting": MetaAdsClient.build_targeting(
+                    age_min=21, age_max=55, genders=[1], countries=["US"]
+                )
+            }
+        ]
         return {"presets": presets}
 
     except Exception as e:
