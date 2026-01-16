@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { useToast } from "@/hooks/use-toast";
+import { useToast } from "@/components/ui/use-toast";
 import {
   Card,
   CardContent,
@@ -62,8 +62,8 @@ import {
   Search
 } from "lucide-react";
 
-const API_URL = import.meta.env.VITE_REPORT_API_URL ||
-  (import.meta.env.DEV ? 'http://localhost:8080' : 'https://mirai-reports.onrender.com');
+// Blog API - use proxy routes in production, direct in development
+const API_URL = import.meta.env.DEV ? 'http://localhost:8080' : '/api';
 
 const CATEGORY_COLORS = {
   lifestyle: "bg-pink-100 text-pink-700",

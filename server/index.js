@@ -1471,6 +1471,80 @@ app.post('/api/debug/day-orders', async (req, res) => {
   }
 });
 
+// ==================== META ADS (Marketing) ====================
+
+// Generic proxy for all /api/meta-ads/* routes
+app.all('/api/meta-ads/*', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const path = req.path.replace('/api', '');
+    const queryString = req.url.split('?')[1] || '';
+    const url = `${pythonBackendUrl}${path}${queryString ? '?' + queryString : ''}`;
+
+    console.log(`📊 Proxying ${req.method} meta-ads request: ${path}`);
+
+    const options = {
+      method: req.method,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(60000)
+    };
+
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      options.body = JSON.stringify(req.body);
+    }
+
+    const response = await fetch(url, options);
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Meta-ads proxy error:', error);
+    if (error.cause?.code === 'ECONNREFUSED') {
+      return res.status(503).json({ error: 'Marketing backend unavailable' });
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ==================== BLOG CREATOR ====================
+
+// Generic proxy for all /api/blog/* routes
+app.all('/api/blog/*', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const path = req.path.replace('/api', '');
+    const queryString = req.url.split('?')[1] || '';
+    const url = `${pythonBackendUrl}${path}${queryString ? '?' + queryString : ''}`;
+
+    console.log(`📝 Proxying ${req.method} blog request: ${path}`);
+
+    const options = {
+      method: req.method,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(120000) // 2 min for AI generation
+    };
+
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      options.body = JSON.stringify(req.body);
+    }
+
+    const response = await fetch(url, options);
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Blog proxy error:', error);
+    if (error.cause?.code === 'ECONNREFUSED') {
+      return res.status(503).json({ error: 'Blog backend unavailable' });
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

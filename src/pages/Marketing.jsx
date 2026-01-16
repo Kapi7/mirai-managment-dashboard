@@ -60,9 +60,8 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-// Meta Ads API is on the Python backend (same as Reports/Pricing)
-const API_URL = import.meta.env.VITE_REPORT_API_URL ||
-  (import.meta.env.DEV ? 'http://localhost:8080' : 'https://mirai-reports.onrender.com');
+// Meta Ads API - use proxy routes in production, direct in development
+const API_URL = import.meta.env.DEV ? 'http://localhost:8080' : '/api';
 
 // Health score color helper
 const getHealthColor = (score) => {
