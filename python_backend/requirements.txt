@@ -22,3 +22,5 @@ alembic>=1.12.0
 # Auth packages
 PyJWT>=2.8.0
 httpx>=0.25.0
+# AI packages
+openai>=1.0.0
