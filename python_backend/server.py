@@ -767,10 +767,10 @@ class MetaAdsConfigRequest(BaseModel):
     auto_scale_winners: Optional[bool] = False
 
 
-# Helper to get marketing token (separate from reports token)
+# Helper to get marketing token
 def _get_marketing_token():
-    """Get Meta Marketing access token (falls back to META_ACCESS_TOKEN if not set)"""
-    return os.getenv("META_MARKETING_ACCESS_TOKEN") or os.getenv("META_ACCESS_TOKEN")
+    """Get Meta access token for marketing operations"""
+    return os.getenv("META_ACCESS_TOKEN")
 
 
 @app.get("/meta-ads/status")
@@ -783,7 +783,7 @@ async def meta_ads_quick_status(date_range: str = "today"):
     try:
         access_token = _get_marketing_token()
         if not access_token:
-            raise HTTPException(status_code=500, detail="META_MARKETING_ACCESS_TOKEN not configured")
+            raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
 
         engine = create_engine(access_token)
         status = engine.get_quick_status(date_range)
