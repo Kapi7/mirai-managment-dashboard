@@ -2470,6 +2470,35 @@ async def mark_email_seen(email_id: int, user: dict = Depends(get_current_user))
             return {"success": True, "status": email.status, "changed": False}
 
 
+@app.post("/support/reset-to-new")
+async def reset_all_to_new(user: dict = Depends(get_current_user)):
+    """
+    [TEST ENDPOINT] Reset all non-resolved tickets to 'new' status.
+    Used for testing the new/seen functionality.
+    """
+    print(f"🔄 [RESET-TO-NEW] Resetting all tickets to 'new', user={user.get('email', 'unknown')}")
+
+    if not DB_SERVICE_AVAILABLE:
+        return {"success": False, "error": "Database not available"}
+
+    from database.connection import get_db
+    from database.models import SupportEmail
+    from sqlalchemy import select, update
+
+    async with get_db() as db:
+        # Reset non-resolved tickets to 'new'
+        result = await db.execute(
+            update(SupportEmail)
+            .where(SupportEmail.status.notin_(['resolved', 'sent']))
+            .values(status='new')
+        )
+        count = result.rowcount
+        await db.commit()
+
+    print(f"✅ [RESET-TO-NEW] Reset {count} tickets to 'new' status")
+    return {"success": True, "count": count, "message": f"Reset {count} tickets to 'new' status"}
+
+
 @app.get("/support/stats")
 async def get_support_stats(user: dict = Depends(get_current_user)):
     """Get support dashboard statistics with detailed analytics"""
