@@ -463,3 +463,332 @@ Make meaningful improvements based on the feedback. If asked to change tone, adj
 def create_blog_generator(api_key: Optional[str] = None) -> BlogGenerator:
     """Factory function to create a BlogGenerator instance"""
     return BlogGenerator(api_key)
+
+
+# ============================================================
+# INTELLIGENT SEO AGENT
+# ============================================================
+
+# Mirai Skin brand voice profile (based on website analysis)
+BRAND_VOICE = {
+    "tone": "Approachable and educational, yet premium",
+    "style": "Friendly, conversational, uses 'you' and 'your' to connect with readers",
+    "expertise": "K-Beauty authority with insider knowledge",
+    "avoid": [
+        "Overly clinical language",
+        "AI-sounding phrases",
+        "Generic beauty advice",
+        "Dashes (-- or —)"
+    ],
+    "include": [
+        "Specific Korean product names",
+        "Ingredient science made accessible",
+        "Step-by-step guidance",
+        "Personal recommendations"
+    ]
+}
+
+# Trending topics and seasonal content ideas
+CONTENT_CALENDAR = {
+    "january": ["New Year skincare reset", "Winter hydration", "Glass skin goals"],
+    "february": ["Valentine's self-care", "Skin barrier repair", "K-beauty gift guide"],
+    "march": ["Spring skin transition", "Brightening routines", "Allergy-season skincare"],
+    "april": ["Spring cleaning routine", "Lightweight moisturizers", "Sunscreen guide"],
+    "may": ["Pre-summer prep", "Double cleansing", "Vitamin C guide"],
+    "june": ["Summer skincare essentials", "Oil control", "Minimal routines"],
+    "july": ["Beach-proof skincare", "Cooling products", "Post-sun care"],
+    "august": ["Back to basics", "Hydration boosters", "Exfoliation guide"],
+    "september": ["Fall transition", "Repair summer damage", "Rich moisturizers"],
+    "october": ["Retinol introduction", "Anti-aging routines", "Evening skincare"],
+    "november": ["Holiday prep skin", "Gift guides", "Intensive treatments"],
+    "december": ["Year-end favorites", "Winter protection", "Self-care rituals"]
+}
+
+# Popular K-Beauty ingredients to cover
+TRENDING_INGREDIENTS = [
+    {"name": "Salmon DNA (PDRN)", "buzz": "hot", "topics": ["regeneration", "anti-aging", "healing"]},
+    {"name": "Mugwort", "buzz": "steady", "topics": ["calming", "sensitive skin", "redness"]},
+    {"name": "Centella Asiatica", "buzz": "evergreen", "topics": ["healing", "acne scars", "barrier"]},
+    {"name": "Snail Mucin", "buzz": "evergreen", "topics": ["hydration", "texture", "glow"]},
+    {"name": "Niacinamide", "buzz": "evergreen", "topics": ["pores", "brightening", "oil control"]},
+    {"name": "Rice", "buzz": "trending", "topics": ["brightening", "traditional", "gentle"]},
+    {"name": "Propolis", "buzz": "steady", "topics": ["acne", "healing", "nourishing"]},
+    {"name": "Green Tea", "buzz": "evergreen", "topics": ["antioxidant", "calming", "protection"]},
+    {"name": "Hyaluronic Acid", "buzz": "evergreen", "topics": ["hydration", "plumping", "layers"]},
+    {"name": "Retinol", "buzz": "hot", "topics": ["anti-aging", "cell turnover", "beginner guide"]},
+    {"name": "Vitamin C", "buzz": "evergreen", "topics": ["brightening", "dark spots", "antioxidant"]},
+    {"name": "Peptides", "buzz": "trending", "topics": ["firming", "collagen", "anti-aging"]},
+    {"name": "Bifida Ferment", "buzz": "trending", "topics": ["microbiome", "barrier", "aging"]}
+]
+
+
+@dataclass
+class ContentSuggestion:
+    """A smart content suggestion from the SEO agent"""
+    id: str
+    category: str
+    title: str
+    topic: str
+    keywords: List[str]
+    reason: str  # Why this topic was suggested
+    priority: str  # high, medium, low
+    word_count: int
+    estimated_traffic: str  # High, Medium, Low potential
+    created_at: str
+    status: str  # suggested, generating, ready, dismissed
+
+
+class SEOAgent:
+    """
+    Intelligent SEO Agent for Mirai Skin
+
+    Analyzes website content, identifies gaps, and proactively
+    generates content suggestions that match the brand voice.
+    """
+
+    SUGGESTIONS_FILE = os.path.join(DATA_DIR, "seo_suggestions.json")
+
+    def __init__(self, api_key: Optional[str] = None):
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        self.client = None
+        if self.api_key:
+            self.client = OpenAI(api_key=self.api_key)
+        self.storage = BlogStorage()
+        os.makedirs(DATA_DIR, exist_ok=True)
+
+    def _load_suggestions(self) -> List[Dict]:
+        try:
+            if os.path.exists(self.SUGGESTIONS_FILE):
+                with open(self.SUGGESTIONS_FILE, 'r') as f:
+                    return json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError):
+            pass
+        return []
+
+    def _save_suggestions(self, suggestions: List[Dict]):
+        with open(self.SUGGESTIONS_FILE, 'w') as f:
+            json.dump(suggestions, f, indent=2)
+
+    def analyze_content_gaps(self, existing_articles: List[str] = None) -> Dict[str, Any]:
+        """
+        Analyze what content is missing based on:
+        - Existing blog posts
+        - Product inventory
+        - Trending topics
+        - Seasonal relevance
+        """
+        # Get current month for seasonal suggestions
+        current_month = datetime.now().strftime("%B").lower()
+        seasonal_topics = CONTENT_CALENDAR.get(current_month, [])
+
+        # Categories that need more content
+        gaps = {
+            "categories_needing_content": [],
+            "trending_ingredients_not_covered": [],
+            "seasonal_opportunities": seasonal_topics,
+            "evergreen_gaps": []
+        }
+
+        # Check which categories have fewer drafts/published
+        published = self.storage.get_all_published()
+        drafts = self.storage.get_all_drafts()
+
+        category_counts = {cat: 0 for cat in BLOG_CATEGORIES}
+        for article in published:
+            if article.category in category_counts:
+                category_counts[article.category] += 1
+        for draft in drafts:
+            if draft.category in category_counts:
+                category_counts[draft.category] += 1
+
+        # Find underserved categories
+        min_count = min(category_counts.values()) if category_counts.values() else 0
+        for cat, count in category_counts.items():
+            if count <= min_count + 1:  # Within 1 of the minimum
+                gaps["categories_needing_content"].append({
+                    "category": cat,
+                    "name": BLOG_CATEGORIES[cat]["name"],
+                    "current_count": count
+                })
+
+        # Check trending ingredients not covered recently
+        existing_titles = [a.title.lower() for a in published] if existing_articles is None else [a.lower() for a in existing_articles]
+        for ingredient in TRENDING_INGREDIENTS:
+            ingredient_mentioned = any(ingredient["name"].lower() in title for title in existing_titles)
+            if not ingredient_mentioned and ingredient["buzz"] in ["hot", "trending"]:
+                gaps["trending_ingredients_not_covered"].append(ingredient)
+
+        return gaps
+
+    def generate_smart_suggestions(self, count: int = 5, force_refresh: bool = False) -> List[ContentSuggestion]:
+        """
+        Generate intelligent content suggestions based on:
+        - Content gap analysis
+        - Seasonal trends
+        - SEO opportunities
+        - Brand voice alignment
+        """
+        if not self.client:
+            raise ValueError("OPENAI_API_KEY required for generating suggestions")
+
+        # Check existing suggestions
+        existing = self._load_suggestions()
+        active_suggestions = [s for s in existing if s.get("status") not in ["dismissed", "published"]]
+
+        if len(active_suggestions) >= count and not force_refresh:
+            return [ContentSuggestion(**s) for s in active_suggestions[:count]]
+
+        # Analyze gaps
+        gaps = self.analyze_content_gaps()
+
+        # Build context for AI
+        context = f"""You are an SEO content strategist for Mirai Skin, a premium Korean skincare retailer.
+
+BRAND VOICE:
+- Tone: {BRAND_VOICE['tone']}
+- Style: {BRAND_VOICE['style']}
+
+CONTENT GAPS IDENTIFIED:
+- Categories needing content: {json.dumps(gaps['categories_needing_content'])}
+- Trending ingredients not covered: {[i['name'] for i in gaps['trending_ingredients_not_covered']]}
+- Seasonal opportunities (current month): {gaps['seasonal_opportunities']}
+
+EXISTING BLOG CATEGORIES:
+{json.dumps({k: v['name'] + ' - ' + v['description'] for k, v in BLOG_CATEGORIES.items()}, indent=2)}
+
+Generate {count} high-value blog topic suggestions that will:
+1. Fill content gaps
+2. Target high-traffic SEO keywords
+3. Match Mirai Skin's brand voice
+4. Provide real value to K-Beauty enthusiasts
+
+For each suggestion, provide:
+- A compelling title
+- The category it belongs to
+- Target SEO keywords (3-5)
+- Why this topic will perform well (traffic potential, fills gap, trending, etc.)
+- Priority level (high/medium/low)
+- Recommended word count (800-1500)
+
+OUTPUT AS JSON ARRAY:
+[
+  {{
+    "title": "Article title",
+    "category": "category_key",
+    "topic": "Brief description of what the article should cover",
+    "keywords": ["keyword1", "keyword2", "keyword3"],
+    "reason": "Why this topic was suggested",
+    "priority": "high",
+    "word_count": 1000,
+    "estimated_traffic": "High"
+  }}
+]"""
+
+        response = self.client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are an expert SEO content strategist. Respond only with valid JSON."},
+                {"role": "user", "content": context}
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.8
+        )
+
+        result = json.loads(response.choices[0].message.content)
+        suggestions_data = result if isinstance(result, list) else result.get("suggestions", [])
+
+        # Convert to ContentSuggestion objects
+        suggestions = []
+        for item in suggestions_data[:count]:
+            suggestion = ContentSuggestion(
+                id=str(uuid.uuid4()),
+                category=item.get("category", "lifestyle"),
+                title=item.get("title", ""),
+                topic=item.get("topic", ""),
+                keywords=item.get("keywords", []),
+                reason=item.get("reason", ""),
+                priority=item.get("priority", "medium"),
+                word_count=item.get("word_count", 1000),
+                estimated_traffic=item.get("estimated_traffic", "Medium"),
+                created_at=datetime.utcnow().isoformat() + "Z",
+                status="suggested"
+            )
+            suggestions.append(suggestion)
+
+        # Save suggestions
+        all_suggestions = [asdict(s) for s in suggestions] + existing
+        self._save_suggestions(all_suggestions)
+
+        return suggestions
+
+    def get_suggestions(self, include_dismissed: bool = False) -> List[ContentSuggestion]:
+        """Get all current suggestions"""
+        suggestions = self._load_suggestions()
+        if not include_dismissed:
+            suggestions = [s for s in suggestions if s.get("status") != "dismissed"]
+        return [ContentSuggestion(**s) for s in suggestions]
+
+    def dismiss_suggestion(self, suggestion_id: str) -> bool:
+        """Mark a suggestion as dismissed"""
+        suggestions = self._load_suggestions()
+        for s in suggestions:
+            if s.get("id") == suggestion_id:
+                s["status"] = "dismissed"
+                self._save_suggestions(suggestions)
+                return True
+        return False
+
+    def generate_from_suggestion(self, suggestion_id: str, user_email: str = "system") -> BlogDraft:
+        """Generate a full article draft from a suggestion"""
+        if not self.client:
+            raise ValueError("OPENAI_API_KEY required for generating articles")
+
+        suggestions = self._load_suggestions()
+        suggestion = None
+        for s in suggestions:
+            if s.get("id") == suggestion_id:
+                suggestion = s
+                break
+
+        if not suggestion:
+            raise ValueError(f"Suggestion not found: {suggestion_id}")
+
+        # Update status
+        suggestion["status"] = "generating"
+        self._save_suggestions(suggestions)
+
+        # Generate the article using BlogGenerator
+        generator = BlogGenerator(self.api_key)
+        draft = generator.generate_article(
+            category=suggestion["category"],
+            topic=suggestion["topic"],
+            keywords=suggestion["keywords"],
+            word_count=suggestion["word_count"],
+            user_email=user_email
+        )
+
+        # Update suggestion status
+        suggestion["status"] = "ready"
+        suggestion["draft_id"] = draft.id
+        self._save_suggestions(suggestions)
+
+        return draft
+
+    def get_ready_content(self) -> List[Dict[str, Any]]:
+        """Get suggestions that have been generated and are ready for review"""
+        suggestions = self._load_suggestions()
+        ready = []
+        for s in suggestions:
+            if s.get("status") == "ready" and s.get("draft_id"):
+                draft = self.storage.get_draft(s["draft_id"])
+                if draft:
+                    ready.append({
+                        "suggestion": s,
+                        "draft": asdict(draft)
+                    })
+        return ready
+
+
+def create_seo_agent(api_key: Optional[str] = None) -> SEOAgent:
+    """Factory function to create an SEOAgent instance"""
+    return SEOAgent(api_key)

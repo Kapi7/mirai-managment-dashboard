@@ -59,7 +59,11 @@ import {
   BookOpen,
   TrendingUp,
   Lightbulb,
-  Search
+  Search,
+  Zap,
+  Target,
+  ArrowRight,
+  Brain
 } from "lucide-react";
 
 // Blog API - use proxy routes in production, direct in development
@@ -84,7 +88,7 @@ export default function BlogCreator() {
   const { toast } = useToast();
 
   // State
-  const [activeTab, setActiveTab] = useState("generator");
+  const [activeTab, setActiveTab] = useState("suggestions");
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
 
@@ -113,12 +117,18 @@ export default function BlogCreator() {
   // Published
   const [published, setPublished] = useState([]);
 
+  // AI Suggestions
+  const [suggestions, setSuggestions] = useState([]);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+  const [generatingSuggestion, setGeneratingSuggestion] = useState(null);
+
   // Fetch initial data
   useEffect(() => {
     fetchCategories();
     fetchShopifyBlogs();
     fetchDrafts();
     fetchPublished();
+    fetchSuggestions();
   }, []);
 
   // Fetch SEO keywords when category changes
@@ -190,6 +200,68 @@ export default function BlogCreator() {
       setPublished(data.articles || []);
     } catch (error) {
       console.error("Failed to fetch published:", error);
+    }
+  };
+
+  const fetchSuggestions = async (forceRefresh = false) => {
+    setLoadingSuggestions(true);
+    try {
+      const res = await fetch(
+        `${API_URL}/blog/seo-agent/suggestions?force_refresh=${forceRefresh}&count=5`,
+        { headers: getAuthHeader() }
+      );
+      const data = await res.json();
+      setSuggestions(data.suggestions || []);
+    } catch (error) {
+      console.error("Failed to fetch suggestions:", error);
+    } finally {
+      setLoadingSuggestions(false);
+    }
+  };
+
+  const handleGenerateFromSuggestion = async (suggestionId) => {
+    setGeneratingSuggestion(suggestionId);
+    try {
+      const res = await fetch(`${API_URL}/blog/seo-agent/generate/${suggestionId}`, {
+        method: "POST",
+        headers: {
+          ...getAuthHeader(),
+          "Content-Type": "application/json"
+        }
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to generate");
+
+      toast({
+        title: "Article Generated!",
+        description: `"${data.title}" is ready for review in Drafts`
+      });
+
+      // Refresh drafts and suggestions
+      fetchDrafts();
+      fetchSuggestions();
+      setActiveTab("drafts");
+    } catch (error) {
+      toast({
+        title: "Generation failed",
+        description: error.message,
+        variant: "destructive"
+      });
+    } finally {
+      setGeneratingSuggestion(null);
+    }
+  };
+
+  const handleDismissSuggestion = async (suggestionId) => {
+    try {
+      await fetch(`${API_URL}/blog/seo-agent/dismiss/${suggestionId}`, {
+        method: "POST",
+        headers: getAuthHeader()
+      });
+      setSuggestions(suggestions.filter(s => s.id !== suggestionId));
+    } catch (error) {
+      console.error("Failed to dismiss:", error);
     }
   };
 
@@ -494,10 +566,17 @@ export default function BlogCreator() {
 
       {/* Main Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-3 max-w-md">
+        <TabsList className="grid w-full grid-cols-4 max-w-xl">
+          <TabsTrigger value="suggestions" className="flex items-center gap-2">
+            <Brain className="w-4 h-4" />
+            AI Ideas
+            {suggestions.length > 0 && (
+              <Badge variant="secondary" className="ml-1 bg-indigo-100 text-indigo-700">{suggestions.length}</Badge>
+            )}
+          </TabsTrigger>
           <TabsTrigger value="generator" className="flex items-center gap-2">
             <Sparkles className="w-4 h-4" />
-            Generator
+            Manual
           </TabsTrigger>
           <TabsTrigger value="drafts" className="flex items-center gap-2">
             <FileText className="w-4 h-4" />
@@ -511,6 +590,156 @@ export default function BlogCreator() {
             Published
           </TabsTrigger>
         </TabsList>
+
+        {/* AI Suggestions Tab */}
+        <TabsContent value="suggestions" className="space-y-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                <Brain className="w-5 h-5 text-indigo-600" />
+                AI-Powered Content Ideas
+              </h2>
+              <p className="text-sm text-slate-500">
+                Smart suggestions based on content gaps, trending topics, and seasonal opportunities
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => fetchSuggestions(true)}
+              disabled={loadingSuggestions}
+            >
+              {loadingSuggestions ? (
+                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4 mr-2" />
+              )}
+              Refresh Ideas
+            </Button>
+          </div>
+
+          {loadingSuggestions && suggestions.length === 0 ? (
+            <div className="space-y-4">
+              {[1, 2, 3].map(i => (
+                <Card key={i} className="animate-pulse">
+                  <CardContent className="p-6">
+                    <div className="h-4 bg-slate-200 rounded w-3/4 mb-3"></div>
+                    <div className="h-3 bg-slate-100 rounded w-1/2 mb-2"></div>
+                    <div className="h-3 bg-slate-100 rounded w-1/4"></div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : suggestions.length === 0 ? (
+            <Card>
+              <CardContent className="p-12 text-center">
+                <Brain className="w-12 h-12 mx-auto text-slate-300 mb-4" />
+                <h3 className="text-lg font-medium text-slate-600">No suggestions yet</h3>
+                <p className="text-slate-400 mb-4">Click "Refresh Ideas" to generate AI content suggestions</p>
+                <Button onClick={() => fetchSuggestions(true)}>
+                  <Zap className="w-4 h-4 mr-2" />
+                  Generate Ideas
+                </Button>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-4">
+              {suggestions.map((suggestion) => (
+                <Card key={suggestion.id} className="hover:shadow-md transition-shadow border-l-4 border-l-indigo-500">
+                  <CardContent className="p-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Badge className={CATEGORY_COLORS[suggestion.category]}>
+                            {CATEGORY_NAMES[suggestion.category]}
+                          </Badge>
+                          <Badge
+                            variant="outline"
+                            className={
+                              suggestion.priority === "high"
+                                ? "border-red-300 text-red-700 bg-red-50"
+                                : suggestion.priority === "medium"
+                                ? "border-yellow-300 text-yellow-700 bg-yellow-50"
+                                : "border-slate-300"
+                            }
+                          >
+                            {suggestion.priority} priority
+                          </Badge>
+                          <Badge variant="outline" className="border-green-300 text-green-700 bg-green-50">
+                            <Target className="w-3 h-3 mr-1" />
+                            {suggestion.estimated_traffic} traffic
+                          </Badge>
+                        </div>
+                        <h3 className="font-semibold text-slate-900 text-lg mb-1">
+                          {suggestion.title}
+                        </h3>
+                        <p className="text-sm text-slate-600 mb-3">
+                          {suggestion.topic}
+                        </p>
+                        <div className="flex items-center gap-4 text-xs text-slate-500 mb-3">
+                          <span className="flex items-center gap-1">
+                            <FileText className="w-3 h-3" />
+                            {suggestion.word_count} words
+                          </span>
+                          <span>{suggestion.keywords?.join(", ")}</span>
+                        </div>
+                        <div className="p-3 bg-indigo-50 rounded-lg">
+                          <p className="text-sm text-indigo-700">
+                            <Lightbulb className="w-4 h-4 inline mr-1" />
+                            <strong>Why this topic:</strong> {suggestion.reason}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <Button
+                          onClick={() => handleGenerateFromSuggestion(suggestion.id)}
+                          disabled={generatingSuggestion === suggestion.id}
+                          className="bg-indigo-600 hover:bg-indigo-700"
+                        >
+                          {generatingSuggestion === suggestion.id ? (
+                            <>
+                              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                              Generating...
+                            </>
+                          ) : (
+                            <>
+                              <Zap className="w-4 h-4 mr-2" />
+                              Generate
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-slate-400 hover:text-slate-600"
+                          onClick={() => handleDismissSuggestion(suggestion.id)}
+                        >
+                          <XCircle className="w-4 h-4 mr-1" />
+                          Dismiss
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+
+          {/* Info box */}
+          <Card className="bg-slate-50 border-slate-200">
+            <CardContent className="p-4">
+              <h4 className="font-medium text-slate-700 flex items-center gap-2 mb-2">
+                <Lightbulb className="w-4 h-4 text-amber-500" />
+                How AI Ideas Work
+              </h4>
+              <ul className="text-sm text-slate-600 space-y-1">
+                <li>The AI analyzes your existing content to find gaps</li>
+                <li>It considers seasonal trends and current month relevance</li>
+                <li>Topics are optimized for SEO and match your brand voice</li>
+                <li>Click "Generate" to create a full article ready for review</li>
+              </ul>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         {/* Generator Tab */}
         <TabsContent value="generator" className="space-y-6">

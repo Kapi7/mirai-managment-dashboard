@@ -1496,6 +1496,136 @@ async def blog_reject_draft(draft_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to reject draft: {str(e)}")
 
 
+# ---------- SEO Agent Endpoints ----------
+
+@app.get("/blog/seo-agent/suggestions")
+async def seo_agent_get_suggestions(force_refresh: bool = False, count: int = 5):
+    """
+    Get smart content suggestions from the SEO agent.
+
+    The agent analyzes content gaps, trending topics, and seasonal
+    opportunities to suggest high-value blog topics.
+    """
+    try:
+        from blog_service import create_seo_agent
+
+        agent = create_seo_agent()
+
+        # If force_refresh or no existing suggestions, generate new ones
+        if force_refresh:
+            suggestions = agent.generate_smart_suggestions(count=count, force_refresh=True)
+        else:
+            suggestions = agent.get_suggestions()
+            if len(suggestions) < count:
+                suggestions = agent.generate_smart_suggestions(count=count)
+
+        return {
+            "suggestions": [
+                {
+                    "id": s.id,
+                    "category": s.category,
+                    "title": s.title,
+                    "topic": s.topic,
+                    "keywords": s.keywords,
+                    "reason": s.reason,
+                    "priority": s.priority,
+                    "word_count": s.word_count,
+                    "estimated_traffic": s.estimated_traffic,
+                    "created_at": s.created_at,
+                    "status": s.status
+                }
+                for s in suggestions
+            ],
+            "count": len(suggestions)
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get suggestions: {str(e)}")
+
+
+@app.get("/blog/seo-agent/content-gaps")
+async def seo_agent_analyze_gaps():
+    """
+    Analyze content gaps - identifies what topics are missing
+    """
+    try:
+        from blog_service import SEOAgent
+
+        agent = SEOAgent()
+        gaps = agent.analyze_content_gaps()
+
+        return {
+            "gaps": gaps,
+            "current_month": datetime.now().strftime("%B")
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to analyze gaps: {str(e)}")
+
+
+@app.post("/blog/seo-agent/generate/{suggestion_id}")
+async def seo_agent_generate_from_suggestion(suggestion_id: str, user_email: str = "system"):
+    """
+    Generate a full article draft from a suggestion.
+
+    This creates a ready-to-review draft in the Drafts tab.
+    """
+    try:
+        from blog_service import create_seo_agent
+        from dataclasses import asdict
+
+        agent = create_seo_agent()
+        draft = agent.generate_from_suggestion(suggestion_id, user_email)
+
+        return {
+            "success": True,
+            "draft_id": draft.id,
+            "title": draft.title,
+            "word_count": draft.word_count,
+            "category": draft.category
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate article: {str(e)}")
+
+
+@app.post("/blog/seo-agent/dismiss/{suggestion_id}")
+async def seo_agent_dismiss_suggestion(suggestion_id: str):
+    """Dismiss a suggestion (won't show again)"""
+    try:
+        from blog_service import SEOAgent
+
+        agent = SEOAgent()
+        dismissed = agent.dismiss_suggestion(suggestion_id)
+
+        if not dismissed:
+            raise HTTPException(status_code=404, detail="Suggestion not found")
+
+        return {"success": True, "suggestion_id": suggestion_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to dismiss: {str(e)}")
+
+
+@app.get("/blog/seo-agent/ready-content")
+async def seo_agent_get_ready_content():
+    """Get suggestions that have been generated and are ready for review"""
+    try:
+        from blog_service import SEOAgent
+
+        agent = SEOAgent()
+        ready = agent.get_ready_content()
+
+        return {
+            "ready_content": ready,
+            "count": len(ready)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get ready content: {str(e)}")
+
+
 # ---------- Local dev entrypoint ----------
 
 if __name__ == "__main__":
