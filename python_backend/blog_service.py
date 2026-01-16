@@ -278,16 +278,22 @@ Make meaningful improvements based on the feedback. If asked to change tone, adj
         system_prompt = self._get_system_prompt(category, keywords, word_count)
         user_prompt = f"Write a blog article about: {topic}"
 
-        response = self.client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.7,
-            max_tokens=4000
-        )
+        try:
+            print(f"[BlogGenerator] Generating article: {topic[:50]}...")
+            response = self.client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.7,
+                max_tokens=4000
+            )
+            print(f"[BlogGenerator] Article generated successfully")
+        except Exception as api_error:
+            print(f"[BlogGenerator] OpenAI API error: {api_error}")
+            raise RuntimeError(f"OpenAI API error: {api_error}")
 
         content = json.loads(response.choices[0].message.content)
 
@@ -693,15 +699,21 @@ OUTPUT AS JSON ARRAY:
   }}
 ]"""
 
-        response = self.client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "You are an expert SEO content strategist. Respond only with valid JSON."},
-                {"role": "user", "content": context}
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.8
-        )
+        try:
+            print(f"[SEOAgent] Calling OpenAI for {count} suggestions...")
+            response = self.client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": "You are an expert SEO content strategist. Respond only with valid JSON."},
+                    {"role": "user", "content": context}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.8
+            )
+            print(f"[SEOAgent] OpenAI response received")
+        except Exception as api_error:
+            print(f"[SEOAgent] OpenAI API error: {api_error}")
+            raise RuntimeError(f"OpenAI API error: {api_error}")
 
         result = json.loads(response.choices[0].message.content)
         suggestions_data = result if isinstance(result, list) else result.get("suggestions", [])

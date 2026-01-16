@@ -4675,6 +4675,7 @@ async def blog_generate_article(req: BlogGenerateRequest):
         from blog_service import create_blog_generator
         from dataclasses import asdict
 
+        print(f"[BLOG] Generating article: category={req.category}, topic={req.topic[:50]}...")
         generator = create_blog_generator()
         draft = generator.generate_article(
             category=req.category,
@@ -4682,6 +4683,7 @@ async def blog_generate_article(req: BlogGenerateRequest):
             keywords=req.keywords,
             word_count=req.word_count
         )
+        print(f"[BLOG] Article generated: {draft.title[:50]}...")
 
         return {
             "success": True,
@@ -4691,8 +4693,12 @@ async def blog_generate_article(req: BlogGenerateRequest):
             "draft": asdict(draft)
         }
     except ValueError as e:
+        print(f"[BLOG] ValueError in /blog/generate: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        import traceback
+        print(f"[BLOG] Error in /blog/generate: {e}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to generate: {str(e)}")
 
 
