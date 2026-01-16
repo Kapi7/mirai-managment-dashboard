@@ -2435,6 +2435,41 @@ async def regenerate_ai_response(
         return {"success": False, "error": str(e)}
 
 
+@app.post("/support/emails/{email_id}/mark-seen")
+async def mark_email_seen(email_id: int, user: dict = Depends(get_current_user)):
+    """
+    Mark an email as 'seen' when the user opens the ticket detail.
+    Only updates if the current status is 'new'.
+    """
+    print(f"👁️ [MARK-SEEN] Marking email_id={email_id} as seen, user={user.get('email', 'unknown')}")
+
+    if not DB_SERVICE_AVAILABLE:
+        return {"success": False, "error": "Database not available"}
+
+    from database.connection import get_db
+    from database.models import SupportEmail
+    from sqlalchemy import select
+
+    async with get_db() as db:
+        result = await db.execute(
+            select(SupportEmail).where(SupportEmail.id == email_id)
+        )
+        email = result.scalar_one_or_none()
+
+        if not email:
+            raise HTTPException(status_code=404, detail="Email not found")
+
+        # Only change from 'new' to 'seen'
+        if email.status == "new":
+            email.status = "seen"
+            await db.commit()
+            print(f"✅ [MARK-SEEN] Email {email_id} marked as seen")
+            return {"success": True, "status": "seen", "changed": True}
+        else:
+            print(f"ℹ️ [MARK-SEEN] Email {email_id} already has status: {email.status}")
+            return {"success": True, "status": email.status, "changed": False}
+
+
 @app.get("/support/stats")
 async def get_support_stats(user: dict = Depends(get_current_user)):
     """Get support dashboard statistics with detailed analytics"""

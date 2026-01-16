@@ -230,6 +230,20 @@ export default function Support() {
     setUserHints('');
     setDetailOpen(true);
     await fetchCustomerDetails(ticket.customer_email);
+
+    // Mark ticket as seen if it's new
+    if (ticket.ticket_status === 'new' && ticket.current_email_id) {
+      try {
+        await fetch(`${API_URL}/support/emails/${ticket.current_email_id}/mark-seen`, {
+          method: 'POST',
+          headers: getAuthHeader()
+        });
+        // Refresh tickets to update status in the list
+        fetchTickets();
+      } catch (error) {
+        console.error('Failed to mark as seen:', error);
+      }
+    }
   };
 
   // Approve email (send AI draft)
@@ -445,6 +459,8 @@ export default function Support() {
   // Status badge for tickets
   const getTicketStatusBadge = (status) => {
     const variants = {
+      new: { icon: Mail, label: 'New', color: 'text-white bg-blue-600 font-semibold' },
+      seen: { icon: Eye, label: 'Seen', color: 'text-slate-600 bg-slate-100' },
       needs_attention: { icon: AlertCircle, label: 'Needs Attention', color: 'text-red-600 bg-red-50' },
       pending: { icon: Clock, label: 'Pending AI', color: 'text-yellow-600 bg-yellow-50' },
       draft_ready: { icon: Bot, label: 'Draft Ready', color: 'text-blue-600 bg-blue-50' },
@@ -947,14 +963,22 @@ export default function Support() {
               {filteredTickets.map((ticket) => (
                 <div
                   key={ticket.customer_email}
-                  className="p-4 hover:bg-slate-50 cursor-pointer transition-colors"
+                  className={cn(
+                    "p-4 cursor-pointer transition-colors",
+                    ticket.ticket_status === 'new'
+                      ? "bg-blue-50 hover:bg-blue-100 border-l-4 border-l-blue-600"
+                      : "hover:bg-slate-50"
+                  )}
                   onClick={() => openCustomerDetail(ticket)}
                 >
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
                       {/* Customer info row */}
                       <div className="flex items-center gap-2 mb-1">
-                        <span className="font-semibold text-slate-900">
+                        <span className={cn(
+                          "text-slate-900",
+                          ticket.ticket_status === 'new' ? "font-bold" : "font-semibold"
+                        )}>
                           {ticket.customer_name}
                         </span>
                         {getTicketStatusBadge(ticket.ticket_status)}
@@ -965,10 +989,16 @@ export default function Support() {
                           </Badge>
                         )}
                       </div>
-                      <p className="text-sm text-slate-500 mb-2">{ticket.customer_email}</p>
+                      <p className={cn(
+                        "text-sm mb-2",
+                        ticket.ticket_status === 'new' ? "text-slate-700 font-medium" : "text-slate-500"
+                      )}>{ticket.customer_email}</p>
 
                       {/* Latest subject */}
-                      <p className="text-sm text-slate-700 truncate max-w-[500px]">
+                      <p className={cn(
+                        "text-sm truncate max-w-[500px]",
+                        ticket.ticket_status === 'new' ? "text-slate-900 font-medium" : "text-slate-700"
+                      )}>
                         {ticket.latest_subject}
                       </p>
 
