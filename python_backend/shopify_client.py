@@ -359,7 +359,6 @@ query GetBlogs($first: Int!) {
         id
         title
         handle
-        onlineStoreUrl
       }
     }
   }

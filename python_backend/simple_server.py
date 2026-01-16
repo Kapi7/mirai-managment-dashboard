@@ -4589,6 +4589,9 @@ async def blog_get_categories():
         from blog_service import BLOG_CATEGORIES
         return {"categories": BLOG_CATEGORIES}
     except Exception as e:
+        import traceback
+        print(f"[BLOG] Error in /blog/categories: {e}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to get categories: {str(e)}")
 
 
@@ -4617,6 +4620,9 @@ async def blog_list_drafts():
             "count": len(drafts)
         }
     except Exception as e:
+        import traceback
+        print(f"[BLOG] Error in /blog/drafts: {e}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to list drafts: {str(e)}")
 
 
@@ -4634,6 +4640,9 @@ async def blog_list_published():
             "count": len(published)
         }
     except Exception as e:
+        import traceback
+        print(f"[BLOG] Error in /blog/published: {e}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to list published: {str(e)}")
 
 
@@ -4720,6 +4729,9 @@ async def seo_agent_get_suggestions(force_refresh: bool = False, count: int = 5)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        import traceback
+        print(f"[BLOG] Error in /blog/seo-agent/suggestions: {e}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to get suggestions: {str(e)}")
 
 
