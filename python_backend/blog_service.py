@@ -11,7 +11,16 @@ import uuid
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, asdict
-from openai import OpenAI
+
+# Lazy import OpenAI to prevent module load failure if package has issues
+OpenAI = None
+def _get_openai_client(api_key: str = None):
+    """Get OpenAI client with lazy import"""
+    global OpenAI
+    if OpenAI is None:
+        from openai import OpenAI as _OpenAI
+        OpenAI = _OpenAI
+    return OpenAI(api_key=api_key)
 
 # Blog categories with their specific styles
 BLOG_CATEGORIES = {
@@ -194,7 +203,7 @@ class BlogGenerator:
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not self.api_key:
             raise ValueError("OPENAI_API_KEY not configured")
-        self.client = OpenAI(api_key=self.api_key)
+        self.client = _get_openai_client(api_key=self.api_key)
         self.storage = BlogStorage()
 
     def _get_system_prompt(self, category: str, keywords: List[str], word_count: int) -> str:
@@ -552,7 +561,7 @@ class SEOAgent:
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         self.client = None
         if self.api_key:
-            self.client = OpenAI(api_key=self.api_key)
+            self.client = _get_openai_client(api_key=self.api_key)
         self.storage = BlogStorage()
         os.makedirs(DATA_DIR, exist_ok=True)
 
