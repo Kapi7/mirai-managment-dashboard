@@ -4,16 +4,45 @@ from __future__ import annotations
 from datetime import datetime, timedelta, date
 from calendar import monthrange
 import os
+import jwt
+import httpx
 from typing import List, Optional, Dict, Any
 
 import pytz
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, field_validator
 
 # Core orchestration (already talks to Shopify, PayPal, Google, Meta, PSP)
 from master_report_mirai import build_month_rows, _google_spend_usd
 from meta_client import fetch_meta_insights_day
+
+# ==================== AUTH CONFIGURATION ====================
+
+# JWT Settings
+JWT_SECRET = os.getenv("JWT_SECRET", "mirai-dashboard-secret-key-change-in-production")
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRATION_HOURS = 24 * 7  # 1 week
+
+# Google OAuth Settings
+GOOGLE_CLIENT_ID = os.getenv("VITE_GOOGLE_CLIENT_ID", os.getenv("GOOGLE_CLIENT_ID", ""))
+FIRST_ADMIN_EMAIL = os.getenv("FIRST_ADMIN_EMAIL", "kapoosha@gmail.com")
+ALLOWED_EMAILS = [e.strip() for e in os.getenv("ALLOWED_EMAILS", "").split(",") if e.strip()]
+if FIRST_ADMIN_EMAIL and FIRST_ADMIN_EMAIL not in ALLOWED_EMAILS:
+    ALLOWED_EMAILS.append(FIRST_ADMIN_EMAIL)
+
+security = HTTPBearer(auto_error=False)
+
+# Database service (with graceful fallback)
+try:
+    from database.service import db_service
+    DB_SERVICE_AVAILABLE = True
+    print("✅ Database service imported successfully")
+except ImportError as e:
+    DB_SERVICE_AVAILABLE = False
+    db_service = None
+    print(f"⚠️ Database service not available: {e}")
 
 
 # ---------- Pydantic models ----------
@@ -105,6 +134,88 @@ app.add_middleware(
 )
 
 
+# ==================== AUTH HELPERS ====================
+
+class GoogleAuthRequest(BaseModel):
+    token: str  # Google ID token from frontend
+
+
+class AddUserRequest(BaseModel):
+    email: str
+    is_admin: bool = False
+
+
+async def verify_google_token(token: str) -> dict:
+    """Verify Google ID token and return user info"""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"https://oauth2.googleapis.com/tokeninfo?id_token={token}"
+            )
+            if response.status_code != 200:
+                raise HTTPException(status_code=401, detail="Invalid Google token")
+
+            data = response.json()
+
+            if GOOGLE_CLIENT_ID and data.get("aud") != GOOGLE_CLIENT_ID:
+                raise HTTPException(status_code=401, detail="Token not for this application")
+
+            return {
+                "email": data.get("email"),
+                "name": data.get("name"),
+                "picture": data.get("picture"),
+                "google_id": data.get("sub")
+            }
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to verify token: {e}")
+
+
+def create_jwt_token(user_data: dict) -> str:
+    """Create JWT token for authenticated user"""
+    payload = {
+        "sub": user_data["email"],
+        "name": user_data.get("name", ""),
+        "picture": user_data.get("picture", ""),
+        "is_admin": user_data.get("is_admin", False),
+        "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRATION_HOURS),
+        "iat": datetime.utcnow()
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Optional[dict]:
+    """Get current user from JWT token"""
+    if not credentials:
+        return None
+
+    try:
+        payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return {
+            "email": payload.get("sub"),
+            "name": payload.get("name"),
+            "picture": payload.get("picture"),
+            "is_admin": payload.get("is_admin", False)
+        }
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
+async def require_auth(user: dict = Depends(get_current_user)) -> dict:
+    """Require authentication"""
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return user
+
+
+async def require_admin(user: dict = Depends(require_auth)) -> dict:
+    """Require admin role"""
+    if not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
 # ---------- Small helpers ----------
 
 def _safe_shop_tz() -> str:
@@ -163,6 +274,228 @@ def _collect_kpis_range(start_date: date, end_date: date, shop_tz: str):
 @app.get("/health")
 async def health():
     return {"status": "ok", "message": "FastAPI is running"}
+
+
+# ==================== AUTH ENDPOINTS ====================
+
+@app.post("/auth/google")
+async def google_login(req: GoogleAuthRequest):
+    """Login with Google ID token. Returns JWT token if user is allowed."""
+    try:
+        google_user = await verify_google_token(req.token)
+        email = google_user["email"]
+
+        print(f"🔐 Login attempt: {email}")
+
+        if DB_SERVICE_AVAILABLE:
+            from database.connection import get_db
+            from database.models import User
+            from sqlalchemy import select, func
+
+            async with get_db() as db:
+                result = await db.execute(select(User).where(func.lower(User.email) == email.lower().strip()))
+                user = result.scalar_one_or_none()
+
+                if not user:
+                    user_count = await db.execute(select(User))
+                    is_first_user = not user_count.scalars().all()
+                    is_first_admin = email.strip().lower() == FIRST_ADMIN_EMAIL.strip().lower()
+                    is_allowed = email.strip() in ALLOWED_EMAILS or is_first_user or is_first_admin
+
+                    if not is_allowed:
+                        print(f"❌ Email not allowed: {email}")
+                        raise HTTPException(status_code=403, detail="Email not authorized. Contact admin to be added.")
+
+                    make_admin = is_first_user or is_first_admin
+                    user = User(
+                        email=email,
+                        name=google_user.get("name"),
+                        picture=google_user.get("picture"),
+                        google_id=google_user.get("google_id"),
+                        is_admin=make_admin,
+                        is_active=True
+                    )
+                    db.add(user)
+                    await db.commit()
+                    await db.refresh(user)
+                    print(f"✅ Created new user: {email} (admin={make_admin})")
+                else:
+                    if not user.is_active:
+                        raise HTTPException(status_code=403, detail="Account is disabled")
+
+                    user.last_login = datetime.utcnow()
+                    user.name = google_user.get("name") or user.name
+                    user.picture = google_user.get("picture") or user.picture
+                    await db.commit()
+                    print(f"✅ User logged in: {email}")
+
+                token = create_jwt_token({
+                    "email": user.email,
+                    "name": user.name,
+                    "picture": user.picture,
+                    "is_admin": user.is_admin
+                })
+
+                return {
+                    "success": True,
+                    "token": token,
+                    "user": {
+                        "email": user.email,
+                        "name": user.name,
+                        "picture": user.picture,
+                        "is_admin": user.is_admin
+                    }
+                }
+        else:
+            if email.strip() not in [e.strip() for e in ALLOWED_EMAILS if e.strip()]:
+                raise HTTPException(status_code=403, detail="Email not authorized")
+
+            token = create_jwt_token({
+                "email": email,
+                "name": google_user.get("name"),
+                "picture": google_user.get("picture"),
+                "is_admin": True
+            })
+
+            return {
+                "success": True,
+                "token": token,
+                "user": {
+                    "email": email,
+                    "name": google_user.get("name"),
+                    "picture": google_user.get("picture"),
+                    "is_admin": True
+                }
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Auth error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/auth/me")
+async def get_me(user: dict = Depends(require_auth)):
+    """Get current user info"""
+    return {"user": user}
+
+
+@app.get("/auth/users")
+async def list_users(user: dict = Depends(require_admin)):
+    """List all users (admin only)"""
+    if not DB_SERVICE_AVAILABLE:
+        return {"users": [], "message": "Database not available"}
+
+    from database.connection import get_db
+    from database.models import User
+    from sqlalchemy import select
+
+    async with get_db() as db:
+        result = await db.execute(select(User).order_by(User.created_at.desc()))
+        users = result.scalars().all()
+
+        return {
+            "users": [
+                {
+                    "id": u.id,
+                    "email": u.email,
+                    "name": u.name,
+                    "picture": u.picture,
+                    "is_active": u.is_active,
+                    "is_admin": u.is_admin,
+                    "created_at": u.created_at.isoformat() if u.created_at else None,
+                    "last_login": u.last_login.isoformat() if u.last_login else None
+                }
+                for u in users
+            ]
+        }
+
+
+@app.post("/auth/users")
+async def add_user(req: AddUserRequest, user: dict = Depends(require_admin)):
+    """Add a new allowed user (admin only)"""
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import User
+    from sqlalchemy import select, func
+
+    email_clean = req.email.strip().lower()
+
+    async with get_db() as db:
+        result = await db.execute(select(User).where(func.lower(User.email) == email_clean))
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            raise HTTPException(status_code=400, detail="User already exists")
+
+        new_user = User(
+            email=email_clean,
+            is_admin=req.is_admin,
+            is_active=True
+        )
+        db.add(new_user)
+        await db.commit()
+
+        print(f"✅ Added new user: {email_clean} (admin={req.is_admin})")
+
+        return {"success": True, "message": f"User {email_clean} added successfully"}
+
+
+@app.delete("/auth/users/{user_id}")
+async def delete_user(user_id: int, user: dict = Depends(require_admin)):
+    """Delete a user (admin only)"""
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import User
+    from sqlalchemy import select
+
+    async with get_db() as db:
+        result = await db.execute(select(User).where(User.id == user_id))
+        target_user = result.scalar_one_or_none()
+
+        if not target_user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        if target_user.email == user["email"]:
+            raise HTTPException(status_code=400, detail="Cannot delete yourself")
+
+        await db.delete(target_user)
+        await db.commit()
+
+        return {"success": True, "message": f"User {target_user.email} deleted"}
+
+
+@app.put("/auth/users/{user_id}/toggle-admin")
+async def toggle_admin(user_id: int, user: dict = Depends(require_admin)):
+    """Toggle admin status for a user (admin only)"""
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import User
+    from sqlalchemy import select
+
+    async with get_db() as db:
+        result = await db.execute(select(User).where(User.id == user_id))
+        target_user = result.scalar_one_or_none()
+
+        if not target_user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        if target_user.email == user["email"]:
+            raise HTTPException(status_code=400, detail="Cannot modify your own admin status")
+
+        target_user.is_admin = not target_user.is_admin
+        await db.commit()
+
+        return {"success": True, "is_admin": target_user.is_admin}
 
 
 # ---------- NEW: Force backfill today orders (sends per-order messages) ----------
