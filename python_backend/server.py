@@ -1098,7 +1098,7 @@ async def sync_korealy_to_shopify(req: KorealySyncRequest):
 
 # ---------- Meta Ads Decision Engine ----------
 
-from meta_decision_engine import create_engine, EngineConfig
+# Lazy import: from meta_decision_engine import create_engine, EngineConfig
 
 class MetaAdsConfigRequest(BaseModel):
     """Configuration for decision engine"""
@@ -1123,6 +1123,8 @@ async def meta_ads_quick_status(date_range: str = "today"):
     Returns spend, clicks, CTR, conversions, CPA, health score
     """
     try:
+        from meta_decision_engine import create_engine
+
         access_token = _get_marketing_token()
         if not access_token:
             raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
@@ -1143,6 +1145,8 @@ async def meta_ads_full_analysis(date_range: str = "today", campaign_id: str = N
     Returns metrics, decisions, alerts, and recommendations
     """
     try:
+        from meta_decision_engine import create_engine
+
         access_token = _get_marketing_token()
         if not access_token:
             raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
@@ -1163,6 +1167,8 @@ async def meta_ads_get_decisions(date_range: str = "today"):
     Returns list of recommended actions (scale, pause, maintain)
     """
     try:
+        from meta_decision_engine import create_engine
+
         access_token = _get_marketing_token()
         if not access_token:
             raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
