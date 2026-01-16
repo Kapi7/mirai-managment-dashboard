@@ -14,9 +14,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, field_validator
 
-# Core orchestration (already talks to Shopify, PayPal, Google, Meta, PSP)
-from master_report_mirai import build_month_rows, _google_spend_usd
-from meta_client import fetch_meta_insights_day
+# Core orchestration - imported lazily inside endpoints to avoid startup failures
+# from master_report_mirai import build_month_rows, _google_spend_usd
+# from meta_client import fetch_meta_insights_day
 
 # ==================== AUTH CONFIGURATION ====================
 
@@ -243,6 +243,9 @@ def _collect_kpis_range(start_date: date, end_date: date, shop_tz: str):
     and merge all KPIs into a single {date -> KPIs} dict.
     This is where Shopify + Meta + Google + PayPal + PSP are all combined.
     """
+    # Lazy import to avoid startup failures
+    from master_report_mirai import build_month_rows
+
     all_kpis: dict[date, object] = {}
 
     # start from the 1st of the first month in the range
@@ -700,6 +703,10 @@ async def ad_spend(req: DateRangeRequest):
     Still used by some tools; dashboard can rely on /daily-report instead.
     """
     try:
+        # Lazy imports to avoid startup failures
+        from master_report_mirai import _google_spend_usd
+        from meta_client import fetch_meta_insights_day
+
         if req.start > req.end:
             raise HTTPException(status_code=400, detail="start_date must be <= end_date")
 
@@ -757,9 +764,11 @@ async def debug_google_ads(day: str = None, clear_cache: bool = False):
     }
 
     try:
+        # Lazy import
+        from master_report_mirai import _google_spend_usd, _GADS_CACHE
+
         # Clear cache if requested
         if clear_cache:
-            from master_report_mirai import _GADS_CACHE
             cache_size = len(_GADS_CACHE)
             _GADS_CACHE.clear()
             result["cache_cleared"] = True
