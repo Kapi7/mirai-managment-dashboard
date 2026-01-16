@@ -4708,15 +4708,20 @@ async def seo_agent_get_suggestions(force_refresh: bool = False, count: int = 5)
     try:
         from blog_service import create_seo_agent
 
+        print(f"[SEO] Getting suggestions: force_refresh={force_refresh}, count={count}")
         agent = create_seo_agent()
 
         if force_refresh:
+            print(f"[SEO] Force refresh - generating new suggestions...")
             suggestions = agent.generate_smart_suggestions(count=count, force_refresh=True)
         else:
             suggestions = agent.get_suggestions()
+            print(f"[SEO] Loaded {len(suggestions)} existing suggestions")
             if len(suggestions) < count:
+                print(f"[SEO] Not enough suggestions, generating more...")
                 suggestions = agent.generate_smart_suggestions(count=count)
 
+        print(f"[SEO] Returning {len(suggestions)} suggestions")
         return {
             "suggestions": [
                 {
@@ -4737,10 +4742,11 @@ async def seo_agent_get_suggestions(force_refresh: bool = False, count: int = 5)
             "count": len(suggestions)
         }
     except ValueError as e:
+        print(f"[SEO] ValueError: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         import traceback
-        print(f"[BLOG] Error in /blog/seo-agent/suggestions: {e}")
+        print(f"[SEO] Error in /blog/seo-agent/suggestions: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to get suggestions: {str(e)}")
 
