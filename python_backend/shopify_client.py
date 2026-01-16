@@ -347,3 +347,240 @@ def fetch_variant_unit_cost_usd_by_gid(variant_gid: str) -> Optional[float]:
         return float(amt)
     except Exception:
         return None
+
+
+# ---------- Blog API Functions ----------
+
+BLOGS_GQL = """
+query GetBlogs($first: Int!) {
+  blogs(first: $first) {
+    edges {
+      node {
+        id
+        title
+        handle
+        onlineStoreUrl
+      }
+    }
+  }
+}
+"""
+
+ARTICLES_GQL = """
+query GetArticles($blogId: ID!, $first: Int!, $cursor: String) {
+  blog(id: $blogId) {
+    id
+    title
+    articles(first: $first, after: $cursor, sortKey: PUBLISHED_AT, reverse: true) {
+      pageInfo { hasNextPage }
+      edges {
+        cursor
+        node {
+          id
+          title
+          handle
+          publishedAt
+          author { name }
+          tags
+          excerpt: summary
+          onlineStoreUrl
+          image { url altText }
+        }
+      }
+    }
+  }
+}
+"""
+
+CREATE_ARTICLE_MUTATION = """
+mutation CreateArticle($blogId: ID!, $input: ArticleInput!) {
+  articleCreate(blogId: $blogId, article: $input) {
+    article {
+      id
+      title
+      handle
+      publishedAt
+      onlineStoreUrl
+    }
+    userErrors {
+      field
+      message
+    }
+  }
+}
+"""
+
+UPDATE_ARTICLE_MUTATION = """
+mutation UpdateArticle($id: ID!, $input: ArticleInput!) {
+  articleUpdate(id: $id, article: $input) {
+    article {
+      id
+      title
+      handle
+      publishedAt
+      onlineStoreUrl
+    }
+    userErrors {
+      field
+      message
+    }
+  }
+}
+"""
+
+
+def fetch_blogs(limit: int = 50) -> List[Dict[str, Any]]:
+    """Fetch all blogs from the default store."""
+    try:
+        data = _gql(BLOGS_GQL, {"first": limit})
+        edges = (data.get("blogs") or {}).get("edges") or []
+        return [e["node"] for e in edges if isinstance(e, dict) and "node" in e]
+    except Exception as e:
+        print(f"[shopify_client] Error fetching blogs: {e}")
+        return []
+
+
+def fetch_articles(blog_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+    """Fetch articles from a specific blog."""
+    all_articles = []
+    cursor = None
+
+    while True:
+        try:
+            data = _gql(ARTICLES_GQL, {"blogId": blog_id, "first": min(limit, 50), "cursor": cursor})
+            blog_data = data.get("blog") or {}
+            articles_data = blog_data.get("articles") or {}
+            edges = articles_data.get("edges") or []
+
+            for edge in edges:
+                if isinstance(edge, dict) and "node" in edge:
+                    all_articles.append(edge["node"])
+
+            page_info = articles_data.get("pageInfo") or {}
+            if not page_info.get("hasNextPage") or len(all_articles) >= limit:
+                break
+
+            cursor = edges[-1]["cursor"] if edges else None
+        except Exception as e:
+            print(f"[shopify_client] Error fetching articles: {e}")
+            break
+
+    return all_articles[:limit]
+
+
+def fetch_all_articles(limit: int = 100) -> List[Dict[str, Any]]:
+    """Fetch articles from all blogs."""
+    blogs = fetch_blogs()
+    all_articles = []
+
+    for blog in blogs:
+        blog_id = blog.get("id")
+        if blog_id:
+            articles = fetch_articles(blog_id, limit=limit)
+            for article in articles:
+                article["blog_title"] = blog.get("title", "Unknown")
+                article["blog_id"] = blog_id
+            all_articles.extend(articles)
+
+    # Sort by published date
+    all_articles.sort(key=lambda x: x.get("publishedAt") or "", reverse=True)
+    return all_articles[:limit]
+
+
+def create_article(
+    blog_id: str,
+    title: str,
+    body_html: str,
+    author: str = "Mirai Skin Team",
+    tags: Optional[List[str]] = None,
+    published: bool = True,
+    summary: Optional[str] = None
+) -> Dict[str, Any]:
+    """Create a new article in a blog."""
+    input_data = {
+        "title": title,
+        "body": body_html,
+        "author": {"name": author},
+        "isPublished": published,
+    }
+
+    if tags:
+        input_data["tags"] = tags
+
+    if summary:
+        input_data["summary"] = summary
+
+    try:
+        data = _gql(CREATE_ARTICLE_MUTATION, {"blogId": blog_id, "input": input_data})
+        result = data.get("articleCreate") or {}
+        errors = result.get("userErrors") or []
+
+        if errors:
+            error_messages = [f"{e.get('field')}: {e.get('message')}" for e in errors]
+            raise RuntimeError(f"Failed to create article: {'; '.join(error_messages)}")
+
+        article = result.get("article") or {}
+        return {
+            "success": True,
+            "article_id": article.get("id"),
+            "title": article.get("title"),
+            "handle": article.get("handle"),
+            "url": article.get("onlineStoreUrl"),
+            "published_at": article.get("publishedAt")
+        }
+    except RuntimeError:
+        raise
+    except Exception as e:
+        raise RuntimeError(f"Failed to create article: {str(e)}")
+
+
+def update_article(
+    article_id: str,
+    title: Optional[str] = None,
+    body_html: Optional[str] = None,
+    author: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+    published: Optional[bool] = None,
+    summary: Optional[str] = None
+) -> Dict[str, Any]:
+    """Update an existing article."""
+    input_data = {}
+
+    if title is not None:
+        input_data["title"] = title
+    if body_html is not None:
+        input_data["body"] = body_html
+    if author is not None:
+        input_data["author"] = {"name": author}
+    if tags is not None:
+        input_data["tags"] = tags
+    if published is not None:
+        input_data["isPublished"] = published
+    if summary is not None:
+        input_data["summary"] = summary
+
+    if not input_data:
+        raise ValueError("No fields to update")
+
+    try:
+        data = _gql(UPDATE_ARTICLE_MUTATION, {"id": article_id, "input": input_data})
+        result = data.get("articleUpdate") or {}
+        errors = result.get("userErrors") or []
+
+        if errors:
+            error_messages = [f"{e.get('field')}: {e.get('message')}" for e in errors]
+            raise RuntimeError(f"Failed to update article: {'; '.join(error_messages)}")
+
+        article = result.get("article") or {}
+        return {
+            "success": True,
+            "article_id": article.get("id"),
+            "title": article.get("title"),
+            "handle": article.get("handle"),
+            "url": article.get("onlineStoreUrl"),
+            "published_at": article.get("publishedAt")
+        }
+    except RuntimeError:
+        raise
+    except Exception as e:
+        raise RuntimeError(f"Failed to update article: {str(e)}")

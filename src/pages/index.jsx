@@ -15,6 +15,7 @@ const Support = lazy(() => import('./Support'));
 const Tracking = lazy(() => import('./Tracking'));
 const Activity = lazy(() => import('./Activity'));
 const Marketing = lazy(() => import('./Marketing'));
+const BlogCreator = lazy(() => import('./BlogCreator'));
 
 // Protected route wrapper
 function ProtectedRoute({ children }) {
@@ -58,6 +59,8 @@ const PAGES = {
     Activity: Activity,
 
     Marketing: Marketing,
+
+    BlogCreator: BlogCreator,
 
 }
 
@@ -105,6 +108,7 @@ function PagesContent() {
                     <Route path="/Tracking" element={<ProtectedRoute><Tracking /></ProtectedRoute>} />
                     <Route path="/Activity" element={<ProtectedRoute><Activity /></ProtectedRoute>} />
                     <Route path="/Marketing" element={<ProtectedRoute><Marketing /></ProtectedRoute>} />
+                    <Route path="/BlogCreator" element={<ProtectedRoute><BlogCreator /></ProtectedRoute>} />
                     <Route path="/login" element={<Login />} />
                 </Routes>
             </Suspense>

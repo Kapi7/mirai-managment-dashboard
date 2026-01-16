@@ -1220,6 +1220,282 @@ async def meta_ads_get_targeting_presets():
     }
 
 
+# ============================================================
+# BLOG CONTENT GENERATION ENDPOINTS
+# ============================================================
+
+from pydantic import BaseModel as PydanticBaseModel
+
+
+class BlogGenerateRequest(PydanticBaseModel):
+    category: str
+    topic: str
+    keywords: List[str]
+    word_count: int = 1000
+
+
+class BlogRegenerateRequest(PydanticBaseModel):
+    hints: str
+    keep_keywords: bool = True
+
+
+class BlogUpdateRequest(PydanticBaseModel):
+    title: Optional[str] = None
+    body: Optional[str] = None
+    meta_description: Optional[str] = None
+    excerpt: Optional[str] = None
+    suggested_tags: Optional[List[str]] = None
+
+
+class BlogApproveRequest(PydanticBaseModel):
+    blog_id: str
+    publish_immediately: bool = True
+
+
+@app.get("/blog/categories")
+async def blog_get_categories():
+    """Get all blog categories with their style guides and example topics"""
+    from blog_service import BLOG_CATEGORIES
+    return {"categories": BLOG_CATEGORIES}
+
+
+@app.get("/blog/seo-keywords/{category}")
+async def blog_get_seo_keywords(category: str):
+    """Get suggested SEO keywords for a category"""
+    from blog_service import BlogGenerator
+    keywords = BlogGenerator.get_seo_keywords(category)
+    if not keywords:
+        raise HTTPException(status_code=404, detail=f"Category not found: {category}")
+    return {"category": category, "keywords": keywords}
+
+
+@app.get("/blog/drafts")
+async def blog_get_drafts(status: Optional[str] = None):
+    """Get all draft articles, optionally filtered by status"""
+    try:
+        from blog_service import BlogStorage
+        from dataclasses import asdict
+
+        storage = BlogStorage()
+        drafts = storage.get_all_drafts(status)
+
+        return {
+            "drafts": [asdict(d) for d in drafts],
+            "count": len(drafts)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get drafts: {str(e)}")
+
+
+@app.get("/blog/draft/{draft_id}")
+async def blog_get_draft(draft_id: str):
+    """Get a single draft by ID"""
+    try:
+        from blog_service import BlogStorage
+        from dataclasses import asdict
+
+        storage = BlogStorage()
+        draft = storage.get_draft(draft_id)
+
+        if not draft:
+            raise HTTPException(status_code=404, detail=f"Draft not found: {draft_id}")
+
+        return asdict(draft)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get draft: {str(e)}")
+
+
+@app.get("/blog/published")
+async def blog_get_published():
+    """Get all published articles"""
+    try:
+        from blog_service import BlogStorage
+        from dataclasses import asdict
+
+        storage = BlogStorage()
+        published = storage.get_all_published()
+
+        return {
+            "articles": [asdict(p) for p in published],
+            "count": len(published)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get published articles: {str(e)}")
+
+
+@app.get("/blog/shopify-blogs")
+async def blog_get_shopify_blogs():
+    """Get list of blogs from Shopify store"""
+    try:
+        from shopify_client import fetch_blogs
+        blogs = fetch_blogs()
+        return {"blogs": blogs, "count": len(blogs)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch Shopify blogs: {str(e)}")
+
+
+@app.get("/blog/shopify-articles")
+async def blog_get_shopify_articles(limit: int = 50):
+    """Get articles from Shopify store"""
+    try:
+        from shopify_client import fetch_all_articles
+        articles = fetch_all_articles(limit=limit)
+        return {"articles": articles, "count": len(articles)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch Shopify articles: {str(e)}")
+
+
+@app.post("/blog/generate")
+async def blog_generate_article(req: BlogGenerateRequest):
+    """Generate a new blog article using AI"""
+    try:
+        from blog_service import create_blog_generator
+
+        generator = create_blog_generator()
+        draft = generator.generate_article(
+            category=req.category,
+            topic=req.topic,
+            keywords=req.keywords,
+            word_count=req.word_count,
+            user_email="dashboard"
+        )
+
+        return {
+            "success": True,
+            "draft_id": draft.id,
+            "title": draft.title,
+            "excerpt": draft.excerpt,
+            "word_count": draft.word_count,
+            "category": draft.category
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate article: {str(e)}")
+
+
+@app.post("/blog/regenerate/{draft_id}")
+async def blog_regenerate_article(draft_id: str, req: BlogRegenerateRequest):
+    """Regenerate an article with user hints"""
+    try:
+        from blog_service import create_blog_generator
+
+        generator = create_blog_generator()
+        draft = generator.regenerate_article(
+            draft_id=draft_id,
+            hints=req.hints,
+            keep_keywords=req.keep_keywords
+        )
+
+        return {
+            "success": True,
+            "draft_id": draft.id,
+            "title": draft.title,
+            "excerpt": draft.excerpt,
+            "word_count": draft.word_count,
+            "regeneration_count": draft.regeneration_count
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to regenerate article: {str(e)}")
+
+
+@app.put("/blog/draft/{draft_id}")
+async def blog_update_draft(draft_id: str, req: BlogUpdateRequest):
+    """Update a draft's content manually"""
+    try:
+        from blog_service import create_blog_generator
+        from dataclasses import asdict
+
+        generator = create_blog_generator()
+        draft = generator.update_draft(
+            draft_id=draft_id,
+            title=req.title,
+            body=req.body,
+            meta_description=req.meta_description,
+            excerpt=req.excerpt,
+            suggested_tags=req.suggested_tags
+        )
+
+        return {
+            "success": True,
+            "draft": asdict(draft)
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update draft: {str(e)}")
+
+
+@app.post("/blog/approve/{draft_id}")
+async def blog_approve_draft(draft_id: str, req: BlogApproveRequest):
+    """Approve a draft and publish to Shopify"""
+    try:
+        from blog_service import create_blog_generator
+        from shopify_client import create_article
+
+        generator = create_blog_generator()
+        draft = generator.get_draft(draft_id)
+
+        if not draft:
+            raise HTTPException(status_code=404, detail=f"Draft not found: {draft_id}")
+
+        # Create article in Shopify
+        result = create_article(
+            blog_id=req.blog_id,
+            title=draft.title,
+            body_html=draft.body,
+            author="Mirai Skin Team",
+            tags=draft.suggested_tags,
+            published=req.publish_immediately,
+            summary=draft.excerpt
+        )
+
+        # Record as published
+        published = generator.record_published(
+            draft_id=draft_id,
+            shopify_article_id=result["article_id"],
+            shopify_url=result["url"] or ""
+        )
+
+        return {
+            "success": True,
+            "shopify_article_id": result["article_id"],
+            "url": result["url"],
+            "title": draft.title
+        }
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to publish article: {str(e)}")
+
+
+@app.post("/blog/reject/{draft_id}")
+async def blog_reject_draft(draft_id: str):
+    """Reject and delete a draft"""
+    try:
+        from blog_service import BlogStorage
+
+        storage = BlogStorage()
+        deleted = storage.delete_draft(draft_id)
+
+        if not deleted:
+            raise HTTPException(status_code=404, detail=f"Draft not found: {draft_id}")
+
+        return {"success": True, "draft_id": draft_id, "deleted": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to reject draft: {str(e)}")
+
+
 # ---------- Local dev entrypoint ----------
 
 if __name__ == "__main__":

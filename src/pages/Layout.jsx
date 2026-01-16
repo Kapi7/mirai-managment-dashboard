@@ -14,7 +14,8 @@ import {
   MessageSquare,
   Truck,
   ClipboardList,
-  Target
+  Target,
+  FileText
 } from "lucide-react";
 import {
   Sidebar,
@@ -53,6 +54,7 @@ const navigationSections = [
     label: "Marketing",
     items: [
       { title: "Meta Ads", url: createPageUrl("Marketing"), icon: Target },
+      { title: "Blog Creator", url: createPageUrl("BlogCreator"), icon: FileText },
     ]
   },
   {
