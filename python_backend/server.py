@@ -1189,8 +1189,8 @@ async def meta_ads_diagnose_cpm(date_range: str = "last_7d"):
 async def meta_ads_setup_tests(campaign_id: str, source_adset_id: str, pixel_id: str = None):
     """
     Create test ad sets for CPM optimization:
-    1. Advantage+ Audience (US broad) - €20/day
-    2. UK Test (lower CPM geo) - €15/day
+    1. Advantage+ Audience (US broad)
+    2. UK Test (lower CPM geo)
 
     Both ad sets will:
     - Copy all ads from the source ad set
@@ -1227,6 +1227,152 @@ async def meta_ads_setup_tests(campaign_id: str, source_adset_id: str, pixel_id:
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to setup: {str(e)}")
+
+
+@app.post("/meta-ads/setup-uk-test")
+async def meta_ads_setup_uk_only():
+    """
+    ONE-CLICK: Create UK test ad set with full Advantage+
+
+    Automatically:
+    1. Finds the active campaign
+    2. Finds an ad set with ads to copy from
+    3. Creates UK Women 21-60 ad set with Advantage+ everything
+    4. Copies all ads with Advantage+ Creative enabled
+
+    Uses campaign budget (CBO) - no additional spend, shares €20/day
+    """
+    try:
+        from meta_decision_engine import create_engine
+        import json
+
+        access_token = _get_marketing_token()
+        if not access_token:
+            raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
+
+        engine = create_engine(access_token)
+
+        # Step 1: Find active campaign
+        campaigns = engine.get_campaigns()
+        active_campaign = None
+        for c in campaigns:
+            if c.get("effective_status") == "ACTIVE":
+                active_campaign = c
+                break
+
+        if not active_campaign:
+            # Try any campaign with "Mirai" or "Korean" in name
+            for c in campaigns:
+                if "mirai" in c.get("name", "").lower() or "korean" in c.get("name", "").lower():
+                    active_campaign = c
+                    break
+
+        if not active_campaign:
+            return {
+                "success": False,
+                "error": "No active campaign found",
+                "campaigns": [{"id": c.get("id"), "name": c.get("name"), "status": c.get("effective_status")} for c in campaigns]
+            }
+
+        campaign_id = active_campaign["id"]
+        print(f"[SETUP] Using campaign: {active_campaign.get('name')} ({campaign_id})")
+
+        # Step 2: Find ad set with ads to copy from
+        adsets = engine.get_adsets(campaign_id)
+        source_adset = None
+        source_ads = []
+
+        for adset in adsets:
+            ads = engine.get_ads_with_creatives(adset["id"])
+            if ads:
+                source_adset = adset
+                source_ads = ads
+                break
+
+        if not source_adset:
+            return {
+                "success": False,
+                "error": "No ad set with ads found to copy from",
+                "adsets": [{"id": a.get("id"), "name": a.get("name")} for a in adsets]
+            }
+
+        print(f"[SETUP] Copying from ad set: {source_adset.get('name')} ({len(source_ads)} ads)")
+
+        # Step 3: Get pixel ID from source
+        adset_details = engine._request(f"/{source_adset['id']}?fields=promoted_object")
+        promoted_obj = adset_details.get("promoted_object", {})
+        pixel_id = promoted_obj.get("pixel_id")
+        promoted_object = {"pixel_id": pixel_id} if pixel_id else None
+
+        # Step 4: Create UK test ad set with FULL Advantage+
+        uk_targeting = {
+            "age_min": 21,
+            "age_max": 60,
+            "genders": [1],  # Women
+            "geo_locations": {
+                "countries": ["GB"],
+                "location_types": ["home"]
+            }
+            # NO interests = Advantage+ Audience will expand
+        }
+
+        uk_result = engine.create_adset_cbo(
+            campaign_id=campaign_id,
+            name="TEST - UK Women 21-60 Advantage+",
+            targeting=uk_targeting,
+            optimization_goal="OFFSITE_CONVERSIONS",
+            status="PAUSED",  # Start paused for review
+            advantage_audience=True,
+            promoted_object=promoted_object,
+            url_tags="utm_source=meta&utm_medium=paid&utm_campaign=mirai_quiz&utm_content=uk_advplus"
+        )
+
+        ads_created = []
+        if uk_result.get("success"):
+            # Step 5: Copy ads with Advantage+ Creative
+            ads_created = engine.duplicate_ads_to_adset(
+                source_adset_id=source_adset["id"],
+                target_adset_id=uk_result["id"],
+                name_suffix="(UK Adv+)",
+                status="ACTIVE",
+                use_advantage_creative=True
+            )
+
+        return {
+            "success": uk_result.get("success", False),
+            "message": "UK test ad set created with FULL Advantage+" if uk_result.get("success") else "Failed to create",
+            "campaign": {
+                "id": campaign_id,
+                "name": active_campaign.get("name")
+            },
+            "source_adset": {
+                "id": source_adset["id"],
+                "name": source_adset.get("name"),
+                "ads_count": len(source_ads)
+            },
+            "uk_adset": uk_result,
+            "ads_created": ads_created,
+            "advantage_plus_features": [
+                "✅ Advantage+ Audience (targeting expansion)",
+                "✅ Advantage+ Placements (auto placements)",
+                "✅ Advantage+ Creative (image/text optimization)"
+            ],
+            "next_steps": [
+                "1. Go to Meta Ads Manager",
+                "2. Find 'TEST - UK Women 21-60 Advantage+'",
+                "3. Review and ACTIVATE the ad set",
+                "4. Monitor CPM for 2-3 days",
+                "5. Compare: Current €80 CPM vs UK test"
+            ]
+        }
+
+    except Exception as e:
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
 
 
 @app.get("/meta-ads/list-adsets")
