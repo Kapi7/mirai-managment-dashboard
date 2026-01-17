@@ -1159,6 +1159,32 @@ async def meta_ads_full_analysis(date_range: str = "today", campaign_id: str = N
         raise HTTPException(status_code=500, detail=f"Failed to analyze: {str(e)}")
 
 
+@app.get("/meta-ads/diagnose")
+async def meta_ads_diagnose_cpm(date_range: str = "last_7d"):
+    """
+    Diagnose why CPM is high and get actionable recommendations
+
+    Returns:
+    - Quality/relevance scores for each ad
+    - Audience analysis
+    - Specific issues identified
+    - Actionable recommendations
+    """
+    try:
+        from meta_decision_engine import create_engine
+
+        access_token = _get_marketing_token()
+        if not access_token:
+            raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
+
+        engine = create_engine(access_token)
+        diagnosis = engine.diagnose_high_cpm(date_range)
+        return diagnosis
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to diagnose: {str(e)}")
+
+
 @app.get("/meta-ads/decisions")
 async def meta_ads_get_decisions(date_range: str = "today"):
     """

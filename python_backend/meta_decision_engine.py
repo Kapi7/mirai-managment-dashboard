@@ -192,6 +192,173 @@ class MetaAdsClient:
         data = data_list[0] if data_list else {}
         return self._parse_insights(data)
 
+    def get_ad_quality_scores(self, ad_id: str, date_preset: str = "last_7d") -> dict:
+        """
+        Get ad quality/relevance scores from Meta
+
+        Returns:
+            quality_ranking: BELOW_AVERAGE_10, BELOW_AVERAGE_20, BELOW_AVERAGE_35,
+                           AVERAGE, ABOVE_AVERAGE
+            engagement_rate_ranking: Same scale
+            conversion_rate_ranking: Same scale
+        """
+        fields = [
+            "quality_ranking", "engagement_rate_ranking", "conversion_rate_ranking",
+            "impressions", "cpm", "ctr", "cpc"
+        ]
+        endpoint = f"/{ad_id}/insights?fields={','.join(fields)}&date_preset={date_preset}"
+        result = self._request(endpoint)
+
+        data_list = result.get("data", [])
+        if not data_list:
+            return {"error": "No data available yet (need more impressions)"}
+
+        data = data_list[0]
+        return {
+            "quality_ranking": data.get("quality_ranking", "Unknown"),
+            "engagement_rate_ranking": data.get("engagement_rate_ranking", "Unknown"),
+            "conversion_rate_ranking": data.get("conversion_rate_ranking", "Unknown"),
+            "impressions": data.get("impressions", 0),
+            "cpm": data.get("cpm", 0),
+            "ctr": data.get("ctr", 0),
+            "cpc": data.get("cpc", 0),
+        }
+
+    def diagnose_high_cpm(self, date_preset: str = "last_7d") -> dict:
+        """
+        Diagnose why CPM is high and provide actionable recommendations
+
+        Checks:
+        1. Quality/relevance scores for each ad
+        2. Audience size and targeting
+        3. Bid strategy and budget
+        4. Creative performance comparison
+        """
+        diagnosis = {
+            "timestamp": datetime.now().isoformat(),
+            "overall_cpm": 0,
+            "issues": [],
+            "recommendations": [],
+            "ad_scores": [],
+            "audience_analysis": {},
+        }
+
+        # Get all active campaigns
+        campaigns = self.get_campaigns()
+        active_campaigns = [c for c in campaigns if c.get("effective_status") == "ACTIVE"]
+
+        if not active_campaigns:
+            diagnosis["issues"].append("No active campaigns found")
+            return diagnosis
+
+        total_spend = 0
+        total_impressions = 0
+
+        for campaign in active_campaigns:
+            campaign_id = campaign["id"]
+
+            # Get adsets
+            adsets = self.get_adsets(campaign_id)
+            for adset in adsets:
+                adset_id = adset["id"]
+
+                # Get adset insights
+                try:
+                    insights = self.get_insights(adset_id, level="adset", date_preset=date_preset)
+                    total_spend += insights.spend
+                    total_impressions += insights.impressions
+
+                    # Check targeting
+                    adset_details = self._request(f"/{adset_id}?fields=targeting,optimization_goal,daily_budget,bid_strategy")
+                    targeting = adset_details.get("targeting", {})
+
+                    # Analyze audience
+                    audience_info = {
+                        "adset_name": adset.get("name"),
+                        "age_range": f"{targeting.get('age_min', '?')}-{targeting.get('age_max', '?')}",
+                        "countries": targeting.get("geo_locations", {}).get("countries", []),
+                        "has_interests": bool(targeting.get("flexible_spec")),
+                        "has_custom_audiences": bool(targeting.get("custom_audiences")),
+                        "optimization_goal": adset_details.get("optimization_goal"),
+                        "daily_budget": int(adset_details.get("daily_budget", 0)) / 100,  # cents to EUR
+                        "bid_strategy": adset_details.get("bid_strategy"),
+                        "cpm": insights.cpm,
+                    }
+                    diagnosis["audience_analysis"][adset.get("name")] = audience_info
+
+                    # Flag issues
+                    if insights.cpm > 50:
+                        diagnosis["issues"].append(f"Very high CPM (€{insights.cpm:.2f}) on adset '{adset.get('name')}'")
+
+                    if targeting.get("flexible_spec"):
+                        interests = targeting.get("flexible_spec", [])
+                        if interests:
+                            diagnosis["issues"].append(f"Narrow interest targeting on '{adset.get('name')}' - try Advantage+ or broader")
+
+                except Exception as e:
+                    print(f"Error getting adset insights: {e}")
+
+                # Get ads and their quality scores
+                ads = self.get_ads(adset_id)
+                for ad in ads:
+                    ad_id = ad["id"]
+                    try:
+                        scores = self.get_ad_quality_scores(ad_id, date_preset)
+                        scores["ad_name"] = ad.get("name")
+                        scores["adset_name"] = adset.get("name")
+                        diagnosis["ad_scores"].append(scores)
+
+                        # Flag quality issues
+                        if "BELOW_AVERAGE" in str(scores.get("quality_ranking", "")):
+                            diagnosis["issues"].append(f"Low quality score on ad '{ad.get('name')}' - creative not resonating")
+                        if "BELOW_AVERAGE" in str(scores.get("engagement_rate_ranking", "")):
+                            diagnosis["issues"].append(f"Low engagement on ad '{ad.get('name')}' - try different creative")
+
+                    except Exception as e:
+                        diagnosis["ad_scores"].append({
+                            "ad_name": ad.get("name"),
+                            "error": str(e)
+                        })
+
+        # Calculate overall CPM
+        if total_impressions > 0:
+            diagnosis["overall_cpm"] = (total_spend / total_impressions) * 1000
+
+        # Generate recommendations based on issues
+        if diagnosis["overall_cpm"] > 50:
+            diagnosis["recommendations"].extend([
+                "🎯 AUDIENCE: Your CPM is very high. Try Advantage+ Audience (let Meta optimize) instead of interest targeting",
+                "🌍 GEO: Test UK, Canada, or Australia - often 50% lower CPMs than US",
+                "💰 BUDGET: Increase daily budget to €50+ to give Meta more optimization room",
+            ])
+
+        if any("quality" in issue.lower() for issue in diagnosis["issues"]):
+            diagnosis["recommendations"].extend([
+                "🎨 CREATIVE: Low quality scores = Meta thinks your ad doesn't match audience. Test new visuals",
+                "📝 COPY: Try different headlines/primary text - current ones may not resonate",
+            ])
+
+        if any("engagement" in issue.lower() for issue in diagnosis["issues"]):
+            diagnosis["recommendations"].extend([
+                "🛑 SCROLL-STOPPING: Your creative isn't stopping people. Try: faces, bold colors, motion",
+                "❓ VALUE PROP: Is 'AI skin analysis' compelling enough? Test benefit-focused hooks",
+            ])
+
+        if any("narrow" in issue.lower() for issue in diagnosis["issues"]):
+            diagnosis["recommendations"].extend([
+                "📢 BROADER: Remove interest targeting. Use Advantage+ to let Meta find converters",
+                "🔄 LOOKALIKE: If you have quiz completers, build a lookalike audience from them",
+            ])
+
+        # Default recommendations if we don't have enough data
+        if not diagnosis["recommendations"]:
+            diagnosis["recommendations"] = [
+                "⏳ Need more data - campaigns are very new. Wait 3-5 days for meaningful insights",
+                "📊 Check back when you have 500+ impressions per ad for quality scores",
+            ]
+
+        return diagnosis
+
     def _parse_insights(self, data: dict) -> PerformanceMetrics:
         """Parse raw insights into PerformanceMetrics"""
         actions = {a["action_type"]: int(a["value"]) for a in data.get("actions", [])}
