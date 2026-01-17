@@ -79,48 +79,54 @@ class Decision:
 class EngineConfig:
     """Decision engine configuration"""
     # CPA targets (in EUR) - Updated Jan 2026
-    target_cpa: float = 25.00  # Target CPA
-    max_cpa: float = 32.00
-    alert_cpa: float = 40.00
+    # More realistic targets for early-stage campaigns
+    target_cpa: float = 25.00  # Ideal CPA we aim for
+    acceptable_cpa: float = 35.00  # Acceptable CPA during learning
+    max_cpa: float = 40.00  # Maximum before alert (user's budget limit)
+    alert_cpa: float = 50.00  # Critical alert threshold
 
-    # CTR thresholds
-    min_ctr: float = 0.8
-    target_ctr: float = 1.5
-    excellent_ctr: float = 2.5
+    # CTR thresholds - more lenient during learning
+    min_ctr: float = 0.6  # Below this = concern
+    target_ctr: float = 1.2  # Good CTR for cold traffic
+    excellent_ctr: float = 2.0  # Excellent performance
 
-    # CPC thresholds (EUR)
-    target_cpc: float = 0.40
-    max_cpc: float = 0.60
+    # CPC thresholds (EUR) - adjusted for high CPM markets
+    target_cpc: float = 0.50
+    max_cpc: float = 0.80
 
-    # Minimum data for decisions
-    min_impressions: int = 1000
-    min_clicks: int = 50
-    min_spend: float = 10.0
+    # CPM thresholds (EUR) - new metric for monitoring
+    target_cpm: float = 15.00  # Ideal CPM
+    max_cpm: float = 25.00  # Above this = audience too narrow/expensive
+
+    # Minimum data for decisions - more data needed for reliability
+    min_impressions: int = 1500  # Need more data before deciding
+    min_clicks: int = 30
+    min_spend: float = 15.0
 
     # Learning phase - TIME BASED PROTECTION
-    learning_phase_impressions: int = 500
-    learning_phase_hours: int = 48  # Minimum 48 hours before kill decisions
-    min_hours_before_pause: int = 72  # 3 days minimum before pausing
-    min_spend_before_pause: float = 30.0  # Minimum €30 spent before pause decision
+    learning_phase_impressions: int = 1000  # Increased for better data
+    learning_phase_hours: int = 72  # Minimum 3 days before kill decisions
+    min_hours_before_pause: int = 120  # 5 days minimum before pausing
+    min_spend_before_pause: float = 50.0  # Minimum €50 spent before pause decision
 
     # Campaign maturity phases (hours)
-    phase_new: int = 48  # 0-48 hours = NEW (protected)
-    phase_learning: int = 168  # 48-168 hours (7 days) = LEARNING
-    # After 168 hours = MATURE (full optimization)
+    phase_new: int = 72  # 0-72 hours = NEW (protected)
+    phase_learning: int = 240  # 72-240 hours (10 days) = LEARNING
+    # After 240 hours = MATURE (full optimization)
 
     # Budget rules
     scale_budget_increase: float = 0.20  # 20% increase
-    scale_min_roas: float = 2.0
+    scale_min_roas: float = 1.5  # Lowered - 1.5x ROAS is good for early stage
 
     # Auto-actions
     auto_pause_underperformers: bool = False
     auto_scale_winners: bool = False
 
-    # Funnel conversion targets
-    click_to_quiz_rate: float = 0.30  # 30% of clicks start quiz
-    quiz_complete_rate: float = 0.60  # 60% complete quiz
-    quiz_to_atc_rate: float = 0.15  # 15% add to cart
-    atc_to_purchase_rate: float = 0.40  # 40% purchase
+    # Funnel conversion targets (more realistic)
+    click_to_quiz_rate: float = 0.25  # 25% of clicks start quiz
+    quiz_complete_rate: float = 0.50  # 50% complete quiz
+    quiz_to_atc_rate: float = 0.10  # 10% add to cart
+    atc_to_purchase_rate: float = 0.30  # 30% purchase
 
 
 class MetaAdsClient:
