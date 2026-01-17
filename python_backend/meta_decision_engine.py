@@ -574,8 +574,11 @@ class MetaAdsClient:
         1. Advantage+ Audience (US) - broader targeting
         2. UK Test - different geo with lower CPM
 
+        Uses CAMPAIGN BUDGET (CBO) - no individual ad set budgets.
+        Adds UTM parameters for full tracking.
+
         Args:
-            campaign_id: Campaign to add ad sets to
+            campaign_id: Campaign to add ad sets to (must have CBO enabled)
             source_adset_id: Existing ad set to copy ads from
             pixel_id: Facebook Pixel ID for conversion tracking
 
@@ -604,7 +607,7 @@ class MetaAdsClient:
         try:
             advantage_targeting = {
                 "age_min": 21,
-                "age_max": 55,  # Broader age range
+                "age_max": 60,  # Broad age range
                 "genders": [1],  # Women
                 "geo_locations": {
                     "countries": ["US"],
@@ -613,15 +616,15 @@ class MetaAdsClient:
                 # NO interest targeting - let Advantage+ find users
             }
 
-            adset_result = self.create_adset(
+            adset_result = self.create_adset_cbo(
                 campaign_id=campaign_id,
-                name="TEST - Advantage+ Broad US Women 21-55",
-                daily_budget=2000,  # €20/day
+                name="TEST - Advantage+ US Women 21-60",
                 targeting=advantage_targeting,
                 optimization_goal="OFFSITE_CONVERSIONS",
                 status="PAUSED",  # Start paused for review
                 advantage_audience=True,
-                promoted_object=promoted_object
+                promoted_object=promoted_object,
+                url_tags="utm_source=meta&utm_medium=paid&utm_campaign=mirai_quiz&utm_content=advplus_us"
             )
             results["advantage_plus_adset"] = adset_result
 
@@ -643,8 +646,8 @@ class MetaAdsClient:
         # =====================================================
         try:
             uk_targeting = {
-                "age_min": 25,
-                "age_max": 50,
+                "age_min": 21,
+                "age_max": 60,
                 "genders": [1],  # Women
                 "geo_locations": {
                     "countries": ["GB"],  # UK
@@ -653,15 +656,15 @@ class MetaAdsClient:
                 # NO interest targeting
             }
 
-            uk_adset_result = self.create_adset(
+            uk_adset_result = self.create_adset_cbo(
                 campaign_id=campaign_id,
-                name="TEST - UK Women 25-50 Broad",
-                daily_budget=1500,  # €15/day
+                name="TEST - UK Women 21-60 Broad",
                 targeting=uk_targeting,
                 optimization_goal="OFFSITE_CONVERSIONS",
                 status="PAUSED",
                 advantage_audience=True,
-                promoted_object=promoted_object
+                promoted_object=promoted_object,
+                url_tags="utm_source=meta&utm_medium=paid&utm_campaign=mirai_quiz&utm_content=broad_uk"
             )
             results["uk_test_adset"] = uk_adset_result
 
@@ -679,6 +682,68 @@ class MetaAdsClient:
             results["errors"].append(f"UK adset error: {str(e)}")
 
         return results
+
+    def create_adset_cbo(self, campaign_id: str, name: str,
+                         targeting: dict, optimization_goal: str = "OFFSITE_CONVERSIONS",
+                         billing_event: str = "IMPRESSIONS",
+                         status: str = "PAUSED",
+                         advantage_audience: bool = False,
+                         promoted_object: dict = None,
+                         url_tags: str = None) -> dict:
+        """
+        Create ad set for Campaign Budget Optimization (no ad set budget).
+        Budget is controlled at campaign level.
+
+        Args:
+            campaign_id: Parent campaign ID (must have CBO enabled)
+            name: Ad set name
+            targeting: Targeting spec dict
+            optimization_goal: OFFSITE_CONVERSIONS, LINK_CLICKS, etc.
+            billing_event: IMPRESSIONS, LINK_CLICKS
+            status: ACTIVE or PAUSED
+            advantage_audience: Enable Advantage+ Audience
+            promoted_object: Pixel/page info for conversion optimization
+            url_tags: UTM parameters to append to all URLs
+
+        Returns:
+            {"id": "adset_id", "success": true} or error
+        """
+        import json
+        data = {
+            "campaign_id": campaign_id,
+            "name": name,
+            "optimization_goal": optimization_goal,
+            "billing_event": billing_event,
+            "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
+            "targeting": json.dumps(targeting),
+            "status": status
+        }
+
+        # NO daily_budget - uses Campaign Budget Optimization (CBO)
+
+        # Enable Advantage+ Audience
+        if advantage_audience:
+            data["targeting_optimization_types"] = json.dumps(["expansion_all"])
+
+        # Add promoted object for conversion campaigns
+        if promoted_object:
+            data["promoted_object"] = json.dumps(promoted_object)
+
+        # Add UTM tracking
+        if url_tags:
+            data["destination_type"] = "WEBSITE"
+            # URL tags are appended to all ad URLs automatically
+
+        endpoint = f"/act_{self.ad_account_id}/adsets"
+        result = self._request(endpoint, "POST", data)
+        if "id" in result:
+            result["success"] = True
+
+            # Set URL tags on the ad set (separate call)
+            if url_tags and result.get("id"):
+                self._request(f"/{result['id']}", "POST", {"url_tags": url_tags})
+
+        return result
 
     def get_targeting_interests(self, query: str, limit: int = 20) -> List[dict]:
         """
