@@ -527,15 +527,17 @@ class MetaAdsClient:
         return result.get("data", [])
 
     def duplicate_ads_to_adset(self, source_adset_id: str, target_adset_id: str,
-                               name_suffix: str = "", status: str = "ACTIVE") -> List[dict]:
+                               name_suffix: str = "", status: str = "ACTIVE",
+                               use_advantage_creative: bool = True) -> List[dict]:
         """
-        Copy all ads from one ad set to another
+        Copy all ads from one ad set to another with Advantage+ Creative enabled.
 
         Args:
             source_adset_id: Ad set to copy ads FROM
             target_adset_id: Ad set to copy ads TO
             name_suffix: Optional suffix to add to ad names
             status: Status for new ads (ACTIVE or PAUSED)
+            use_advantage_creative: Enable Advantage+ Creative optimizations
 
         Returns:
             List of created ad results
@@ -543,26 +545,38 @@ class MetaAdsClient:
         source_ads = self.get_ads_with_creatives(source_adset_id)
         results = []
 
+        print(f"[META API] Copying {len(source_ads)} ads from {source_adset_id} to {target_adset_id}")
+
         for ad in source_ads:
             creative = ad.get("creative", {})
             creative_id = creative.get("id")
             if not creative_id:
+                print(f"[META API] Skipping ad {ad.get('name')} - no creative_id")
                 continue
 
             # Create new ad name
             original_name = ad.get("name", "Ad")
-            # Remove old ad set reference if present
             new_name = original_name
             if name_suffix:
                 new_name = f"{original_name} {name_suffix}"
 
-            result = self.create_ad(
-                adset_id=target_adset_id,
-                creative_id=creative_id,
-                name=new_name,
-                status=status
-            )
+            if use_advantage_creative:
+                result = self.create_ad_with_advantage_creative(
+                    adset_id=target_adset_id,
+                    creative_id=creative_id,
+                    name=new_name,
+                    status=status
+                )
+            else:
+                result = self.create_ad(
+                    adset_id=target_adset_id,
+                    creative_id=creative_id,
+                    name=new_name,
+                    status=status
+                )
+
             result["original_ad"] = original_name
+            print(f"[META API] Created ad '{new_name}': {result}")
             results.append(result)
 
         return results
@@ -694,6 +708,11 @@ class MetaAdsClient:
         Create ad set for Campaign Budget Optimization (no ad set budget).
         Budget is controlled at campaign level.
 
+        Enables ALL Advantage+ features:
+        - Advantage+ Audience (targeting expansion)
+        - Advantage+ Placements (automatic placements)
+        - Ready for Advantage+ Creative at ad level
+
         Args:
             campaign_id: Parent campaign ID (must have CBO enabled)
             name: Ad set name
@@ -709,19 +728,26 @@ class MetaAdsClient:
             {"id": "adset_id", "success": true} or error
         """
         import json
+
+        # Ensure targeting does NOT specify placements (Advantage+ Placements)
+        # By omitting publisher_platforms, Meta will auto-optimize placements
+        clean_targeting = {k: v for k, v in targeting.items()
+                          if k not in ['publisher_platforms', 'facebook_positions',
+                                      'instagram_positions', 'device_platforms']}
+
         data = {
             "campaign_id": campaign_id,
             "name": name,
             "optimization_goal": optimization_goal,
             "billing_event": billing_event,
             "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
-            "targeting": json.dumps(targeting),
-            "status": status
+            "targeting": json.dumps(clean_targeting),
+            "status": status,
         }
 
         # NO daily_budget - uses Campaign Budget Optimization (CBO)
 
-        # Enable Advantage+ Audience
+        # Enable Advantage+ Audience (targeting expansion)
         if advantage_audience:
             data["targeting_optimization_types"] = json.dumps(["expansion_all"])
 
@@ -729,20 +755,56 @@ class MetaAdsClient:
         if promoted_object:
             data["promoted_object"] = json.dumps(promoted_object)
 
-        # Add UTM tracking
+        # Add UTM tracking via url_tags
         if url_tags:
             data["destination_type"] = "WEBSITE"
-            # URL tags are appended to all ad URLs automatically
 
         endpoint = f"/act_{self.ad_account_id}/adsets"
+        print(f"[META API] Creating ad set: {name}")
+        print(f"[META API] Request data: {data}")
+
         result = self._request(endpoint, "POST", data)
+        print(f"[META API] Response: {result}")
+
         if "id" in result:
             result["success"] = True
 
             # Set URL tags on the ad set (separate call)
             if url_tags and result.get("id"):
-                self._request(f"/{result['id']}", "POST", {"url_tags": url_tags})
+                tag_result = self._request(f"/{result['id']}", "POST", {"url_tags": url_tags})
+                print(f"[META API] URL tags result: {tag_result}")
+        else:
+            result["success"] = False
+            print(f"[META API] ERROR creating ad set: {result}")
 
+        return result
+
+    def create_ad_with_advantage_creative(self, adset_id: str, creative_id: str,
+                                          name: str, status: str = "ACTIVE") -> dict:
+        """
+        Create ad with Advantage+ Creative enabled.
+
+        Advantage+ Creative allows Meta to:
+        - Optimize image brightness/contrast
+        - Add text overlays
+        - Adjust aspect ratios for different placements
+        """
+        import json
+        data = {
+            "adset_id": adset_id,
+            "name": name,
+            "creative": json.dumps({"creative_id": creative_id}),
+            "status": status,
+            # Enable Advantage+ Creative enhancements
+            "creative_optimization_config": json.dumps({
+                "enable_standard_enhancements": True,  # Image enhancements
+                "enable_text_optimization": True,  # Copy optimization
+            })
+        }
+        endpoint = f"/act_{self.ad_account_id}/ads"
+        result = self._request(endpoint, "POST", data)
+        if "id" in result:
+            result["success"] = True
         return result
 
     def get_targeting_interests(self, query: str, limit: int = 20) -> List[dict]:
