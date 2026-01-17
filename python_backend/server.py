@@ -1185,6 +1185,84 @@ async def meta_ads_diagnose_cpm(date_range: str = "last_7d"):
         raise HTTPException(status_code=500, detail=f"Failed to diagnose: {str(e)}")
 
 
+@app.post("/meta-ads/setup-test-adsets")
+async def meta_ads_setup_tests(campaign_id: str, source_adset_id: str, pixel_id: str = None):
+    """
+    Create test ad sets for CPM optimization:
+    1. Advantage+ Audience (US broad) - €20/day
+    2. UK Test (lower CPM geo) - €15/day
+
+    Both ad sets will:
+    - Copy all ads from the source ad set
+    - Be created in PAUSED state for review
+    - Have Advantage+ targeting enabled
+
+    Args:
+        campaign_id: The campaign ID to add ad sets to
+        source_adset_id: Existing ad set to copy ads from
+        pixel_id: Optional pixel ID (auto-detected from source if not provided)
+    """
+    try:
+        from meta_decision_engine import create_engine
+
+        access_token = _get_marketing_token()
+        if not access_token:
+            raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
+
+        engine = create_engine(access_token)
+        results = engine.setup_test_adsets(campaign_id, source_adset_id, pixel_id)
+
+        return {
+            "success": len(results.get("errors", [])) == 0,
+            "message": "Test ad sets created (PAUSED). Review and activate in Ads Manager.",
+            "results": results,
+            "next_steps": [
+                "1. Review the new ad sets in Meta Ads Manager",
+                "2. Verify targeting looks correct",
+                "3. Activate both ad sets",
+                "4. Monitor for 3-5 days",
+                "5. Compare CPM: Current vs Advantage+ vs UK"
+            ]
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to setup: {str(e)}")
+
+
+@app.get("/meta-ads/list-adsets")
+async def meta_ads_list_adsets(campaign_id: str = None):
+    """
+    List all ad sets with their IDs for use with setup-test-adsets
+
+    Returns ad set id, name, status, and daily budget
+    """
+    try:
+        from meta_decision_engine import create_engine
+
+        access_token = _get_marketing_token()
+        if not access_token:
+            raise HTTPException(status_code=500, detail="META_ACCESS_TOKEN not configured")
+
+        engine = create_engine(access_token)
+        adsets = engine.get_adsets(campaign_id)
+
+        return {
+            "adsets": [
+                {
+                    "id": a.get("id"),
+                    "name": a.get("name"),
+                    "status": a.get("effective_status"),
+                    "daily_budget": int(a.get("daily_budget", 0)) / 100 if a.get("daily_budget") else None,
+                    "campaign_id": a.get("campaign_id")
+                }
+                for a in adsets
+            ]
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list: {str(e)}")
+
+
 @app.get("/meta-ads/decisions")
 async def meta_ads_get_decisions(date_range: str = "today"):
     """

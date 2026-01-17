@@ -429,7 +429,9 @@ class MetaAdsClient:
     def create_adset(self, campaign_id: str, name: str, daily_budget: int,
                     targeting: dict, optimization_goal: str = "OFFSITE_CONVERSIONS",
                     billing_event: str = "IMPRESSIONS",
-                    status: str = "PAUSED") -> dict:
+                    status: str = "PAUSED",
+                    advantage_audience: bool = False,
+                    promoted_object: dict = None) -> dict:
         """
         Create a new ad set
 
@@ -441,6 +443,8 @@ class MetaAdsClient:
             optimization_goal: OFFSITE_CONVERSIONS, LINK_CLICKS, REACH, etc.
             billing_event: IMPRESSIONS, LINK_CLICKS
             status: ACTIVE or PAUSED
+            advantage_audience: Enable Advantage+ Audience (let Meta optimize targeting)
+            promoted_object: Pixel/page info for conversion optimization
 
         Returns:
             {"id": "adset_id", "success": true} or error
@@ -456,6 +460,15 @@ class MetaAdsClient:
             "targeting": json.dumps(targeting),
             "status": status
         }
+
+        # Enable Advantage+ Audience (expansion_all)
+        if advantage_audience:
+            data["targeting_optimization_types"] = json.dumps(["expansion_all"])
+
+        # Add promoted object for conversion campaigns
+        if promoted_object:
+            data["promoted_object"] = json.dumps(promoted_object)
+
         endpoint = f"/act_{self.ad_account_id}/adsets"
         result = self._request(endpoint, "POST", data)
         if "id" in result:
@@ -499,6 +512,173 @@ class MetaAdsClient:
         endpoint = f"/act_{self.ad_account_id}/adcreatives?fields={fields}&limit={limit}"
         result = self._request(endpoint)
         return result.get("data", [])
+
+    def get_ads_with_creatives(self, adset_id: str = None) -> List[dict]:
+        """
+        Get ads with their creative IDs for duplication
+
+        Returns list of ads with id, name, creative_id, status
+        """
+        fields = "id,name,status,creative{id,name},adset_id"
+        endpoint = f"/act_{self.ad_account_id}/ads?fields={fields}&limit=100"
+        if adset_id:
+            endpoint += f"&filtering=[{{\"field\":\"adset.id\",\"operator\":\"EQUAL\",\"value\":\"{adset_id}\"}}]"
+        result = self._request(endpoint)
+        return result.get("data", [])
+
+    def duplicate_ads_to_adset(self, source_adset_id: str, target_adset_id: str,
+                               name_suffix: str = "", status: str = "ACTIVE") -> List[dict]:
+        """
+        Copy all ads from one ad set to another
+
+        Args:
+            source_adset_id: Ad set to copy ads FROM
+            target_adset_id: Ad set to copy ads TO
+            name_suffix: Optional suffix to add to ad names
+            status: Status for new ads (ACTIVE or PAUSED)
+
+        Returns:
+            List of created ad results
+        """
+        source_ads = self.get_ads_with_creatives(source_adset_id)
+        results = []
+
+        for ad in source_ads:
+            creative = ad.get("creative", {})
+            creative_id = creative.get("id")
+            if not creative_id:
+                continue
+
+            # Create new ad name
+            original_name = ad.get("name", "Ad")
+            # Remove old ad set reference if present
+            new_name = original_name
+            if name_suffix:
+                new_name = f"{original_name} {name_suffix}"
+
+            result = self.create_ad(
+                adset_id=target_adset_id,
+                creative_id=creative_id,
+                name=new_name,
+                status=status
+            )
+            result["original_ad"] = original_name
+            results.append(result)
+
+        return results
+
+    def setup_test_adsets(self, campaign_id: str, source_adset_id: str,
+                          pixel_id: str = None) -> dict:
+        """
+        Create test ad sets for CPM optimization:
+        1. Advantage+ Audience (US) - broader targeting
+        2. UK Test - different geo with lower CPM
+
+        Args:
+            campaign_id: Campaign to add ad sets to
+            source_adset_id: Existing ad set to copy ads from
+            pixel_id: Facebook Pixel ID for conversion tracking
+
+        Returns:
+            Results of ad set and ad creation
+        """
+        results = {
+            "advantage_plus_adset": None,
+            "uk_test_adset": None,
+            "advantage_plus_ads": [],
+            "uk_test_ads": [],
+            "errors": []
+        }
+
+        # Get pixel ID from existing adset if not provided
+        if not pixel_id:
+            adset_details = self._request(f"/{source_adset_id}?fields=promoted_object")
+            promoted_obj = adset_details.get("promoted_object", {})
+            pixel_id = promoted_obj.get("pixel_id")
+
+        promoted_object = {"pixel_id": pixel_id} if pixel_id else None
+
+        # =====================================================
+        # 1. Create Advantage+ Audience Ad Set (US, Broad)
+        # =====================================================
+        try:
+            advantage_targeting = {
+                "age_min": 21,
+                "age_max": 55,  # Broader age range
+                "genders": [1],  # Women
+                "geo_locations": {
+                    "countries": ["US"],
+                    "location_types": ["home"]
+                }
+                # NO interest targeting - let Advantage+ find users
+            }
+
+            adset_result = self.create_adset(
+                campaign_id=campaign_id,
+                name="TEST - Advantage+ Broad US Women 21-55",
+                daily_budget=2000,  # €20/day
+                targeting=advantage_targeting,
+                optimization_goal="OFFSITE_CONVERSIONS",
+                status="PAUSED",  # Start paused for review
+                advantage_audience=True,
+                promoted_object=promoted_object
+            )
+            results["advantage_plus_adset"] = adset_result
+
+            if adset_result.get("success"):
+                # Copy ads to new ad set
+                ads_result = self.duplicate_ads_to_adset(
+                    source_adset_id=source_adset_id,
+                    target_adset_id=adset_result["id"],
+                    name_suffix="(Adv+)",
+                    status="ACTIVE"
+                )
+                results["advantage_plus_ads"] = ads_result
+
+        except Exception as e:
+            results["errors"].append(f"Advantage+ adset error: {str(e)}")
+
+        # =====================================================
+        # 2. Create UK Test Ad Set (Lower CPM geo)
+        # =====================================================
+        try:
+            uk_targeting = {
+                "age_min": 25,
+                "age_max": 50,
+                "genders": [1],  # Women
+                "geo_locations": {
+                    "countries": ["GB"],  # UK
+                    "location_types": ["home"]
+                }
+                # NO interest targeting
+            }
+
+            uk_adset_result = self.create_adset(
+                campaign_id=campaign_id,
+                name="TEST - UK Women 25-50 Broad",
+                daily_budget=1500,  # €15/day
+                targeting=uk_targeting,
+                optimization_goal="OFFSITE_CONVERSIONS",
+                status="PAUSED",
+                advantage_audience=True,
+                promoted_object=promoted_object
+            )
+            results["uk_test_adset"] = uk_adset_result
+
+            if uk_adset_result.get("success"):
+                # Copy ads to new ad set
+                uk_ads_result = self.duplicate_ads_to_adset(
+                    source_adset_id=source_adset_id,
+                    target_adset_id=uk_adset_result["id"],
+                    name_suffix="(UK)",
+                    status="ACTIVE"
+                )
+                results["uk_test_ads"] = uk_ads_result
+
+        except Exception as e:
+            results["errors"].append(f"UK adset error: {str(e)}")
+
+        return results
 
     def get_targeting_interests(self, query: str, limit: int = 20) -> List[dict]:
         """
