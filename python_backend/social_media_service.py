@@ -1325,10 +1325,85 @@ Return JSON:
         await self.storage.save_post_async(post)
         return post
 
-    async def _generate_image(self, visual_direction: str, post_type: str) -> tuple:
-        """Generate an image using DALL-E 3 and return (b64_data, thumbnail, format)."""
+    async def _generate_image(self, visual_direction: str, post_type: str, engine: str = "auto") -> tuple:
+        """Generate an image. engine: 'auto' (Gemini first), 'gemini', or 'dalle'.
+        Returns (b64_data, thumbnail, format, engine_used)."""
+        if engine in ("auto", "gemini"):
+            result = await self._generate_image_gemini(visual_direction, post_type)
+            if result[0]:
+                print("[SocialMediaAgent] Image generated via Gemini")
+                return result + ("gemini",)
+
+        if engine in ("auto", "dalle"):
+            print("[SocialMediaAgent] Using DALL-E 3")
+            result = await self._generate_image_dalle(visual_direction, post_type)
+            return result + ("dalle",)
+
+        return None, None, None, None
+
+    async def _generate_image_gemini(self, visual_direction: str, post_type: str) -> tuple:
+        """Generate image using Google Gemini for natural lifestyle/product photography."""
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            return None, None, None
+
+        aspect = "9:16" if post_type in ("story", "reel") else "1:1"
+
+        prompt = (
+            f"Professional Instagram photo for a premium K-Beauty skincare brand called Mirai Skin. "
+            f"{visual_direction}. "
+            f"Style: natural soft lighting, clean minimal aesthetic, real editorial product photography. "
+            f"The image should look like a high-end lifestyle or product photograph — "
+            f"NOT an AI collage or digital art. Think Glossier or Aesop brand photography. "
+            f"Aspect ratio: {aspect}."
+        )
+
+        try:
+            async with httpx.AsyncClient(timeout=90) as client:
+                # Gemini 2.0 Flash with native image generation
+                resp = await client.post(
+                    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-preview-image-generation:generateContent",
+                    params={"key": api_key},
+                    json={
+                        "contents": [{"parts": [{"text": prompt}]}],
+                        "generationConfig": {
+                            "responseModalities": ["IMAGE", "TEXT"],
+                        },
+                    },
+                    headers={"Content-Type": "application/json"},
+                )
+
+                if resp.status_code == 200:
+                    data = resp.json()
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        for part in parts:
+                            inline = part.get("inlineData", {})
+                            mime = inline.get("mimeType", "")
+                            if mime.startswith("image/"):
+                                b64_data = inline.get("data", "")
+                                if b64_data:
+                                    fmt = "png" if "png" in mime else "jpeg"
+                                    thumbnail = compress_to_thumbnail(b64_data, 256)
+                                    return b64_data, thumbnail, fmt
+
+                print(f"[Gemini Image] No image in response (status {resp.status_code}): {resp.text[:300]}")
+        except Exception as e:
+            print(f"[Gemini Image] Failed: {e}")
+
+        return None, None, None
+
+    async def _generate_image_dalle(self, visual_direction: str, post_type: str) -> tuple:
+        """Generate an image using DALL-E 3 (fallback)."""
         size = "1024x1792" if post_type in ("story", "reel") else "1024x1024"
-        enhanced_prompt = f"Professional K-Beauty skincare brand photography. {visual_direction}. Clean modern aesthetic, high-quality product photography style."
+
+        enhanced_prompt = (
+            f"Professional lifestyle product photography for a premium K-Beauty skincare brand. "
+            f"{visual_direction}. "
+            f"Style: natural soft lighting, clean minimal aesthetic, editorial product photography. "
+            f"Real photo look — not digital art, not a collage."
+        )
 
         response = self.client.images.generate(
             model="dall-e-3",
@@ -1349,25 +1424,53 @@ Return JSON:
             return None, None, None
 
         try:
-            import google.generativeai as genai
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel("gemini-2.0-flash")
-            prompt = f"Generate a short 5-second vertical video for Instagram Reels. K-Beauty skincare brand aesthetic. {visual_direction}"
-            response = model.generate_content(prompt)
-            # If video generation is available and returns data
-            if hasattr(response, 'candidates') and response.candidates:
-                for part in response.candidates[0].content.parts:
-                    if hasattr(part, 'inline_data') and part.inline_data.mime_type.startswith("video/"):
-                        video_b64 = base64.b64encode(part.inline_data.data).decode("utf-8")
-                        # Generate thumbnail from first frame would need ffmpeg - use placeholder
-                        return video_b64, "", "mp4"
-            return None, None, None
-        except Exception as e:
-            print(f"[SocialMediaAgent] Gemini video generation failed: {e}")
-            return None, None, None
+            async with httpx.AsyncClient(timeout=120) as client:
+                prompt = (
+                    f"Generate a short 5-second vertical video for Instagram Reels. "
+                    f"Premium K-Beauty skincare brand aesthetic. {visual_direction}. "
+                    f"Smooth, cinematic, natural lighting."
+                )
+                resp = await client.post(
+                    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-preview-image-generation:generateContent",
+                    params={"key": api_key},
+                    json={
+                        "contents": [{"parts": [{"text": prompt}]}],
+                        "generationConfig": {
+                            "responseModalities": ["VIDEO", "TEXT"],
+                        },
+                    },
+                    headers={"Content-Type": "application/json"},
+                )
 
-    async def generate_media_for_post(self, post_uuid: str) -> Post:
-        """Generate AI image/video for a post using its visual_direction."""
+                if resp.status_code == 200:
+                    data = resp.json()
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        for part in parts:
+                            inline = part.get("inlineData", {})
+                            mime = inline.get("mimeType", "")
+                            if mime.startswith("video/"):
+                                b64_data = inline.get("data", "")
+                                if b64_data:
+                                    return b64_data, "", "mp4"
+                            elif mime.startswith("image/"):
+                                # Got an image instead of video — still useful
+                                b64_data = inline.get("data", "")
+                                if b64_data:
+                                    fmt = "png" if "png" in mime else "jpeg"
+                                    thumbnail = compress_to_thumbnail(b64_data, 256)
+                                    return b64_data, thumbnail, fmt
+
+                print(f"[Gemini Video] No video in response (status {resp.status_code})")
+        except Exception as e:
+            print(f"[Gemini Video] Failed: {e}")
+
+        return None, None, None
+
+    async def generate_media_for_post(self, post_uuid: str, engine: str = "auto") -> Post:
+        """Generate AI image/video for a post using its visual_direction.
+        engine: 'auto' (Gemini first), 'gemini', 'dalle'."""
         post = await self.storage.get_post_async(post_uuid)
         if not post:
             raise ValueError(f"Post not found: {post_uuid}")
@@ -1375,7 +1478,7 @@ Return JSON:
             raise ValueError("Post has no visual_direction to generate from")
 
         if post.post_type == "reel":
-            # Try Gemini video first, fall back to DALL-E image
+            # Try Gemini video first, fall back to image
             video_data, video_thumb, video_fmt = await self._generate_video(post.visual_direction)
             if video_data:
                 post.media_data = video_data
@@ -1383,14 +1486,14 @@ Return JSON:
                 post.media_data_format = video_fmt
                 post.media_type = "VIDEO"
             else:
-                # Fallback to DALL-E image
-                img, thumb, fmt = await self._generate_image(post.visual_direction, post.post_type)
+                # Fallback to image
+                img, thumb, fmt, _engine = await self._generate_image(post.visual_direction, post.post_type, engine)
                 post.media_data = img
                 post.media_thumbnail = thumb
                 post.media_data_format = fmt
                 post.media_type = "IMAGE"
         else:
-            img, thumb, fmt = await self._generate_image(post.visual_direction, post.post_type)
+            img, thumb, fmt, _engine = await self._generate_image(post.visual_direction, post.post_type, engine)
             post.media_data = img
             post.media_thumbnail = thumb
             post.media_data_format = fmt

@@ -5206,13 +5206,13 @@ async def sm_publish_post(uuid: str, user: dict = Depends(require_auth)):
 
 
 @app.post("/social-media/post/{uuid}/generate-media")
-async def sm_generate_media(uuid: str, user: dict = Depends(require_auth)):
-    """Generate AI image/video for a post using its visual_direction"""
+async def sm_generate_media(uuid: str, engine: str = "auto", user: dict = Depends(require_auth)):
+    """Generate AI image/video for a post. engine: auto (Gemini first), gemini, dalle"""
     try:
         from social_media_service import create_social_media_agent
         from dataclasses import asdict
         agent = create_social_media_agent()
-        post = await agent.generate_media_for_post(uuid)
+        post = await agent.generate_media_for_post(uuid, engine=engine)
         post_dict = asdict(post)
         post_dict.pop("media_data", None)
         return {"post": post_dict}
