@@ -77,6 +77,7 @@ class Strategy:
     approved_by: Optional[int] = None
     approved_at: Optional[str] = None
     rejection_reason: Optional[str] = None
+    content_briefs: Optional[List[Dict]] = None
 
 
 @dataclass
@@ -89,6 +90,7 @@ class Post:
     status: str  # draft, pending_review, approved, scheduled, publishing, published, failed, rejected
     created_at: str
     updated_at: str
+    content_category: Optional[str] = None
     media_url: Optional[str] = None
     media_type: Optional[str] = None
     product_ids: Optional[List[str]] = None
@@ -302,6 +304,8 @@ class SocialMediaStorage:
                 existing.rejection_reason = strategy.rejection_reason
                 existing.approved_by = strategy.approved_by
                 existing.approved_at = datetime.fromisoformat(strategy.approved_at.replace("Z", "+00:00")).replace(tzinfo=None) if strategy.approved_at else None
+                if strategy.content_briefs is not None:
+                    existing.content_briefs = strategy.content_briefs
             else:
                 db_strategy = SocialMediaStrategy(
                     uuid=strategy.id,
@@ -311,6 +315,7 @@ class SocialMediaStorage:
                     content_mix=strategy.content_mix,
                     posting_frequency=strategy.posting_frequency,
                     hashtag_strategy=strategy.hashtag_strategy,
+                    content_briefs=strategy.content_briefs,
                     date_range_start=datetime.strptime(strategy.date_range_start, "%Y-%m-%d").date() if strategy.date_range_start else None,
                     date_range_end=datetime.strptime(strategy.date_range_end, "%Y-%m-%d").date() if strategy.date_range_end else None,
                     status=strategy.status,
@@ -340,6 +345,7 @@ class SocialMediaStorage:
                 updated_at=s.updated_at.isoformat() + "Z" if s.updated_at else "",
                 approved_by=s.approved_by, rejection_reason=s.rejection_reason,
                 approved_at=s.approved_at.isoformat() + "Z" if s.approved_at else None,
+                content_briefs=s.content_briefs,
             )
 
     async def _get_all_strategies_db(self, status: Optional[str] = None) -> List[Strategy]:
@@ -364,6 +370,7 @@ class SocialMediaStorage:
                 updated_at=s.updated_at.isoformat() + "Z" if s.updated_at else "",
                 approved_by=s.approved_by, rejection_reason=s.rejection_reason,
                 approved_at=s.approved_at.isoformat() + "Z" if s.approved_at else None,
+                content_briefs=s.content_briefs,
             ) for s in rows]
 
     async def _save_post_db(self, post: Post) -> str:
@@ -393,6 +400,7 @@ class SocialMediaStorage:
 
             if existing:
                 existing.post_type = post.post_type
+                existing.content_category = post.content_category
                 existing.caption = post.caption
                 existing.visual_direction = post.visual_direction
                 existing.media_url = post.media_url
@@ -424,6 +432,7 @@ class SocialMediaStorage:
                     uuid=post.id,
                     strategy_id=strategy_fk,
                     post_type=post.post_type,
+                    content_category=post.content_category,
                     caption=post.caption,
                     visual_direction=post.visual_direction,
                     media_url=post.media_url,
@@ -479,6 +488,7 @@ class SocialMediaStorage:
             caption=p.caption or "",
             visual_direction=p.visual_direction or "",
             status=p.status or "draft",
+            content_category=getattr(p, 'content_category', None),
             created_at=p.created_at.isoformat() + "Z" if p.created_at else "",
             updated_at=p.updated_at.isoformat() + "Z" if p.updated_at else "",
             media_url=p.media_url,
@@ -939,13 +949,18 @@ async def validate_meta_token(access_token: str) -> Dict:
 
     async with httpx.AsyncClient(timeout=30) as client:
         if is_ig_token:
-            # For Instagram tokens, validate by calling /me
+            # For Instagram tokens, validate by calling /me with minimal fields
             resp = await client.get(
                 f"{IG_GRAPH_URL}/me",
-                params={"fields": "user_id,username,account_type", "access_token": access_token}
+                params={"fields": "user_id,username", "access_token": access_token}
             )
             if resp.status_code != 200:
-                return {"valid": False, "error": f"Instagram token validation failed (HTTP {resp.status_code})"}
+                err_detail = ""
+                try:
+                    err_detail = resp.json().get("error", {}).get("message", resp.text[:200])
+                except Exception:
+                    err_detail = resp.text[:200]
+                return {"valid": False, "error": f"Instagram token validation failed: {err_detail}"}
 
             ig_data = resp.json()
             return {
@@ -1061,13 +1076,25 @@ async def fetch_ig_account_from_token(access_token: str, page_id: str) -> Dict:
     async with httpx.AsyncClient(timeout=30) as client:
         if is_ig_token:
             # Instagram API token — fetch directly from /me
+            # Try full fields first, fall back to minimal if API rejects some fields
+            full_fields = "user_id,username,followers_count,media_count,profile_picture_url,biography"
             resp = await client.get(
                 f"{IG_GRAPH_URL}/me",
-                params={"fields": "user_id,username,account_type,followers_count,media_count,profile_picture_url,biography",
-                        "access_token": access_token}
+                params={"fields": full_fields, "access_token": access_token}
             )
             if resp.status_code != 200:
-                return {"error": f"Failed to fetch IG profile: {resp.text}"}
+                # Retry with minimal fields
+                resp = await client.get(
+                    f"{IG_GRAPH_URL}/me",
+                    params={"fields": "user_id,username", "access_token": access_token}
+                )
+            if resp.status_code != 200:
+                err_detail = ""
+                try:
+                    err_detail = resp.json().get("error", {}).get("message", resp.text[:300])
+                except Exception:
+                    err_detail = resp.text[:300]
+                return {"error": f"Failed to fetch IG profile: {err_detail}"}
 
             ig_data = resp.json()
             return {
@@ -1156,7 +1183,7 @@ class InstagramPublisher:
     async def get_profile_info(self, ig_account_id: str) -> Dict:
         fields = "followers_count,media_count,username,biography"
         if self.is_ig_token:
-            fields = "user_id,username,followers_count,media_count,biography,profile_picture_url,account_type"
+            fields = "user_id,username,followers_count,media_count,biography,profile_picture_url"
         data = await self._request("GET", f"{self.base_url}/{ig_account_id}",
                                     params={"fields": fields,
                                             "access_token": self.access_token})
@@ -1347,15 +1374,126 @@ class SocialMediaAgent:
         self.client = _get_openai_client(api_key=self.api_key)
         self.storage = SocialMediaStorage()
 
-    def _call_ai(self, system_prompt: str, user_prompt: str, json_mode: bool = True) -> str:
+    def _call_ai(self, system_prompt: str, user_prompt: str, json_mode: bool = True, max_tokens: int = 4000) -> str:
         kwargs = {"model": "gpt-4o", "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
-        ], "temperature": 0.7, "max_tokens": 4000}
+        ], "temperature": 0.7, "max_tokens": max_tokens}
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
         response = self.client.chat.completions.create(**kwargs)
         return response.choices[0].message.content
+
+    async def sync_product_catalog(self) -> List[Dict]:
+        """Fetch full product catalog from Shopify and upsert into DB.
+        Returns list of product dicts for passing to AI prompts."""
+        from shopify_client import fetch_product_catalog
+
+        raw_products = fetch_product_catalog()
+        product_dicts = []
+
+        if DATABASE_AVAILABLE:
+            from database.connection import get_db
+            from database.models import Product
+            from sqlalchemy import select
+            from decimal import Decimal
+
+            async with get_db() as db:
+                for p in raw_products:
+                    gid = p.get("id", "")
+                    # Extract variant prices
+                    variant_edges = (p.get("variants") or {}).get("edges") or []
+                    prices = []
+                    for ve in variant_edges:
+                        vn = ve.get("node") or {}
+                        pr = vn.get("price")
+                        if pr:
+                            try:
+                                prices.append(float(pr))
+                            except (ValueError, TypeError):
+                                pass
+
+                    price_min = Decimal(str(min(prices))) if prices else None
+                    price_max = Decimal(str(max(prices))) if prices else None
+
+                    # Extract images
+                    image_edges = (p.get("images") or {}).get("edges") or []
+                    images_list = [{"url": ie["node"]["url"], "altText": ie["node"].get("altText")}
+                                   for ie in image_edges if ie.get("node", {}).get("url")]
+
+                    featured_img = (p.get("featuredImage") or {}).get("url")
+
+                    result = await db.execute(select(Product).where(Product.shopify_gid == gid))
+                    existing = result.scalar_one_or_none()
+
+                    if existing:
+                        existing.title = p.get("title", existing.title)
+                        existing.description = p.get("description")
+                        existing.handle = p.get("handle")
+                        existing.product_type = p.get("productType")
+                        existing.vendor = p.get("vendor")
+                        existing.tags = p.get("tags")
+                        existing.featured_image_url = featured_img
+                        existing.images = images_list
+                        existing.price_min = price_min
+                        existing.price_max = price_max
+                        existing.status = (p.get("status") or "").lower()
+                    else:
+                        db.add(Product(
+                            shopify_gid=gid,
+                            title=p.get("title", ""),
+                            description=p.get("description"),
+                            handle=p.get("handle"),
+                            product_type=p.get("productType"),
+                            vendor=p.get("vendor"),
+                            tags=p.get("tags"),
+                            featured_image_url=featured_img,
+                            images=images_list,
+                            price_min=price_min,
+                            price_max=price_max,
+                            status=(p.get("status") or "").lower(),
+                        ))
+
+                    product_dicts.append({
+                        "shopify_gid": gid,
+                        "title": p.get("title", ""),
+                        "handle": p.get("handle", ""),
+                        "description": (p.get("description") or "")[:200],
+                        "product_type": p.get("productType", ""),
+                        "tags": p.get("tags", []),
+                        "price_min": float(price_min) if price_min else None,
+                        "price_max": float(price_max) if price_max else None,
+                        "featured_image_url": featured_img,
+                        "status": (p.get("status") or "").lower(),
+                    })
+        else:
+            # No DB — just return dicts from Shopify
+            for p in raw_products:
+                variant_edges = (p.get("variants") or {}).get("edges") or []
+                prices = []
+                for ve in variant_edges:
+                    pr = (ve.get("node") or {}).get("price")
+                    if pr:
+                        try:
+                            prices.append(float(pr))
+                        except (ValueError, TypeError):
+                            pass
+
+                product_dicts.append({
+                    "shopify_gid": p.get("id", ""),
+                    "title": p.get("title", ""),
+                    "handle": p.get("handle", ""),
+                    "description": (p.get("description") or "")[:200],
+                    "product_type": p.get("productType", ""),
+                    "tags": p.get("tags", []),
+                    "price_min": min(prices) if prices else None,
+                    "price_max": max(prices) if prices else None,
+                    "featured_image_url": (p.get("featuredImage") or {}).get("url"),
+                    "status": (p.get("status") or "").lower(),
+                })
+
+        print(f"[SocialMediaAgent] Synced {len(product_dicts)} products from Shopify")
+        return product_dicts
 
     async def analyze_brand_voice(self, ig_account_id: Optional[str] = None) -> Dict:
         """Fetch recent IG posts and analyze brand voice with AI"""
@@ -1415,15 +1553,54 @@ Return JSON:
     async def generate_strategy(self, goals: List[str], date_range_start: str,
                                  date_range_end: str, product_focus: Optional[List[str]] = None,
                                  user_email: str = "system") -> Strategy:
-        """AI generates a full content strategy"""
+        """AI generates a full content strategy with per-day content briefs anchored to real products."""
         cache = await self.storage.get_profile_cache_async()
         voice_guide = cache.get("brand_voice_analysis", "{}") if cache else "{}"
 
-        system_prompt = f"""You are a social media strategist for Mirai Skin, a premium K-Beauty retailer.
-Create a detailed Instagram content strategy. The brand voice guide is:
-{voice_guide}
+        # Fetch bestsellers and full product catalog
+        bestsellers_data = []
+        try:
+            from bestsellers_logic import fetch_bestsellers
+            bs = fetch_bestsellers(days=30)
+            bestsellers_data = bs.get("bestsellers", [])[:10]
+        except Exception as e:
+            print(f"[SocialMediaAgent] Could not fetch bestsellers: {e}")
 
-Return valid JSON with the strategy details."""
+        product_catalog = []
+        try:
+            product_catalog = await self.sync_product_catalog()
+            # Filter to active products only
+            product_catalog = [p for p in product_catalog if p.get("status") == "active"]
+        except Exception as e:
+            print(f"[SocialMediaAgent] Could not sync product catalog: {e}")
+
+        # Build product context for AI
+        bestseller_summary = ""
+        if bestsellers_data:
+            lines = []
+            for i, bs in enumerate(bestsellers_data[:5]):
+                lines.append(f"  {i+1}. {bs.get('product_title', 'Unknown')} — ${bs.get('total_sales', 0):.0f} revenue, {bs.get('total_qty', 0)} units")
+            bestseller_summary = "TOP BESTSELLERS (last 30 days):\n" + "\n".join(lines)
+
+        catalog_summary = ""
+        if product_catalog:
+            lines = []
+            for p in product_catalog[:20]:
+                price_str = f"${p['price_min']}" if p.get('price_min') else "N/A"
+                lines.append(f"  - {p['title']} (handle: {p['handle']}, type: {p.get('product_type','')}, price: {price_str}, gid: {p['shopify_gid']})")
+            catalog_summary = "PRODUCT CATALOG:\n" + "\n".join(lines)
+
+        system_prompt = f"""You are a social media strategist for Mirai Skin, a premium K-Beauty retailer.
+Create a detailed Instagram content strategy that is a CONTENT MAP — every day gets specific content briefs
+anchored to REAL products from the catalog below.
+
+Brand voice guide: {voice_guide}
+
+{bestseller_summary}
+
+{catalog_summary}
+
+Return valid JSON with strategy overview AND content_briefs array."""
 
         user_prompt = f"""Create a content strategy for Instagram (mirrored to Facebook).
 
@@ -1431,26 +1608,40 @@ GOALS: {json.dumps(goals)}
 DATE RANGE: {date_range_start} to {date_range_end}
 PRODUCT FOCUS: {json.dumps(product_focus or [])}
 
+Rules for content_briefs:
+- Feature bestsellers more frequently (top 5 should appear 2-3x each across the period)
+- Reels MUST have post_type "reel"
+- Mix content_category across the week — never repeat the same category on consecutive days
+- Each day: 1 feed post + 1-2 stories
+- Every brief must reference a SPECIFIC product from the catalog by shopify_gid, title, and handle
+- Distribute post times across optimal windows: 09:00, 12:00, 18:00, 20:00
+- Stories at different times than feed posts
+
 Return JSON:
 {{
   "title": "Strategy name",
   "description": "Strategy summary",
-  "content_mix": {{"reels": 40, "photos": 40, "product_features": 20}},
-  "posting_frequency": {{"posts_per_week": 4, "best_days": ["Monday", "Wednesday", "Friday", "Saturday"], "best_times": ["10:00", "18:00"]}},
+  "content_mix": {{"reels": 30, "photos": 30, "carousel": 20, "product_feature": 10, "story": 10}},
+  "posting_frequency": {{"posts_per_week": 7, "best_days": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"], "best_times": ["09:00", "12:00", "18:00"]}},
   "hashtag_strategy": {{
     "core_hashtags": ["#miraiskin", "#kbeauty"],
     "rotating_hashtags": [["#skincare", "#glowup"], ["#koreanbeauty", "#skincareroutine"]],
     "trending_hashtags": ["#glassskin"]
   }},
-  "weekly_themes": [
-    {{"week": 1, "theme": "Theme name", "posts": [
-      {{"day": "Monday", "type": "reel", "topic": "Topic description"}},
-      {{"day": "Wednesday", "type": "photo", "topic": "Topic description"}}
-    ]}}
+  "content_briefs": [
+    {{
+      "date": "YYYY-MM-DD",
+      "content_category": "how-to|before-after|product-feature|lifestyle|educational|testimonial|behind-the-scenes",
+      "post_type": "photo|reel|carousel|story",
+      "product_to_feature": {{"shopify_gid": "gid://shopify/Product/...", "title": "Product Name", "handle": "product-handle"}},
+      "visual_style": "product-only|model-with-product|flat-lay|lifestyle-scene|close-up-texture",
+      "hook": "Key message or engagement angle",
+      "scheduled_time": "HH:MM"
+    }}
   ]
 }}"""
 
-        result = json.loads(self._call_ai(system_prompt, user_prompt))
+        result = json.loads(self._call_ai(system_prompt, user_prompt, max_tokens=8000))
 
         strategy = Strategy(
             id=str(uuid_lib.uuid4()),
@@ -1466,6 +1657,7 @@ Return JSON:
             created_by=user_email,
             created_at=datetime.utcnow().isoformat() + "Z",
             updated_at=datetime.utcnow().isoformat() + "Z",
+            content_briefs=result.get("content_briefs"),
         )
         await self.storage.save_strategy_async(strategy)
         return strategy
@@ -1551,11 +1743,104 @@ Return JSON:
         return post
 
     async def generate_batch_posts(self, strategy_id: str, user_email: str = "system") -> List[Post]:
-        """Generate multiple posts for an approved strategy"""
+        """Generate multiple posts for an approved strategy.
+        Uses content_briefs if available, otherwise falls back to legacy generation."""
         strategy = await self.storage.get_strategy_async(strategy_id)
         if not strategy:
             raise ValueError(f"Strategy not found: {strategy_id}")
 
+        # If strategy has content_briefs, use brief-driven generation
+        if strategy.content_briefs and len(strategy.content_briefs) > 0:
+            return await self._generate_posts_from_briefs(strategy)
+
+        # Legacy fallback for old strategies without briefs
+        return await self._generate_batch_posts_legacy(strategy)
+
+    async def _generate_posts_from_briefs(self, strategy: Strategy) -> List[Post]:
+        """Generate posts from per-day content briefs in batches of 3."""
+        cache = await self.storage.get_profile_cache_async()
+        voice_guide = cache.get("brand_voice_analysis", "{}") if cache else "{}"
+        campaign_slug = re.sub(r'[^a-z0-9]+', '-', strategy.title.lower()).strip('-')
+        briefs = strategy.content_briefs or []
+
+        created_posts = []
+        # Process briefs in batches of 3
+        for i in range(0, len(briefs), 3):
+            batch = briefs[i:i+3]
+
+            briefs_text = json.dumps(batch, indent=2)
+
+            system_prompt = f"""You are a social media content creator for Mirai Skin, a premium K-Beauty retailer.
+Brand voice guide: {voice_guide}
+
+STRATEGY: {strategy.title}
+HASHTAG STRATEGY: {json.dumps(strategy.hashtag_strategy)}
+
+Generate Instagram posts from the content briefs below. Each post must:
+- Reference the specific product BY NAME in the caption
+- Match the content_category angle in tone and structure
+- Include the visual_style direction in the visual_direction field
+- For reels: describe motion/action in visual_direction
+- Include relevant hashtags from the strategy
+
+Return valid JSON."""
+
+            user_prompt = f"""Generate posts from these content briefs:
+
+{briefs_text}
+
+UTM LINK FORMAT: https://miraiskin.co/products/{{handle}}?utm_source=instagram&utm_medium=organic&utm_campaign={campaign_slug}
+
+Return JSON:
+{{
+  "posts": [
+    {{
+      "post_type": "photo|reel|carousel|story",
+      "content_category": "the category from the brief",
+      "caption": "Full caption mentioning the product by name, with hashtags",
+      "visual_direction": "Detailed visual description combining the brief's visual_style with the product and caption context",
+      "scheduled_date": "YYYY-MM-DD from the brief",
+      "scheduled_time": "HH:MM from the brief",
+      "product_ids": ["shopify_gid from the brief"],
+      "link_url": "UTM link to the product"
+    }}
+  ]
+}}"""
+
+            result = json.loads(self._call_ai(system_prompt, user_prompt, max_tokens=4000))
+            posts_data = result.get("posts", [])
+
+            for p_data in posts_data:
+                scheduled_dt = None
+                if p_data.get("scheduled_date"):
+                    time_str = p_data.get("scheduled_time", "10:00")
+                    scheduled_dt = f"{p_data['scheduled_date']}T{time_str}:00Z"
+
+                post = Post(
+                    id=str(uuid_lib.uuid4()),
+                    strategy_id=strategy.id,
+                    post_type=p_data.get("post_type", "photo"),
+                    caption=p_data.get("caption", ""),
+                    visual_direction=p_data.get("visual_direction", ""),
+                    status="draft",
+                    created_at=datetime.utcnow().isoformat() + "Z",
+                    updated_at=datetime.utcnow().isoformat() + "Z",
+                    content_category=p_data.get("content_category"),
+                    media_type="VIDEO" if p_data.get("post_type") == "reel" else "IMAGE",
+                    product_ids=p_data.get("product_ids"),
+                    link_url=p_data.get("link_url"),
+                    utm_source="instagram",
+                    utm_medium="organic",
+                    utm_campaign=campaign_slug,
+                    scheduled_at=scheduled_dt,
+                )
+                await self.storage.save_post_async(post)
+                created_posts.append(post)
+
+        return created_posts
+
+    async def _generate_batch_posts_legacy(self, strategy: Strategy) -> List[Post]:
+        """Legacy single-prompt batch generation for strategies without content_briefs."""
         cache = await self.storage.get_profile_cache_async()
         voice_guide = cache.get("brand_voice_analysis", "{}") if cache else "{}"
         campaign_slug = re.sub(r'[^a-z0-9]+', '-', strategy.title.lower()).strip('-')
@@ -1609,7 +1894,7 @@ Return JSON:
 
             post = Post(
                 id=str(uuid_lib.uuid4()),
-                strategy_id=strategy_id,
+                strategy_id=strategy.id,
                 post_type=p_data.get("post_type", "photo"),
                 caption=p_data.get("caption", ""),
                 visual_direction=p_data.get("visual_direction", ""),
@@ -1668,29 +1953,39 @@ Return JSON:
         await self.storage.save_post_async(post)
         return post
 
-    async def _generate_image(self, visual_direction: str, post_type: str, engine: str = "auto") -> tuple:
-        """Generate an image. engine: 'auto' (Gemini first), 'gemini', or 'dalle'.
+    async def _generate_image(self, visual_direction: str, post_type: str, engine: str = "gemini", caption: str = "") -> tuple:
+        """Generate an image. engine: 'gemini' (default, no fallback), or 'dalle'.
         Returns (b64_data, thumbnail, format, engine_used)."""
-        if engine in ("auto", "gemini"):
-            result = await self._generate_image_gemini(visual_direction, post_type)
+        if engine == "gemini":
+            result = await self._generate_image_gemini(visual_direction, post_type, caption=caption)
             if result[0]:
                 print("[SocialMediaAgent] Image generated via Gemini")
                 return result + ("gemini",)
+            # No automatic DALL-E fallback when engine is "gemini"
+            return None, None, None, None
 
-        if engine in ("auto", "dalle"):
+        if engine == "dalle":
             print("[SocialMediaAgent] Using DALL-E 3")
             result = await self._generate_image_dalle(visual_direction, post_type)
             return result + ("dalle",)
 
         return None, None, None, None
 
-    async def _generate_image_gemini(self, visual_direction: str, post_type: str) -> tuple:
+    async def _generate_image_gemini(self, visual_direction: str, post_type: str, caption: str = "") -> tuple:
         """Generate image using Google Gemini for natural lifestyle/product photography."""
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             return None, None, None
 
         aspect = "9:16" if post_type in ("story", "reel") else "1:1"
+
+        # Extract first sentence of caption (strip hashtags) for context
+        caption_context = ""
+        if caption:
+            clean_caption = re.sub(r'#\S+', '', caption).strip()
+            first_sentence = clean_caption.split('.')[0].strip()
+            if first_sentence:
+                caption_context = f' The image should match this caption message: "{first_sentence}".'
 
         prompt = (
             f"Professional Instagram photo for a premium K-Beauty skincare brand called Mirai Skin. "
@@ -1699,6 +1994,7 @@ Return JSON:
             f"The image should look like a high-end lifestyle or product photograph — "
             f"NOT an AI collage or digital art. Think Glossier or Aesop brand photography. "
             f"Aspect ratio: {aspect}."
+            f"{caption_context}"
         )
 
         try:
@@ -1760,11 +2056,19 @@ Return JSON:
         thumbnail = compress_to_thumbnail(b64_data, 256)
         return b64_data, thumbnail, "png"
 
-    async def _generate_video(self, visual_direction: str) -> tuple:
+    async def _generate_video(self, visual_direction: str, caption: str = "") -> tuple:
         """Try to generate a short video via Gemini Veo. Returns (b64_data, thumbnail, format) or (None, None, None)."""
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             return None, None, None
+
+        # Extract first sentence of caption for context
+        caption_context = ""
+        if caption:
+            clean_caption = re.sub(r'#\S+', '', caption).strip()
+            first_sentence = clean_caption.split('.')[0].strip()
+            if first_sentence:
+                caption_context = f' The video should match this message: "{first_sentence}".'
 
         try:
             async with httpx.AsyncClient(timeout=120) as client:
@@ -1772,6 +2076,7 @@ Return JSON:
                     f"Generate a short 5-second vertical video for Instagram Reels. "
                     f"Premium K-Beauty skincare brand aesthetic. {visual_direction}. "
                     f"Smooth, cinematic, natural lighting."
+                    f"{caption_context}"
                 )
                 resp = await client.post(
                     "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-preview-image-generation:generateContent",
@@ -1811,32 +2116,34 @@ Return JSON:
 
         return None, None, None
 
-    async def generate_media_for_post(self, post_uuid: str, engine: str = "auto") -> Post:
-        """Generate AI image/video for a post using its visual_direction.
-        engine: 'auto' (Gemini first), 'gemini', 'dalle'."""
+    async def generate_media_for_post(self, post_uuid: str, engine: str = "gemini") -> Post:
+        """Generate AI image/video for a post using its visual_direction + caption.
+        engine: 'gemini' (default, no DALL-E fallback), 'dalle' (explicit)."""
         post = await self.storage.get_post_async(post_uuid)
         if not post:
             raise ValueError(f"Post not found: {post_uuid}")
         if not post.visual_direction:
             raise ValueError("Post has no visual_direction to generate from")
 
+        caption = post.caption or ""
+
         if post.post_type == "reel":
-            # Try Gemini video first, fall back to image
-            video_data, video_thumb, video_fmt = await self._generate_video(post.visual_direction)
+            # Try Gemini video first, fall back to image (but flag media_type)
+            video_data, video_thumb, video_fmt = await self._generate_video(post.visual_direction, caption=caption)
             if video_data:
                 post.media_data = video_data
                 post.media_thumbnail = video_thumb
                 post.media_data_format = video_fmt
                 post.media_type = "VIDEO"
             else:
-                # Fallback to image
-                img, thumb, fmt, _engine = await self._generate_image(post.visual_direction, post.post_type, engine)
+                # Fallback to image but set media_type=IMAGE to flag in UI
+                img, thumb, fmt, _engine = await self._generate_image(post.visual_direction, post.post_type, engine, caption=caption)
                 post.media_data = img
                 post.media_thumbnail = thumb
                 post.media_data_format = fmt
                 post.media_type = "IMAGE"
         else:
-            img, thumb, fmt, _engine = await self._generate_image(post.visual_direction, post.post_type, engine)
+            img, thumb, fmt, _engine = await self._generate_image(post.visual_direction, post.post_type, engine, caption=caption)
             post.media_data = img
             post.media_thumbnail = thumb
             post.media_data_format = fmt

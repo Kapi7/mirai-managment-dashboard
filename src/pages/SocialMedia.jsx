@@ -67,6 +67,16 @@ const POST_TYPE_ICONS = {
   story: Clock,
 };
 
+const CONTENT_CATEGORY_COLORS = {
+  "how-to": "bg-blue-100 text-blue-700",
+  "before-after": "bg-purple-100 text-purple-700",
+  "product-feature": "bg-green-100 text-green-700",
+  "lifestyle": "bg-pink-100 text-pink-700",
+  "educational": "bg-indigo-100 text-indigo-700",
+  "testimonial": "bg-yellow-100 text-yellow-700",
+  "behind-the-scenes": "bg-orange-100 text-orange-700",
+};
+
 function StatusBadge({ status }) {
   return (
     <Badge className={`${STATUS_COLORS[status] || "bg-gray-100 text-gray-700"} border-0 text-xs`}>
@@ -745,6 +755,48 @@ export default function SocialMedia() {
                       </div>
                     )}
 
+                    {selectedStrategy.content_briefs?.length > 0 && (
+                      <div>
+                        <Label className="text-xs text-gray-500 mb-2 block">Content Briefs ({selectedStrategy.content_briefs.length})</Label>
+                        <div className="max-h-64 overflow-y-auto border rounded-lg">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead className="text-xs py-1.5">Date</TableHead>
+                                <TableHead className="text-xs py-1.5">Category</TableHead>
+                                <TableHead className="text-xs py-1.5">Type</TableHead>
+                                <TableHead className="text-xs py-1.5">Product</TableHead>
+                                <TableHead className="text-xs py-1.5">Hook</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {selectedStrategy.content_briefs.map((brief, i) => (
+                                <TableRow key={i}>
+                                  <TableCell className="text-xs py-1.5 whitespace-nowrap">{brief.date}</TableCell>
+                                  <TableCell className="py-1.5">
+                                    <Badge className={`${CONTENT_CATEGORY_COLORS[brief.content_category] || "bg-gray-100 text-gray-700"} border-0 text-[10px]`}>
+                                      {brief.content_category}
+                                    </Badge>
+                                  </TableCell>
+                                  <TableCell className="py-1.5">
+                                    <Badge className={`${POST_TYPE_COLORS[brief.post_type] || "bg-gray-400"} text-white border-0 text-[10px]`}>
+                                      {brief.post_type}
+                                    </Badge>
+                                  </TableCell>
+                                  <TableCell className="text-xs py-1.5 max-w-[120px] truncate" title={brief.product_to_feature?.title}>
+                                    {brief.product_to_feature?.title || "—"}
+                                  </TableCell>
+                                  <TableCell className="text-xs py-1.5 max-w-[150px] truncate" title={brief.hook}>
+                                    {brief.hook || "—"}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </div>
+                    )}
+
                     {selectedStrategy.rejection_reason && (
                       <div className="bg-red-50 p-3 rounded-lg">
                         <Label className="text-xs text-red-500">Rejection Reason</Label>
@@ -995,6 +1047,11 @@ export default function SocialMedia() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
                           <span className="text-xs font-medium text-gray-500 capitalize">{p.post_type?.replace("_", " ")}</span>
+                          {p.content_category && (
+                            <Badge className={`${CONTENT_CATEGORY_COLORS[p.content_category] || "bg-gray-100 text-gray-700"} border-0 text-[10px]`}>
+                              {p.content_category}
+                            </Badge>
+                          )}
                           <StatusBadge status={p.status} />
                           {p.scheduled_at && (
                             <span className="text-xs text-gray-400 flex items-center gap-1">

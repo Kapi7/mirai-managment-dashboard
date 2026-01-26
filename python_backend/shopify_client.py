@@ -533,6 +533,63 @@ def create_article(
         raise RuntimeError(f"Failed to create article: {str(e)}")
 
 
+# ---------- Product Catalog ----------
+
+PRODUCTS_GQL = """
+query Products($cursor: String) {
+  products(first: 50, after: $cursor, sortKey: TITLE) {
+    pageInfo { hasNextPage }
+    edges {
+      cursor
+      node {
+        id
+        title
+        handle
+        description
+        productType
+        vendor
+        status
+        tags
+        featuredImage { url altText }
+        images(first: 5) {
+          edges {
+            node { url altText }
+          }
+        }
+        variants(first: 10) {
+          edges {
+            node {
+              id
+              title
+              sku
+              price
+              compareAtPrice
+              inventoryItem { unitCost { amount currencyCode } }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+def fetch_product_catalog() -> List[Dict[str, Any]]:
+    """Fetch full product catalog from the default store with cursor-based pagination."""
+    vars_ = {"cursor": None}
+    nodes: List[Dict[str, Any]] = []
+    while True:
+        data = _gql(PRODUCTS_GQL, vars_)
+        products = data.get("products") or {}
+        edges = products.get("edges") or []
+        nodes.extend([e["node"] for e in edges if isinstance(e, dict) and "node" in e])
+        if not (products.get("pageInfo") or {}).get("hasNextPage"):
+            break
+        vars_["cursor"] = edges[-1]["cursor"]
+    return _dedupe_by_id(nodes)
+
+
 def update_article(
     article_id: str,
     title: Optional[str] = None,

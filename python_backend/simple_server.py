@@ -4901,11 +4901,13 @@ async def sm_account_status(user: dict = Depends(require_auth)):
         connection = await storage.get_active_connection_async("instagram")
 
         if not connection:
-            env_token = os.getenv("META_ACCESS_TOKEN")
-            env_page = os.getenv("META_PAGE_ID")
-            if env_token and env_page:
+            # Check if env vars are set as fallback (IG token or Meta token)
+            env_token = os.getenv("IG_ACCESS_TOKEN") or os.getenv("META_ACCESS_TOKEN")
+            env_page = os.getenv("META_PAGE_ID") or ""
+            is_ig_env = env_token and env_token.startswith("IGAA")
+            if env_token and (env_page or is_ig_env):
                 token_info = await validate_meta_token(env_token)
-                return {
+                result = {
                     "connected": token_info.get("valid", False),
                     "source": "environment",
                     "token_valid": token_info.get("valid", False),
@@ -4915,6 +4917,9 @@ async def sm_account_status(user: dict = Depends(require_auth)):
                     "page_id": env_page,
                     "ig_account_id": os.getenv("META_IG_ACCOUNT_ID"),
                 }
+                if is_ig_env:
+                    result["ig_username"] = token_info.get("ig_username")
+                return result
             return {"connected": False, "source": None}
 
         token_info = await validate_meta_token(connection["access_token"])
@@ -4946,7 +4951,8 @@ async def sm_account_connect(req: SMConnectRequest, user: dict = Depends(require
 
         token_info = await validate_meta_token(token)
         if not token_info.get("valid"):
-            raise HTTPException(status_code=400, detail="Invalid access token. Please check and try again.")
+            err_msg = token_info.get("error", "Invalid access token. Please check and try again.")
+            raise HTTPException(status_code=400, detail=err_msg)
 
         token_type = "instagram" if is_ig_token else "long_lived"
         expires_at = None
@@ -5097,6 +5103,18 @@ async def sm_analyze_voice(user: dict = Depends(require_auth)):
         return {"analysis": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to analyze voice: {str(e)}")
+
+
+@app.post("/social-media/sync-products")
+async def sm_sync_products(user: dict = Depends(require_auth)):
+    """Sync full product catalog from Shopify into DB"""
+    try:
+        from social_media_service import create_social_media_agent
+        agent = create_social_media_agent()
+        products = await agent.sync_product_catalog()
+        return {"products": products, "count": len(products)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to sync products: {str(e)}")
 
 
 @app.post("/social-media/strategy/generate")
@@ -5380,8 +5398,8 @@ async def sm_publish_post(uuid: str, user: dict = Depends(require_auth)):
 
 
 @app.post("/social-media/post/{uuid}/generate-media")
-async def sm_generate_media(uuid: str, engine: str = "auto", user: dict = Depends(require_auth)):
-    """Generate AI image/video for a post. engine: auto (Gemini first), gemini, dalle"""
+async def sm_generate_media(uuid: str, engine: str = "gemini", user: dict = Depends(require_auth)):
+    """Generate AI image/video for a post. engine: gemini (default), dalle"""
     try:
         from social_media_service import create_social_media_agent
         from dataclasses import asdict

@@ -185,6 +185,57 @@ async def init_db():
                     END IF;
                 END $$;
                 """,
+                # Enrich products table with catalog fields
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'products' AND column_name = 'description') THEN
+                        ALTER TABLE products ADD COLUMN description TEXT;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'products' AND column_name = 'handle') THEN
+                        ALTER TABLE products ADD COLUMN handle VARCHAR(500);
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'products' AND column_name = 'product_type') THEN
+                        ALTER TABLE products ADD COLUMN product_type VARCHAR(255);
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'products' AND column_name = 'vendor') THEN
+                        ALTER TABLE products ADD COLUMN vendor VARCHAR(255);
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'products' AND column_name = 'tags') THEN
+                        ALTER TABLE products ADD COLUMN tags JSONB;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'products' AND column_name = 'featured_image_url') THEN
+                        ALTER TABLE products ADD COLUMN featured_image_url TEXT;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'products' AND column_name = 'images') THEN
+                        ALTER TABLE products ADD COLUMN images JSONB;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'products' AND column_name = 'price_min') THEN
+                        ALTER TABLE products ADD COLUMN price_min NUMERIC(10,2);
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'products' AND column_name = 'price_max') THEN
+                        ALTER TABLE products ADD COLUMN price_max NUMERIC(10,2);
+                    END IF;
+                END $$;
+                """,
+                # Add content_briefs to social_media_strategies
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'social_media_strategies' AND column_name = 'content_briefs') THEN
+                        ALTER TABLE social_media_strategies ADD COLUMN content_briefs JSONB;
+                    END IF;
+                END $$;
+                """,
+                # Add content_category to social_media_posts
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'social_media_posts' AND column_name = 'content_category') THEN
+                        ALTER TABLE social_media_posts ADD COLUMN content_category VARCHAR(50);
+                    END IF;
+                END $$;
+                """,
                 # Add media storage columns to social_media_posts
                 """
                 DO $$

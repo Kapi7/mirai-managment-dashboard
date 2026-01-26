@@ -37,6 +37,15 @@ class Product(Base):
     shopify_gid = Column(String(100), unique=True, nullable=False)
     store_id = Column(Integer, ForeignKey("stores.id"))
     title = Column(String(500), nullable=False)
+    description = Column(Text)
+    handle = Column(String(500))
+    product_type = Column(String(255))
+    vendor = Column(String(255))
+    tags = Column(JSON)  # list of strings
+    featured_image_url = Column(Text)
+    images = Column(JSON)  # list of {url, altText}
+    price_min = Column(Numeric(10, 2))
+    price_max = Column(Numeric(10, 2))
     status = Column(String(50))  # active, archived, draft
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -548,6 +557,7 @@ class SocialMediaStrategy(Base):
     content_mix = Column(JSON)  # Ratio plan: {reels: 40, photos: 40, product: 20}
     posting_frequency = Column(JSON)  # Posts per week, best times
     hashtag_strategy = Column(JSON)  # Core + rotating hashtags
+    content_briefs = Column(JSON)  # list of per-day content briefs
     date_range_start = Column(Date)
     date_range_end = Column(Date)
     status = Column(String(50), default='draft', index=True)  # draft, pending_review, approved, rejected, active, completed
@@ -575,6 +585,7 @@ class SocialMediaPost(Base):
     uuid = Column(String(50), unique=True, nullable=False, index=True)
     strategy_id = Column(Integer, ForeignKey("social_media_strategies.id"))
     post_type = Column(String(30))  # photo, reel, carousel, product_feature
+    content_category = Column(String(50))  # how-to, before-after, product-feature, lifestyle, etc.
     caption = Column(Text)
     visual_direction = Column(Text)  # AI description of what the visual should be
     media_url = Column(Text)  # URL of uploaded media
