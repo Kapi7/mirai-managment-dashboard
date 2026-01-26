@@ -457,8 +457,9 @@ export default function SocialMedia() {
   }, [apiFetch]);
 
   const connectAccount = async () => {
-    if (!connectToken.trim() || !connectPageId.trim()) {
-      toast({ title: "Error", description: "Both access token and Page ID are required", variant: "destructive" });
+    const isIgToken = connectToken.trim().startsWith("IGAA");
+    if (!connectToken.trim() || (!isIgToken && !connectPageId.trim())) {
+      toast({ title: "Error", description: isIgToken ? "Access token is required" : "Both access token and Page ID are required", variant: "destructive" });
       return;
     }
     setConnecting(true);
@@ -1624,10 +1625,21 @@ export default function SocialMedia() {
                     <Textarea
                       value={connectToken}
                       onChange={e => setConnectToken(e.target.value)}
-                      placeholder="Paste your Meta User Access Token here..."
+                      placeholder="Paste your IG or Meta access token (IGAA... or EAA...)"
                       className="mt-1 font-mono text-xs h-20"
                     />
+                    {connectToken.startsWith("IGAA") && (
+                      <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
+                        <CheckCircle className="h-3 w-3" /> Instagram API token detected — Page ID not required
+                      </p>
+                    )}
+                    {connectToken.startsWith("EAA") && (
+                      <p className="text-xs text-blue-600 mt-1 flex items-center gap-1">
+                        <Shield className="h-3 w-3" /> Facebook token — Page ID required below
+                      </p>
+                    )}
                   </div>
+                  {!connectToken.startsWith("IGAA") && (
                   <div>
                     <Label className="font-medium">Facebook Page ID</Label>
                     <Input
@@ -1637,6 +1649,7 @@ export default function SocialMedia() {
                       className="mt-1 font-mono"
                     />
                   </div>
+                  )}
                   <div className="flex gap-2">
                     <Button onClick={connectAccount} disabled={connecting}>
                       {connecting ? <RotateCw className="h-4 w-4 animate-spin mr-1" /> : <CheckCircle className="h-4 w-4 mr-1" />}

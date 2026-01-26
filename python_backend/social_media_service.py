@@ -35,6 +35,7 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 SOCIAL_DATA_FILE = os.path.join(DATA_DIR, "social_media.json")
 
 META_GRAPH_URL = "https://graph.facebook.com/v21.0"
+IG_GRAPH_URL = "https://graph.instagram.com/v21.0"
 
 
 def compress_to_thumbnail(b64_data: str, max_size: int = 256) -> str:
@@ -932,9 +933,35 @@ class SocialMediaStorage:
 # ============================================================
 
 async def validate_meta_token(access_token: str) -> Dict:
-    """Validate a Meta access token and return its info (expiry, scopes, etc.)."""
+    """Validate a Meta access token and return its info (expiry, scopes, etc.).
+    Supports both IGAA (Instagram) and EAA (Facebook) tokens."""
+    is_ig_token = access_token.startswith("IGAA")
+
     async with httpx.AsyncClient(timeout=30) as client:
-        # Debug token to get expiry and validity
+        if is_ig_token:
+            # For Instagram tokens, validate by calling /me
+            resp = await client.get(
+                f"{IG_GRAPH_URL}/me",
+                params={"fields": "user_id,username,account_type", "access_token": access_token}
+            )
+            if resp.status_code != 200:
+                return {"valid": False, "error": f"Instagram token validation failed (HTTP {resp.status_code})"}
+
+            ig_data = resp.json()
+            return {
+                "valid": True,
+                "app_id": "",
+                "scopes": ["instagram_basic", "instagram_content_publish", "instagram_manage_insights"],
+                "expires_at": None,
+                "expires_at_ts": 0,
+                "is_expired": False,
+                "token_type": "instagram",
+                "days_until_expiry": None,  # IG tokens from app dashboard don't expire easily
+                "ig_username": ig_data.get("username"),
+                "ig_user_id": ig_data.get("user_id"),
+            }
+
+        # Facebook (EAA) token — use debug_token
         resp = await client.get(
             f"{META_GRAPH_URL}/debug_token",
             params={"input_token": access_token, "access_token": access_token}
@@ -958,24 +985,23 @@ async def validate_meta_token(access_token: str) -> Dict:
             "token_type": data.get("type", "unknown"),
         }
 
-        # Check days until expiry
         if expires_at and expires_at > 0:
             expires_dt = datetime.utcfromtimestamp(expires_at)
             days_left = (expires_dt - datetime.utcnow()).days
             result["days_until_expiry"] = days_left
         else:
-            result["days_until_expiry"] = None  # Never expires (page tokens)
+            result["days_until_expiry"] = None
 
         return result
 
 
 async def exchange_for_long_lived_token(short_token: str) -> Dict:
     """Exchange a short-lived token for a long-lived one (~60 days).
-    Requires META_APP_ID and META_APP_SECRET env vars."""
-    app_id = os.getenv("META_APP_ID")
-    app_secret = os.getenv("META_APP_SECRET")
+    Requires META_APP_ID/APP_ID and META_APP_SECRET/APP_SECRET env vars."""
+    app_id = os.getenv("META_APP_ID") or os.getenv("APP_ID")
+    app_secret = os.getenv("META_APP_SECRET") or os.getenv("APP_SECRET")
     if not app_id or not app_secret:
-        return {"error": "META_APP_ID and META_APP_SECRET required for token exchange"}
+        return {"error": "META_APP_ID and META_APP_SECRET (or APP_ID/APP_SECRET) required for token exchange"}
 
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(
@@ -1001,10 +1027,10 @@ async def exchange_for_long_lived_token(short_token: str) -> Dict:
 async def refresh_long_lived_token(current_token: str) -> Dict:
     """Refresh a long-lived token to get a new one with extended expiry.
     Only works if the current token is still valid and not expired."""
-    app_id = os.getenv("META_APP_ID")
-    app_secret = os.getenv("META_APP_SECRET")
+    app_id = os.getenv("META_APP_ID") or os.getenv("APP_ID")
+    app_secret = os.getenv("META_APP_SECRET") or os.getenv("APP_SECRET")
     if not app_id or not app_secret:
-        return {"error": "META_APP_ID and META_APP_SECRET required for token refresh"}
+        return {"error": "META_APP_ID and META_APP_SECRET (or APP_ID/APP_SECRET) required for token refresh"}
 
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(
@@ -1028,9 +1054,33 @@ async def refresh_long_lived_token(current_token: str) -> Dict:
 
 
 async def fetch_ig_account_from_token(access_token: str, page_id: str) -> Dict:
-    """Given a valid token and page ID, fetch the linked Instagram Business Account info."""
+    """Given a valid token and page ID, fetch the linked Instagram Business Account info.
+    Supports both IGAA (Instagram API) and EAA (Facebook Graph API) tokens."""
+    is_ig_token = access_token.startswith("IGAA")
+
     async with httpx.AsyncClient(timeout=30) as client:
-        # Get IG account ID from Page
+        if is_ig_token:
+            # Instagram API token — fetch directly from /me
+            resp = await client.get(
+                f"{IG_GRAPH_URL}/me",
+                params={"fields": "user_id,username,account_type,followers_count,media_count,profile_picture_url,biography",
+                        "access_token": access_token}
+            )
+            if resp.status_code != 200:
+                return {"error": f"Failed to fetch IG profile: {resp.text}"}
+
+            ig_data = resp.json()
+            return {
+                "ig_account_id": ig_data.get("user_id", ig_data.get("id")),
+                "ig_username": ig_data.get("username"),
+                "ig_followers": ig_data.get("followers_count", 0),
+                "ig_media_count": ig_data.get("media_count", 0),
+                "ig_profile_pic": ig_data.get("profile_picture_url"),
+                "ig_biography": ig_data.get("biography"),
+                "page_name": None,
+            }
+
+        # Facebook (EAA) token — look up IG account via Page
         resp = await client.get(
             f"{META_GRAPH_URL}/{page_id}",
             params={"fields": "instagram_business_account,name,picture", "access_token": access_token}
@@ -1044,7 +1094,6 @@ async def fetch_ig_account_from_token(access_token: str, page_id: str) -> Dict:
         if not ig_id:
             return {"error": "No Instagram Business Account linked to this Facebook Page. Ensure you have a Professional (Business or Creator) Instagram account connected to this Page."}
 
-        # Get IG profile details
         resp2 = await client.get(
             f"{META_GRAPH_URL}/{ig_id}",
             params={"fields": "username,followers_count,media_count,profile_picture_url,biography", "access_token": access_token}
@@ -1069,11 +1118,16 @@ async def fetch_ig_account_from_token(access_token: str, page_id: str) -> Dict:
 # ============================================================
 
 class InstagramPublisher:
-    def __init__(self, access_token: Optional[str] = None, page_id: Optional[str] = None):
-        self.access_token = access_token or os.getenv("META_ACCESS_TOKEN")
+    def __init__(self, access_token: Optional[str] = None, page_id: Optional[str] = None,
+                 ig_account_id: Optional[str] = None):
+        self.access_token = access_token or os.getenv("IG_ACCESS_TOKEN") or os.getenv("META_ACCESS_TOKEN")
         self.page_id = page_id or os.getenv("META_PAGE_ID")
+        self._ig_account_id = ig_account_id or os.getenv("META_IG_ACCOUNT_ID")
         if not self.access_token:
             raise ValueError("META_ACCESS_TOKEN not configured")
+        # Detect token type: IGAA = Instagram API, EAA = Facebook Graph API
+        self.is_ig_token = self.access_token.startswith("IGAA")
+        self.base_url = IG_GRAPH_URL if self.is_ig_token else META_GRAPH_URL
 
     async def _request(self, method: str, url: str, **kwargs) -> Dict:
         async with httpx.AsyncClient(timeout=60) as client:
@@ -1082,66 +1136,81 @@ class InstagramPublisher:
             return resp.json()
 
     async def get_ig_account_id(self) -> str:
-        cached = os.getenv("META_IG_ACCOUNT_ID")
-        if cached:
-            return cached
+        if self._ig_account_id:
+            return self._ig_account_id
+        if self.is_ig_token:
+            # For IG tokens, fetch user_id from /me endpoint
+            data = await self._request("GET", f"{IG_GRAPH_URL}/me",
+                                        params={"fields": "user_id,username", "access_token": self.access_token})
+            self._ig_account_id = data.get("user_id", data.get("id"))
+            return self._ig_account_id
+        # For Facebook tokens, look up via Page
         data = await self._request("GET", f"{META_GRAPH_URL}/{self.page_id}",
                                     params={"fields": "instagram_business_account", "access_token": self.access_token})
         ig = data.get("instagram_business_account", {}).get("id")
         if not ig:
             raise ValueError("No Instagram Business Account linked to this Page")
+        self._ig_account_id = ig
         return ig
 
     async def get_profile_info(self, ig_account_id: str) -> Dict:
-        data = await self._request("GET", f"{META_GRAPH_URL}/{ig_account_id}",
-                                    params={"fields": "followers_count,media_count,username,biography",
+        fields = "followers_count,media_count,username,biography"
+        if self.is_ig_token:
+            fields = "user_id,username,followers_count,media_count,biography,profile_picture_url,account_type"
+        data = await self._request("GET", f"{self.base_url}/{ig_account_id}",
+                                    params={"fields": fields,
                                             "access_token": self.access_token})
         return data
 
     async def get_recent_media(self, ig_account_id: str, limit: int = 25) -> List[Dict]:
-        data = await self._request("GET", f"{META_GRAPH_URL}/{ig_account_id}/media",
-                                    params={"fields": "caption,timestamp,media_type,like_count,comments_count,permalink",
+        fields = "caption,timestamp,media_type,like_count,comments_count,permalink"
+        data = await self._request("GET", f"{self.base_url}/{ig_account_id}/media",
+                                    params={"fields": fields,
                                             "limit": limit, "access_token": self.access_token})
         return data.get("data", [])
 
     async def create_image_container(self, ig_account_id: str, image_url: str, caption: str) -> str:
-        data = await self._request("POST", f"{META_GRAPH_URL}/{ig_account_id}/media",
+        data = await self._request("POST", f"{self.base_url}/{ig_account_id}/media",
                                     data={"image_url": image_url, "caption": caption,
                                           "access_token": self.access_token})
         return data["id"]
 
     async def create_reel_container(self, ig_account_id: str, video_url: str, caption: str) -> str:
-        data = await self._request("POST", f"{META_GRAPH_URL}/{ig_account_id}/media",
+        data = await self._request("POST", f"{self.base_url}/{ig_account_id}/media",
                                     data={"video_url": video_url, "caption": caption,
                                           "media_type": "REELS", "access_token": self.access_token})
         return data["id"]
 
     async def create_story_container(self, ig_account_id: str, image_url: str) -> str:
         """Create an Instagram Story container (no caption for stories)"""
-        data = await self._request("POST", f"{META_GRAPH_URL}/{ig_account_id}/media",
+        data = await self._request("POST", f"{self.base_url}/{ig_account_id}/media",
                                     data={"image_url": image_url, "media_type": "STORIES",
                                           "access_token": self.access_token})
         return data["id"]
 
     async def create_carousel_container(self, ig_account_id: str, children_ids: List[str], caption: str) -> str:
-        data = await self._request("POST", f"{META_GRAPH_URL}/{ig_account_id}/media",
+        data = await self._request("POST", f"{self.base_url}/{ig_account_id}/media",
                                     data={"media_type": "CAROUSEL", "caption": caption,
                                           "children": ",".join(children_ids),
                                           "access_token": self.access_token})
         return data["id"]
 
     async def check_container_status(self, container_id: str) -> str:
-        data = await self._request("GET", f"{META_GRAPH_URL}/{container_id}",
+        data = await self._request("GET", f"{self.base_url}/{container_id}",
                                     params={"fields": "status_code", "access_token": self.access_token})
         return data.get("status_code", "IN_PROGRESS")
 
     async def publish_container(self, ig_account_id: str, container_id: str) -> str:
-        data = await self._request("POST", f"{META_GRAPH_URL}/{ig_account_id}/media_publish",
+        data = await self._request("POST", f"{self.base_url}/{ig_account_id}/media_publish",
                                     data={"creation_id": container_id, "access_token": self.access_token})
         return data["id"]
 
     async def mirror_to_facebook(self, message: str, link: Optional[str] = None,
                                   media_url: Optional[str] = None) -> Optional[str]:
+        """Mirror post to Facebook Page. Only works with Facebook (EAA) tokens."""
+        if self.is_ig_token or not self.page_id:
+            print("[InstagramPublisher] Skipping Facebook mirror (IG token or no page_id)")
+            return None
         try:
             if media_url:
                 data = await self._request("POST", f"{META_GRAPH_URL}/{self.page_id}/photos",
@@ -1162,23 +1231,24 @@ class InstagramPublisher:
         Returns a list of daily metric dicts for the date range."""
         results = []
         try:
-            # IG API allows max 30 days per request
             since_ts = int(datetime.combine(since, datetime.min.time()).timestamp())
             until_ts = int(datetime.combine(until + timedelta(days=1), datetime.min.time()).timestamp())
 
-            # Account-level metrics
-            metrics = "impressions,reach,profile_views,website_clicks,follower_count"
-            data = await self._request("GET", f"{META_GRAPH_URL}/{ig_account_id}/insights",
+            # IG API uses different metric names than Facebook Graph API
+            if self.is_ig_token:
+                metrics = "reach,follower_count,profile_views,website_clicks"
+            else:
+                metrics = "impressions,reach,profile_views,website_clicks,follower_count"
+            data = await self._request("GET", f"{self.base_url}/{ig_account_id}/insights",
                                         params={"metric": metrics, "period": "day",
                                                 "since": since_ts, "until": until_ts,
                                                 "access_token": self.access_token})
 
-            # Parse response: each metric has a list of daily values
-            daily_map = {}  # date_str -> {metric: value}
+            daily_map = {}
             for metric_data in data.get("data", []):
                 metric_name = metric_data["name"]
                 for val in metric_data.get("values", []):
-                    end_time = val.get("end_time", "")[:10]  # "2024-01-15T07:00:00+0000" -> "2024-01-15"
+                    end_time = val.get("end_time", "")[:10]
                     if end_time not in daily_map:
                         daily_map[end_time] = {"date": end_time}
                     daily_map[end_time][metric_name] = val.get("value", 0)
@@ -1190,11 +1260,16 @@ class InstagramPublisher:
         return results
 
     async def fetch_account_demographics(self, ig_account_id: str) -> Dict:
-        """Fetch audience demographics (city, country, gender/age)."""
+        """Fetch audience demographics."""
         try:
-            data = await self._request("GET", f"{META_GRAPH_URL}/{ig_account_id}/insights",
-                                        params={"metric": "audience_city,audience_country,audience_gender_age",
-                                                "period": "lifetime",
+            if self.is_ig_token:
+                metrics = "follower_demographics"
+                period = "lifetime"
+            else:
+                metrics = "audience_city,audience_country,audience_gender_age"
+                period = "lifetime"
+            data = await self._request("GET", f"{self.base_url}/{ig_account_id}/insights",
+                                        params={"metric": metrics, "period": period,
                                                 "access_token": self.access_token})
             result = {}
             for item in data.get("data", []):
@@ -1207,7 +1282,7 @@ class InstagramPublisher:
     async def fetch_online_followers(self, ig_account_id: str) -> Dict:
         """Fetch online followers distribution by hour."""
         try:
-            data = await self._request("GET", f"{META_GRAPH_URL}/{ig_account_id}/insights",
+            data = await self._request("GET", f"{self.base_url}/{ig_account_id}/insights",
                                         params={"metric": "online_followers",
                                                 "period": "lifetime",
                                                 "access_token": self.access_token})
@@ -1222,12 +1297,14 @@ class InstagramPublisher:
     async def fetch_recent_media_detailed(self, ig_account_id: str, limit: int = 50) -> List[Dict]:
         """Fetch recent media with full engagement metrics."""
         try:
-            data = await self._request("GET", f"{META_GRAPH_URL}/{ig_account_id}/media",
-                                        params={"fields": "id,caption,timestamp,media_type,like_count,comments_count,permalink,media_url,thumbnail_url",
+            fields = "id,caption,timestamp,media_type,like_count,comments_count,permalink"
+            if not self.is_ig_token:
+                fields += ",media_url,thumbnail_url"
+            data = await self._request("GET", f"{self.base_url}/{ig_account_id}/media",
+                                        params={"fields": fields,
                                                 "limit": limit, "access_token": self.access_token})
             media_list = data.get("data", [])
 
-            # Enrich with insights for each post
             for media in media_list:
                 try:
                     insights = await self.fetch_post_insights(media["id"])
@@ -1242,13 +1319,17 @@ class InstagramPublisher:
 
     async def fetch_post_insights(self, ig_media_id: str) -> Dict:
         try:
-            data = await self._request("GET", f"{META_GRAPH_URL}/{ig_media_id}/insights",
-                                        params={"metric": "impressions,reach,saved,shares,likes,comments,total_interactions",
+            if self.is_ig_token:
+                metrics = "reach,saved,shares,likes,comments,total_interactions"
+            else:
+                metrics = "impressions,reach,saved,shares,likes,comments,total_interactions"
+            data = await self._request("GET", f"{self.base_url}/{ig_media_id}/insights",
+                                        params={"metric": metrics,
                                                 "access_token": self.access_token})
-            metrics = {}
+            metrics_dict = {}
             for item in data.get("data", []):
-                metrics[item["name"]] = item["values"][0]["value"] if item.get("values") else 0
-            return metrics
+                metrics_dict[item["name"]] = item["values"][0]["value"] if item.get("values") else 0
+            return metrics_dict
         except Exception as e:
             print(f"[InstagramPublisher] Failed to fetch insights for {ig_media_id}: {e}")
             return {}
@@ -2189,6 +2270,7 @@ async def create_instagram_publisher_from_db() -> InstagramPublisher:
         return InstagramPublisher(
             access_token=connection["access_token"],
             page_id=connection.get("page_id"),
+            ig_account_id=connection.get("ig_account_id"),
         )
     # Fallback to env vars
     return InstagramPublisher()

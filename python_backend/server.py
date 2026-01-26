@@ -2258,7 +2258,7 @@ class SMRegenerateRequest(_SMBaseModel):
 
 class SMConnectRequest(_SMBaseModel):
     access_token: str
-    page_id: str
+    page_id: str = ""
 
 
 # ---------- Account Connection ----------
@@ -2315,34 +2315,34 @@ async def sm_account_connect(req: SMConnectRequest, user: dict = Depends(require
 
         token = req.access_token.strip()
         page_id = req.page_id.strip()
+        is_ig_token = token.startswith("IGAA")
 
         # 1. Validate the token
         token_info = await validate_meta_token(token)
         if not token_info.get("valid"):
             raise HTTPException(status_code=400, detail="Invalid access token. Please check and try again.")
 
-        # 2. If short-lived, try to exchange for long-lived
-        token_type = "long_lived"
+        # 2. Handle token type
+        token_type = "instagram" if is_ig_token else "long_lived"
         expires_at = None
-        if token_info.get("expires_at_ts"):
-            expires_dt = datetime.utcfromtimestamp(token_info["expires_at_ts"])
-            days_left = (expires_dt - datetime.utcnow()).days
-            if days_left < 5:
-                # Try to exchange for long-lived
-                exchange = await exchange_for_long_lived_token(token)
-                if exchange.get("access_token"):
-                    token = exchange["access_token"]
-                    token_type = "long_lived"
-                    if exchange.get("expires_in"):
-                        expires_at = datetime.utcnow() + timedelta(seconds=exchange["expires_in"])
+        if not is_ig_token:
+            # Facebook tokens may need exchange
+            if token_info.get("expires_at_ts"):
+                expires_dt = datetime.utcfromtimestamp(token_info["expires_at_ts"])
+                days_left = (expires_dt - datetime.utcnow()).days
+                if days_left < 5:
+                    exchange = await exchange_for_long_lived_token(token)
+                    if exchange.get("access_token"):
+                        token = exchange["access_token"]
+                        token_type = "long_lived"
+                        if exchange.get("expires_in"):
+                            expires_at = datetime.utcnow() + timedelta(seconds=exchange["expires_in"])
+                    else:
+                        expires_at = expires_dt
                 else:
-                    # Keep the original token
                     expires_at = expires_dt
-            else:
-                expires_at = expires_dt
-        elif token_info.get("days_until_expiry") is None:
-            # Never-expiring token (Page token)
-            token_type = "page_token"
+            elif token_info.get("days_until_expiry") is None:
+                token_type = "page_token"
 
         # 3. Fetch IG account info
         ig_info = await fetch_ig_account_from_token(token, page_id)
