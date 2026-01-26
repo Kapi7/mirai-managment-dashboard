@@ -278,7 +278,7 @@ class SocialMediaStorage:
                 existing.status = strategy.status
                 existing.rejection_reason = strategy.rejection_reason
                 existing.approved_by = strategy.approved_by
-                existing.approved_at = datetime.fromisoformat(strategy.approved_at.replace("Z", "+00:00")) if strategy.approved_at else None
+                existing.approved_at = datetime.fromisoformat(strategy.approved_at.replace("Z", "+00:00")).replace(tzinfo=None) if strategy.approved_at else None
             else:
                 db_strategy = SocialMediaStrategy(
                     uuid=strategy.id,
@@ -364,7 +364,7 @@ class SocialMediaStorage:
                 if not v:
                     return None
                 try:
-                    return datetime.fromisoformat(v.replace("Z", "+00:00"))
+                    return datetime.fromisoformat(v.replace("Z", "+00:00")).replace(tzinfo=None)
                 except Exception:
                     return None
 
