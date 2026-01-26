@@ -1368,13 +1368,34 @@ class InstagramPublisher:
 
 class SocialMediaAgent:
     def __init__(self, api_key: Optional[str] = None):
+        self.gemini_api_key = os.getenv("GEMINI_API_KEY")
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        if not self.api_key:
-            raise ValueError("OPENAI_API_KEY not configured")
-        self.client = _get_openai_client(api_key=self.api_key)
+        # OpenAI client created lazily — only needed for DALL-E
+        self._openai_client = None
+        if not self.gemini_api_key and not self.api_key:
+            raise ValueError("GEMINI_API_KEY or OPENAI_API_KEY must be configured")
         self.storage = SocialMediaStorage()
 
+    @property
+    def client(self):
+        """Lazy OpenAI client — only created when DALL-E is needed."""
+        if self._openai_client is None:
+            if not self.api_key:
+                raise ValueError("OPENAI_API_KEY required for DALL-E. Set OPENAI_API_KEY env var.")
+            self._openai_client = _get_openai_client(api_key=self.api_key)
+        return self._openai_client
+
     def _call_ai(self, system_prompt: str, user_prompt: str, json_mode: bool = True, max_tokens: int = 4000) -> str:
+        """Generate text using Gemini (preferred) or OpenAI GPT-4o (fallback)."""
+        if self.gemini_api_key:
+            result = self._call_gemini(system_prompt, user_prompt, json_mode, max_tokens)
+            if result:
+                return result
+            print("[SocialMediaAgent] Gemini text generation failed, falling back to GPT-4o")
+
+        if not self.api_key:
+            raise ValueError("No AI API key available for text generation")
+
         kwargs = {"model": "gpt-4o", "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
@@ -1383,6 +1404,47 @@ class SocialMediaAgent:
             kwargs["response_format"] = {"type": "json_object"}
         response = self.client.chat.completions.create(**kwargs)
         return response.choices[0].message.content
+
+    def _call_gemini(self, system_prompt: str, user_prompt: str, json_mode: bool = True, max_tokens: int = 4000) -> Optional[str]:
+        """Call Google Gemini for text generation."""
+        try:
+            gen_config = {
+                "temperature": 0.7,
+                "maxOutputTokens": max_tokens,
+            }
+            if json_mode:
+                gen_config["responseMimeType"] = "application/json"
+
+            payload = {
+                "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+                "systemInstruction": {"parts": [{"text": system_prompt}]},
+                "generationConfig": gen_config,
+            }
+
+            resp = requests.post(
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+                params={"key": self.gemini_api_key},
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=90,
+            )
+
+            if resp.status_code == 200:
+                data = resp.json()
+                candidates = data.get("candidates", [])
+                if candidates:
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    for part in parts:
+                        text = part.get("text", "")
+                        if text:
+                            print("[SocialMediaAgent] Text generated via Gemini")
+                            return text
+
+            print(f"[SocialMediaAgent] Gemini text failed (HTTP {resp.status_code}): {resp.text[:300]}")
+            return None
+        except Exception as e:
+            print(f"[SocialMediaAgent] Gemini text error: {e}")
+            return None
 
     async def sync_product_catalog(self) -> List[Dict]:
         """Fetch full product catalog from Shopify and upsert into DB.
@@ -1573,6 +1635,34 @@ Return JSON:
             product_catalog = [p for p in product_catalog if p.get("status") == "active"]
         except Exception as e:
             print(f"[SocialMediaAgent] Could not sync product catalog: {e}")
+
+        # Fallback: load products from DB if live sync returned nothing
+        if not product_catalog and DATABASE_AVAILABLE:
+            try:
+                from database.connection import get_db
+                from database.models import Product
+                from sqlalchemy import select
+                async with get_db() as db:
+                    result = await db.execute(
+                        select(Product).where(Product.status == "active").order_by(Product.title)
+                    )
+                    rows = result.scalars().all()
+                    product_catalog = [{
+                        "shopify_gid": r.shopify_gid,
+                        "title": r.title,
+                        "handle": r.handle or "",
+                        "description": (r.description or "")[:200],
+                        "product_type": r.product_type or "",
+                        "tags": r.tags or [],
+                        "price_min": float(r.price_min) if r.price_min else None,
+                        "price_max": float(r.price_max) if r.price_max else None,
+                        "featured_image_url": r.featured_image_url,
+                        "status": r.status or "active",
+                    } for r in rows]
+                    if product_catalog:
+                        print(f"[SocialMediaAgent] Loaded {len(product_catalog)} products from DB")
+            except Exception as e2:
+                print(f"[SocialMediaAgent] Could not load products from DB: {e2}")
 
         # Build product context for AI
         bestseller_summary = ""
@@ -1973,7 +2063,7 @@ Return JSON:
 
     async def _generate_image_gemini(self, visual_direction: str, post_type: str, caption: str = "") -> tuple:
         """Generate image using Google Gemini for natural lifestyle/product photography."""
-        api_key = os.getenv("GEMINI_API_KEY")
+        api_key = self.gemini_api_key or os.getenv("GEMINI_API_KEY")
         if not api_key:
             return None, None, None
 
@@ -2058,7 +2148,7 @@ Return JSON:
 
     async def _generate_video(self, visual_direction: str, caption: str = "") -> tuple:
         """Try to generate a short video via Gemini Veo. Returns (b64_data, thumbnail, format) or (None, None, None)."""
-        api_key = os.getenv("GEMINI_API_KEY")
+        api_key = self.gemini_api_key or os.getenv("GEMINI_API_KEY")
         if not api_key:
             return None, None, None
 
