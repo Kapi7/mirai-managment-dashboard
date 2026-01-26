@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/components/ui/use-toast";
 import {
@@ -28,8 +28,13 @@ import {
   RotateCw, Calendar, Clock, Send, Image, Video, BarChart3,
   Target, TrendingUp, Heart, MessageCircle, Bookmark, Users,
   ExternalLink, RefreshCw, ChevronLeft, ChevronRight, Layers,
-  Zap, Globe, Plus, Filter,
+  Zap, Globe, Plus, Filter, ArrowUpRight, ArrowDownRight, Minus,
+  MousePointer, UserPlus,
 } from "lucide-react";
+import {
+  ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid,
+  Tooltip, BarChart, Bar, Legend,
+} from "recharts";
 
 const API_URL = import.meta.env.DEV ? "http://localhost:8080" : "/api";
 
@@ -51,6 +56,7 @@ const POST_TYPE_COLORS = {
   reel: "bg-purple-500",
   carousel: "bg-pink-500",
   product_feature: "bg-green-500",
+  story: "bg-orange-500",
 };
 
 const POST_TYPE_ICONS = {
@@ -58,6 +64,7 @@ const POST_TYPE_ICONS = {
   reel: Video,
   carousel: Layers,
   product_feature: Target,
+  story: Clock,
 };
 
 function StatusBadge({ status }) {
@@ -114,6 +121,14 @@ export default function SocialMedia() {
   // Analytics state
   const [insights, setInsights] = useState(null);
   const [profileData, setProfileData] = useState(null);
+  const [analytics, setAnalytics] = useState(null);
+  const [analyticsPeriod, setAnalyticsPeriod] = useState(7);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [syncingAnalytics, setSyncingAnalytics] = useState(false);
+  const [analyticsMetric, setAnalyticsMetric] = useState("impressions");
+
+  // Media generation state
+  const [generatingMedia, setGeneratingMedia] = useState(false);
 
   // Profile/voice state
   const [analyzingVoice, setAnalyzingVoice] = useState(false);
@@ -364,6 +379,57 @@ export default function SocialMedia() {
       fetchInsights();
     } catch (e) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
+    }
+  };
+
+  const fetchAnalytics = useCallback(async (period) => {
+    setAnalyticsLoading(true);
+    try {
+      const data = await apiFetch(`/social-media/analytics?period=${period || analyticsPeriod}`);
+      setAnalytics(data);
+    } catch (e) {
+      console.error("Failed to fetch analytics:", e);
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  }, [apiFetch, analyticsPeriod]);
+
+  const syncAnalytics = async () => {
+    setSyncingAnalytics(true);
+    try {
+      const data = await apiFetch("/social-media/analytics/sync", { method: "POST" });
+      toast({
+        title: "Analytics Synced",
+        description: `${data.account_days_synced} days + ${data.post_insights_synced} posts synced`,
+      });
+      fetchAnalytics(analyticsPeriod);
+    } catch (e) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setSyncingAnalytics(false);
+    }
+  };
+
+  // Fetch analytics when period changes
+  useEffect(() => {
+    if (activeTab === "analytics") {
+      fetchAnalytics(analyticsPeriod);
+    }
+  }, [analyticsPeriod, activeTab]);
+
+  const generateMediaForPost = async (uuid) => {
+    setGeneratingMedia(true);
+    try {
+      const data = await apiFetch(`/social-media/post/${uuid}/generate-media`, { method: "POST" });
+      toast({ title: "Image Generated", description: "AI image created successfully" });
+      fetchPosts();
+      if (postDetailOpen && selectedPost?.id === uuid) {
+        setSelectedPost(data.post);
+      }
+    } catch (e) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setGeneratingMedia(false);
     }
   };
 
@@ -687,9 +753,12 @@ export default function SocialMedia() {
                             <div className="mt-1 space-y-0.5">
                               {dayPosts.slice(0, 3).map(p => (
                                 <div key={p.id}
-                                     className={`text-[10px] px-1 py-0.5 rounded truncate cursor-pointer text-white ${POST_TYPE_COLORS[p.post_type] || "bg-gray-400"}`}
+                                     className={`text-[10px] px-1 py-0.5 rounded truncate cursor-pointer text-white flex items-center gap-1 ${POST_TYPE_COLORS[p.post_type] || "bg-gray-400"}`}
                                      title={p.caption?.slice(0, 60)}
                                      onClick={() => { setSelectedPost(p); setPostDetailOpen(true); }}>
+                                  {p.media_thumbnail && (
+                                    <img src={`data:image/jpeg;base64,${p.media_thumbnail}`} alt="" className="w-4 h-4 rounded-sm object-cover shrink-0" />
+                                  )}
                                   {p.post_type}
                                 </div>
                               ))}
@@ -749,7 +818,11 @@ export default function SocialMedia() {
                           <div className="w-16 text-xs text-gray-400 shrink-0">
                             {p.scheduled_at ? new Date(p.scheduled_at).toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit" }) : "—"}
                           </div>
-                          <PostTypeIcon type={p.post_type} className="h-4 w-4 text-gray-400 shrink-0" />
+                          {p.media_thumbnail ? (
+                            <img src={`data:image/jpeg;base64,${p.media_thumbnail}`} alt="" className="w-8 h-8 rounded object-cover shrink-0" />
+                          ) : (
+                            <PostTypeIcon type={p.post_type} className="h-4 w-4 text-gray-400 shrink-0" />
+                          )}
                           <div className="flex-1 min-w-0">
                             <p className="text-sm truncate">{p.caption?.slice(0, 80) || "No caption"}</p>
                           </div>
@@ -792,6 +865,7 @@ export default function SocialMedia() {
                   <SelectItem value="reel">Reel</SelectItem>
                   <SelectItem value="carousel">Carousel</SelectItem>
                   <SelectItem value="product_feature">Product Feature</SelectItem>
+                  <SelectItem value="story">Story</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -814,10 +888,26 @@ export default function SocialMedia() {
                 <Card key={p.id} className="hover:shadow-md transition-shadow">
                   <CardContent className="py-3">
                     <div className="flex items-start gap-3">
-                      {/* Post type indicator */}
-                      <div className={`${POST_TYPE_COLORS[p.post_type] || "bg-gray-400"} w-10 h-10 rounded-lg flex items-center justify-center shrink-0`}>
-                        <PostTypeIcon type={p.post_type} className="h-5 w-5 text-white" />
-                      </div>
+                      {/* Thumbnail or type indicator */}
+                      {p.media_thumbnail ? (
+                        <img
+                          src={`data:image/jpeg;base64,${p.media_thumbnail}`}
+                          alt=""
+                          className="w-16 h-16 rounded-lg object-cover shrink-0 border"
+                        />
+                      ) : (
+                        <div className={`${POST_TYPE_COLORS[p.post_type] || "bg-gray-400"} w-16 h-16 rounded-lg flex flex-col items-center justify-center shrink-0 gap-1`}>
+                          <PostTypeIcon type={p.post_type} className="h-5 w-5 text-white" />
+                          {p.visual_direction && (
+                            <button
+                              className="text-[9px] text-white/80 hover:text-white underline"
+                              onClick={(e) => { e.stopPropagation(); generateMediaForPost(p.id); }}
+                            >
+                              {generatingMedia ? "..." : "Gen"}
+                            </button>
+                          )}
+                        </div>
+                      )}
 
                       {/* Content */}
                       <div className="flex-1 min-w-0">
@@ -883,106 +973,315 @@ export default function SocialMedia() {
 
         {/* ==================== ANALYTICS TAB ==================== */}
         <TabsContent value="analytics">
+          {/* Header with period selector and sync button */}
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-lg font-semibold">Social Analytics</h2>
-            <Button variant="outline" size="sm" onClick={syncInsights}>
-              <RefreshCw className="h-4 w-4 mr-1" /> Sync Insights
-            </Button>
-          </div>
-
-          {/* Profile overview */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <Card>
-              <CardContent className="py-4 text-center">
-                <Users className="h-5 w-5 mx-auto mb-1 text-indigo-500" />
-                <p className="text-2xl font-bold">{profileData?.followers_count?.toLocaleString() || "—"}</p>
-                <p className="text-xs text-gray-500">Followers</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="py-4 text-center">
-                <Image className="h-5 w-5 mx-auto mb-1 text-pink-500" />
-                <p className="text-2xl font-bold">{posts.filter(p => p.status === "published").length}</p>
-                <p className="text-xs text-gray-500">Published Posts</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="py-4 text-center">
-                <TrendingUp className="h-5 w-5 mx-auto mb-1 text-green-500" />
-                <p className="text-2xl font-bold">{insights?.summary?.total_reach?.toLocaleString() || "—"}</p>
-                <p className="text-xs text-gray-500">Total Reach</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="py-4 text-center">
-                <Heart className="h-5 w-5 mx-auto mb-1 text-red-500" />
-                <p className="text-2xl font-bold">
-                  {insights?.summary?.avg_engagement_rate ? `${insights.summary.avg_engagement_rate}%` : "—"}
-                </p>
-                <p className="text-xs text-gray-500">Engagement Rate</p>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Summary stats */}
-          {insights?.summary && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              <Card>
-                <CardContent className="py-3">
-                  <p className="text-xs text-gray-500">Total Impressions</p>
-                  <p className="text-lg font-bold">{insights.summary.total_impressions?.toLocaleString() || 0}</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="py-3">
-                  <p className="text-xs text-gray-500">Total Engagement</p>
-                  <p className="text-lg font-bold">{insights.summary.total_engagement?.toLocaleString() || 0}</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="py-3">
-                  <p className="text-xs text-gray-500">Website Clicks</p>
-                  <p className="text-lg font-bold">{insights.summary.total_website_clicks?.toLocaleString() || 0}</p>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="py-3">
-                  <p className="text-xs text-gray-500">Total Posts Tracked</p>
-                  <p className="text-lg font-bold">{insights.summary.total_posts || 0}</p>
-                </CardContent>
-              </Card>
+            <div className="flex items-center gap-3">
+              <h2 className="text-lg font-semibold">Account Analytics</h2>
+              <div className="flex border rounded-md overflow-hidden">
+                {[
+                  { label: "7D", value: 7 },
+                  { label: "14D", value: 14 },
+                  { label: "30D", value: 30 },
+                  { label: "90D", value: 90 },
+                ].map(p => (
+                  <button
+                    key={p.value}
+                    className={`px-3 py-1 text-xs font-medium ${analyticsPeriod === p.value ? "bg-indigo-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}
+                    onClick={() => setAnalyticsPeriod(p.value)}
+                  >{p.label}</button>
+                ))}
+              </div>
             </div>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={syncAnalytics} disabled={syncingAnalytics}>
+                {syncingAnalytics ? <RotateCw className="h-4 w-4 animate-spin mr-1" /> : <RefreshCw className="h-4 w-4 mr-1" />}
+                {syncingAnalytics ? "Syncing..." : "Sync from Instagram"}
+              </Button>
+            </div>
+          </div>
+
+          {analytics?.period && (
+            <p className="text-xs text-gray-400 mb-4">
+              {analytics.period.start} to {analytics.period.end} vs {analytics.period.prev_start} to {analytics.period.prev_end}
+            </p>
           )}
 
-          {/* Post performance table */}
-          {insights?.posts && insights.posts.length > 0 ? (
-            <Card>
+          {/* KPI Cards with period comparison */}
+          {(() => {
+            const c = analytics?.current || {};
+            const d = analytics?.deltas || {};
+            const live = analytics?.live_profile || {};
+
+            const kpis = [
+              { label: "Followers", value: live.followers_count || c.follower_count, delta: d.follower_count, icon: Users, color: "text-indigo-500" },
+              { label: "Impressions", value: c.impressions, delta: d.impressions, icon: Eye, color: "text-blue-500" },
+              { label: "Reach", value: c.reach, delta: d.reach, icon: TrendingUp, color: "text-green-500" },
+              { label: "Profile Views", value: c.profile_views, delta: d.profile_views, icon: MousePointer, color: "text-purple-500" },
+              { label: "Website Clicks", value: c.website_clicks, delta: d.website_clicks, icon: ExternalLink, color: "text-cyan-500" },
+              { label: "Engagement", value: c.engagement, delta: d.engagement, icon: Heart, color: "text-red-500" },
+              { label: "Engagement Rate", value: c.engagement_rate ? `${c.engagement_rate}%` : "—", delta: d.engagement_rate, icon: BarChart3, color: "text-pink-500", isSuffix: "pp" },
+              { label: "Net Followers", value: c.net_followers, delta: null, icon: UserPlus, color: "text-emerald-500" },
+            ];
+
+            return (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+                {kpis.map((kpi, i) => {
+                  const Icon = kpi.icon;
+                  const deltaVal = kpi.delta;
+                  const isPositive = deltaVal > 0;
+                  const isNegative = deltaVal < 0;
+                  const isNeutral = !deltaVal || deltaVal === 0;
+
+                  return (
+                    <Card key={i} className="hover:shadow-sm transition-shadow">
+                      <CardContent className="py-3 px-4">
+                        <div className="flex items-center justify-between mb-1">
+                          <Icon className={`h-4 w-4 ${kpi.color}`} />
+                          {deltaVal !== null && deltaVal !== undefined && (
+                            <span className={`text-xs font-medium flex items-center gap-0.5 ${isPositive ? "text-green-600" : isNegative ? "text-red-500" : "text-gray-400"}`}>
+                              {isPositive ? <ArrowUpRight className="h-3 w-3" /> : isNegative ? <ArrowDownRight className="h-3 w-3" /> : <Minus className="h-3 w-3" />}
+                              {Math.abs(deltaVal)}{kpi.isSuffix || "%"}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xl font-bold">
+                          {typeof kpi.value === "number" ? kpi.value.toLocaleString() : (kpi.value || "—")}
+                        </p>
+                        <p className="text-xs text-gray-500">{kpi.label}</p>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            );
+          })()}
+
+          {/* Daily Metrics Chart */}
+          {analytics?.daily && analytics.daily.length > 0 && (
+            <Card className="mb-6">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base">Daily Metrics</CardTitle>
+                  <div className="flex border rounded-md overflow-hidden">
+                    {[
+                      { label: "Impressions", value: "impressions" },
+                      { label: "Reach", value: "reach" },
+                      { label: "Profile Views", value: "profile_views" },
+                      { label: "Clicks", value: "website_clicks" },
+                    ].map(m => (
+                      <button
+                        key={m.value}
+                        className={`px-2 py-1 text-[10px] font-medium ${analyticsMetric === m.value ? "bg-indigo-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}
+                        onClick={() => setAnalyticsMetric(m.value)}
+                      >{m.label}</button>
+                    ))}
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="h-[280px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={analytics.daily.map(d => ({
+                      ...d,
+                      date: d.date?.slice(5), // "MM-DD"
+                    }))}>
+                      <defs>
+                        <linearGradient id="colorMetric" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3} />
+                          <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                        </linearGradient>
+                        <linearGradient id="colorPrev" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#9ca3af" stopOpacity={0.2} />
+                          <stop offset="95%" stopColor="#9ca3af" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                      <XAxis dataKey="date" tick={{ fontSize: 10 }} stroke="#9ca3af" />
+                      <YAxis tick={{ fontSize: 10 }} stroke="#9ca3af" />
+                      <Tooltip
+                        contentStyle={{ fontSize: 12, borderRadius: 8 }}
+                        formatter={(val) => [val?.toLocaleString(), analyticsMetric.replace("_", " ")]}
+                      />
+                      <Area type="monotone" dataKey={analyticsMetric} stroke="#6366f1" strokeWidth={2}
+                            fill="url(#colorMetric)" name="Current" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+                {analytics.previous_daily && analytics.previous_daily.length > 0 && (
+                  <p className="text-[10px] text-gray-400 mt-1 text-center">
+                    Previous period total: {analytics.previous_daily.reduce((acc, d) => acc + (d[analyticsMetric] || 0), 0).toLocaleString()} {analyticsMetric.replace("_", " ")}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Content Published + Follower Trend */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            {/* Content Published Bar Chart */}
+            {analytics?.daily && analytics.daily.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">Content Published</CardTitle>
+                  <CardDescription className="text-xs">
+                    {(analytics.current?.posts_published || 0) + (analytics.current?.stories_published || 0) + (analytics.current?.reels_published || 0)} total in period
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="h-[200px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={analytics.daily.map(d => ({
+                        date: d.date?.slice(5),
+                        Posts: d.posts_published || 0,
+                        Stories: d.stories_published || 0,
+                        Reels: d.reels_published || 0,
+                      }))}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <XAxis dataKey="date" tick={{ fontSize: 9 }} stroke="#9ca3af" />
+                        <YAxis tick={{ fontSize: 10 }} stroke="#9ca3af" allowDecimals={false} />
+                        <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} />
+                        <Bar dataKey="Posts" stackId="a" fill="#3b82f6" radius={[0, 0, 0, 0]} />
+                        <Bar dataKey="Stories" stackId="a" fill="#f97316" radius={[0, 0, 0, 0]} />
+                        <Bar dataKey="Reels" stackId="a" fill="#a855f7" radius={[2, 2, 0, 0]} />
+                        <Legend wrapperStyle={{ fontSize: 10 }} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Follower Trend */}
+            {analytics?.daily && analytics.daily.some(d => d.follower_count > 0) && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">Follower Growth</CardTitle>
+                  <CardDescription className="text-xs">
+                    {analytics.live_profile?.followers_count?.toLocaleString() || "—"} current followers
+                    {analytics.current?.net_followers > 0 ? ` (+${analytics.current.net_followers} this period)` : ""}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="h-[200px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={analytics.daily.filter(d => d.follower_count > 0).map(d => ({
+                        date: d.date?.slice(5),
+                        Followers: d.follower_count,
+                      }))}>
+                        <defs>
+                          <linearGradient id="colorFollowers" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
+                            <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                        <XAxis dataKey="date" tick={{ fontSize: 9 }} stroke="#9ca3af" />
+                        <YAxis tick={{ fontSize: 10 }} stroke="#9ca3af" domain={["dataMin - 10", "dataMax + 10"]} />
+                        <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} />
+                        <Area type="monotone" dataKey="Followers" stroke="#10b981" strokeWidth={2}
+                              fill="url(#colorFollowers)" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+
+          {/* Post Type Breakdown */}
+          {analytics?.type_breakdown && Object.keys(analytics.type_breakdown).length > 0 && (
+            <Card className="mb-6">
               <CardHeader>
-                <CardTitle className="text-base">Post Performance</CardTitle>
+                <CardTitle className="text-base">Performance by Post Type</CardTitle>
+                <CardDescription className="text-xs">Average metrics per post type</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                  {Object.entries(analytics.type_breakdown).map(([type, data]) => (
+                    <div key={type} className="border rounded-lg p-3">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className={`w-3 h-3 rounded ${POST_TYPE_COLORS[type] || "bg-gray-400"}`} />
+                        <span className="text-xs font-medium capitalize">{type.replace("_", " ")}</span>
+                        <Badge variant="secondary" className="text-[10px] ml-auto">{data.count}</Badge>
+                      </div>
+                      <div className="space-y-1 text-xs text-gray-600">
+                        <div className="flex justify-between">
+                          <span>Avg Reach</span>
+                          <span className="font-medium">{data.avg_reach?.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Avg Engagement</span>
+                          <span className="font-medium">{data.avg_engagement?.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Total Impressions</span>
+                          <span className="font-medium">{data.impressions?.toLocaleString()}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Top Performing Posts */}
+          {analytics?.top_posts && analytics.top_posts.length > 0 ? (
+            <Card className="mb-6">
+              <CardHeader>
+                <CardTitle className="text-base">Top Performing Posts</CardTitle>
+                <CardDescription className="text-xs">Ranked by total engagement</CardDescription>
               </CardHeader>
               <CardContent>
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-[60px]">Preview</TableHead>
                       <TableHead>Post</TableHead>
                       <TableHead className="text-right">Impressions</TableHead>
                       <TableHead className="text-right">Reach</TableHead>
                       <TableHead className="text-right">Likes</TableHead>
                       <TableHead className="text-right">Comments</TableHead>
                       <TableHead className="text-right">Saves</TableHead>
-                      <TableHead className="text-right">Engagement</TableHead>
+                      <TableHead className="text-right font-semibold">Engagement</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {insights.posts.map((ins, i) => (
-                      <TableRow key={i}>
-                        <TableCell className="text-xs text-gray-500 max-w-[200px] truncate">{ins.post_id?.slice(0, 8)}</TableCell>
-                        <TableCell className="text-right">{ins.impressions?.toLocaleString()}</TableCell>
-                        <TableCell className="text-right">{ins.reach?.toLocaleString()}</TableCell>
-                        <TableCell className="text-right">{ins.likes?.toLocaleString()}</TableCell>
-                        <TableCell className="text-right">{ins.comments?.toLocaleString()}</TableCell>
-                        <TableCell className="text-right">{ins.saves?.toLocaleString()}</TableCell>
-                        <TableCell className="text-right font-medium">{ins.engagement?.toLocaleString()}</TableCell>
+                    {analytics.top_posts.map((p, i) => (
+                      <TableRow key={i} className="cursor-pointer hover:bg-gray-50"
+                                onClick={() => {
+                                  const fullPost = posts.find(fp => fp.id === p.id);
+                                  if (fullPost) { setSelectedPost(fullPost); setPostDetailOpen(true); }
+                                }}>
+                        <TableCell>
+                          {p.media_thumbnail ? (
+                            <img src={`data:image/jpeg;base64,${p.media_thumbnail}`} alt=""
+                                 className="w-10 h-10 rounded object-cover" />
+                          ) : (
+                            <div className={`w-10 h-10 rounded flex items-center justify-center ${POST_TYPE_COLORS[p.post_type] || "bg-gray-400"}`}>
+                              <PostTypeIcon type={p.post_type} className="h-4 w-4 text-white" />
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Badge className={`${POST_TYPE_COLORS[p.post_type] || "bg-gray-400"} text-white border-0 text-[10px]`}>
+                              {p.post_type}
+                            </Badge>
+                            <span className="text-xs text-gray-600 truncate max-w-[200px]">{p.caption}</span>
+                          </div>
+                          {p.published_at && (
+                            <p className="text-[10px] text-gray-400 mt-0.5">
+                              {new Date(p.published_at).toLocaleDateString("en", { month: "short", day: "numeric" })}
+                            </p>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right text-sm">{p.impressions?.toLocaleString()}</TableCell>
+                        <TableCell className="text-right text-sm">{p.reach?.toLocaleString()}</TableCell>
+                        <TableCell className="text-right text-sm">{p.likes?.toLocaleString()}</TableCell>
+                        <TableCell className="text-right text-sm">{p.comments?.toLocaleString()}</TableCell>
+                        <TableCell className="text-right text-sm">{p.saves?.toLocaleString()}</TableCell>
+                        <TableCell className="text-right text-sm font-semibold text-indigo-600">{p.engagement?.toLocaleString()}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -990,18 +1289,48 @@ export default function SocialMedia() {
               </CardContent>
             </Card>
           ) : (
-            <Card>
+            <Card className="mb-6">
               <CardContent className="py-12 text-center text-gray-500">
                 <BarChart3 className="h-12 w-12 mx-auto mb-3 text-gray-300" />
                 <p className="font-medium">No analytics data yet</p>
-                <p className="text-sm mt-1">Publish posts and sync insights to see performance data</p>
+                <p className="text-sm mt-1">Click "Sync from Instagram" to pull account metrics, then publish posts and sync again for post-level data</p>
               </CardContent>
             </Card>
           )}
 
+          {/* Account Summary Card */}
+          {analytics?.current && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+              <Card>
+                <CardContent className="py-3 px-4">
+                  <p className="text-xs text-gray-500">Posts Published</p>
+                  <p className="text-lg font-bold">{analytics.current.posts_published}</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="py-3 px-4">
+                  <p className="text-xs text-gray-500">Stories Published</p>
+                  <p className="text-lg font-bold">{analytics.current.stories_published}</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="py-3 px-4">
+                  <p className="text-xs text-gray-500">Likes</p>
+                  <p className="text-lg font-bold">{analytics.current.likes?.toLocaleString()}</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="py-3 px-4">
+                  <p className="text-xs text-gray-500">Saves</p>
+                  <p className="text-lg font-bold">{analytics.current.saves?.toLocaleString()}</p>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
           {/* Brand voice analysis preview */}
           {profileData?.brand_voice_analysis && (
-            <Card className="mt-6">
+            <Card className="mt-2">
               <CardHeader>
                 <CardTitle className="text-base flex items-center gap-2">
                   <Zap className="h-4 w-4 text-yellow-500" /> Brand Voice Analysis
@@ -1059,6 +1388,54 @@ export default function SocialMedia() {
                 </div>
               </DialogHeader>
               <div className="space-y-4">
+                {/* Image preview */}
+                {selectedPost.media_thumbnail || selectedPost.media_url ? (
+                  <div>
+                    <Label className="text-xs text-gray-500 mb-2 block">Media Preview</Label>
+                    <div className="bg-gray-100 rounded-lg overflow-hidden flex items-center justify-center"
+                         style={{ maxHeight: "400px" }}>
+                      {selectedPost.media_data_format === "mp4" ? (
+                        <video
+                          src={`${API_URL}/social-media/media/${selectedPost.id}`}
+                          controls className="max-h-[400px] rounded-lg"
+                        />
+                      ) : selectedPost.media_thumbnail ? (
+                        <img
+                          src={`${API_URL}/social-media/media/${selectedPost.id}`}
+                          alt="Post preview"
+                          className="max-h-[400px] rounded-lg object-contain"
+                          onError={(e) => {
+                            // Fall back to thumbnail if full image fails
+                            e.target.src = `data:image/jpeg;base64,${selectedPost.media_thumbnail}`;
+                          }}
+                        />
+                      ) : selectedPost.media_url ? (
+                        <img src={selectedPost.media_url} alt="Post media" className="max-h-[400px] rounded-lg object-contain" />
+                      ) : null}
+                    </div>
+                    <div className="mt-2 flex gap-2">
+                      <Button size="sm" variant="outline" onClick={() => generateMediaForPost(selectedPost.id)}
+                              disabled={generatingMedia}>
+                        {generatingMedia ? <RotateCw className="h-4 w-4 animate-spin mr-1" /> : <RefreshCw className="h-4 w-4 mr-1" />}
+                        {generatingMedia ? "Generating..." : "Regenerate Image"}
+                      </Button>
+                    </div>
+                  </div>
+                ) : selectedPost.visual_direction ? (
+                  <div>
+                    <Label className="text-xs text-gray-500 mb-2 block">Media Preview</Label>
+                    <div className="bg-gray-100 rounded-lg p-8 text-center">
+                      <Image className="h-12 w-12 mx-auto mb-2 text-gray-300" />
+                      <p className="text-sm text-gray-500 mb-3">No image generated yet</p>
+                      <Button size="sm" onClick={() => generateMediaForPost(selectedPost.id)}
+                              disabled={generatingMedia}>
+                        {generatingMedia ? <RotateCw className="h-4 w-4 animate-spin mr-1" /> : <Sparkles className="h-4 w-4 mr-1" />}
+                        {generatingMedia ? "Generating..." : "Generate Image"}
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+
                 <div>
                   <Label className="text-xs text-gray-500">Caption</Label>
                   <div className="bg-gray-50 rounded-lg p-3 text-sm whitespace-pre-wrap">{selectedPost.caption}</div>
@@ -1240,6 +1617,7 @@ export default function SocialMedia() {
                   <SelectItem value="reel">Reel</SelectItem>
                   <SelectItem value="carousel">Carousel</SelectItem>
                   <SelectItem value="product_feature">Product Feature</SelectItem>
+                  <SelectItem value="story">Story</SelectItem>
                 </SelectContent>
               </Select>
             </div>

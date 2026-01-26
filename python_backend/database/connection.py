@@ -185,6 +185,21 @@ async def init_db():
                     END IF;
                 END $$;
                 """,
+                # Add media storage columns to social_media_posts
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'social_media_posts' AND column_name = 'media_data') THEN
+                        ALTER TABLE social_media_posts ADD COLUMN media_data TEXT;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'social_media_posts' AND column_name = 'media_data_format') THEN
+                        ALTER TABLE social_media_posts ADD COLUMN media_data_format VARCHAR(10);
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'social_media_posts' AND column_name = 'media_thumbnail') THEN
+                        ALTER TABLE social_media_posts ADD COLUMN media_thumbnail TEXT;
+                    END IF;
+                END $$;
+                """,
             ]
 
             for migration in migrations:

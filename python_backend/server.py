@@ -10,7 +10,7 @@ import httpx
 from typing import List, Optional, Dict, Any
 
 import pytz
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, field_validator
@@ -2446,13 +2446,18 @@ async def sm_generate_batch(strategy_id: str, user: dict = Depends(require_auth)
 @app.get("/social-media/posts")
 async def sm_list_posts(status: Optional[str] = None, post_type: Optional[str] = None,
                          strategy_id: Optional[str] = None, user: dict = Depends(require_auth)):
-    """List posts with optional filters"""
+    """List posts with optional filters (excludes full media_data for performance)"""
     try:
         from social_media_service import create_social_media_storage
         from dataclasses import asdict
         storage = create_social_media_storage()
         posts = await storage.get_all_posts_async(status=status, post_type=post_type, strategy_id=strategy_id)
-        return {"posts": [asdict(p) for p in posts]}
+        result = []
+        for p in posts:
+            d = asdict(p)
+            d.pop("media_data", None)  # Too large for list responses
+            result.append(d)
+        return {"posts": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list posts: {str(e)}")
 
@@ -2581,6 +2586,51 @@ async def sm_publish_post(uuid: str, user: dict = Depends(require_auth)):
         raise HTTPException(status_code=500, detail=f"Failed to publish post: {str(e)}")
 
 
+@app.post("/social-media/post/{uuid}/generate-media")
+async def sm_generate_media(uuid: str, user: dict = Depends(require_auth)):
+    """Generate AI image/video for a post using its visual_direction"""
+    try:
+        from social_media_service import create_social_media_agent
+        from dataclasses import asdict
+        agent = create_social_media_agent()
+        post = await agent.generate_media_for_post(uuid)
+        post_dict = asdict(post)
+        post_dict.pop("media_data", None)  # Don't send full image back, just thumbnail
+        return {"post": post_dict}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate media: {str(e)}")
+
+
+@app.get("/social-media/media/{uuid}")
+async def sm_serve_media(uuid: str):
+    """Serve generated media as raw image/video bytes (unauthenticated for Meta API)"""
+    try:
+        from social_media_service import create_social_media_storage
+        import base64
+        storage = create_social_media_storage()
+        post = await storage.get_post_async(uuid)
+        if not post or not post.media_data:
+            raise HTTPException(status_code=404, detail="Media not found")
+
+        raw = base64.b64decode(post.media_data)
+        fmt = post.media_data_format or "png"
+        content_type = {
+            "png": "image/png",
+            "jpeg": "image/jpeg",
+            "jpg": "image/jpeg",
+            "mp4": "video/mp4",
+        }.get(fmt, "application/octet-stream")
+
+        return Response(content=raw, media_type=content_type,
+                        headers={"Cache-Control": "public, max-age=86400"})
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to serve media: {str(e)}")
+
+
 @app.delete("/social-media/post/{uuid}")
 async def sm_delete_post(uuid: str, user: dict = Depends(require_auth)):
     """Delete a draft post"""
@@ -2680,6 +2730,35 @@ async def sm_best_times(user: dict = Depends(require_auth)):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get best times: {str(e)}")
+
+
+# ---------- Analytics (account-level with period comparison) ----------
+
+@app.get("/social-media/analytics")
+async def sm_get_analytics(period: int = 7, end_date: Optional[str] = None,
+                            user: dict = Depends(require_auth)):
+    """Account analytics with period comparison, daily data, top posts, and type breakdown"""
+    try:
+        from social_media_service import create_social_media_agent
+        agent = create_social_media_agent()
+        result = await agent.get_analytics(period_days=period, end_date_str=end_date)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get analytics: {str(e)}")
+
+
+@app.post("/social-media/analytics/sync")
+async def sm_sync_account_analytics(days: int = 30, user: dict = Depends(require_auth)):
+    """Sync account-level daily metrics from Instagram Insights API"""
+    try:
+        from social_media_service import create_social_media_agent
+        agent = create_social_media_agent()
+        # Sync both post-level and account-level insights
+        post_synced = await agent.sync_insights()
+        account_synced = await agent.sync_account_insights(days=days)
+        return {"post_insights_synced": post_synced, "account_days_synced": account_synced}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to sync analytics: {str(e)}")
 
 
 # ---------- Local dev entrypoint ----------

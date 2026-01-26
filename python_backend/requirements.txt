@@ -24,3 +24,5 @@ PyJWT>=2.8.0
 httpx>=0.25.0
 # AI packages
 openai>=1.0.0
+Pillow>=10.0.0
+google-generativeai>=0.8.0

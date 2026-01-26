@@ -13,7 +13,9 @@ import os
 import re
 import json
 import uuid as uuid_lib
-from datetime import datetime, date
+import base64
+import io
+from datetime import datetime, date, timedelta
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, asdict, field
 
@@ -33,6 +35,23 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 SOCIAL_DATA_FILE = os.path.join(DATA_DIR, "social_media.json")
 
 META_GRAPH_URL = "https://graph.facebook.com/v21.0"
+
+
+def compress_to_thumbnail(b64_data: str, max_size: int = 256) -> str:
+    """Compress a base64 PNG image to a small JPEG thumbnail."""
+    try:
+        from PIL import Image as PILImage
+        img_bytes = base64.b64decode(b64_data)
+        img = PILImage.open(io.BytesIO(img_bytes))
+        img.thumbnail((max_size, max_size), PILImage.LANCZOS)
+        if img.mode == "RGBA":
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=70)
+        return base64.b64encode(buf.getvalue()).decode("utf-8")
+    except Exception as e:
+        print(f"[compress_to_thumbnail] Failed: {e}")
+        return ""
 
 
 # ============================================================
@@ -84,6 +103,9 @@ class Post:
     published_at: Optional[str] = None
     approved_by: Optional[int] = None
     approved_at: Optional[str] = None
+    media_data: Optional[str] = None
+    media_data_format: Optional[str] = None
+    media_thumbnail: Optional[str] = None
 
 
 @dataclass
@@ -388,6 +410,12 @@ class SocialMediaStorage:
                 existing.published_at = _parse_dt(post.published_at)
                 existing.approved_by = post.approved_by
                 existing.approved_at = _parse_dt(post.approved_at)
+                if post.media_data is not None:
+                    existing.media_data = post.media_data
+                if post.media_data_format is not None:
+                    existing.media_data_format = post.media_data_format
+                if post.media_thumbnail is not None:
+                    existing.media_thumbnail = post.media_thumbnail
                 if strategy_fk:
                     existing.strategy_id = strategy_fk
             else:
@@ -399,6 +427,9 @@ class SocialMediaStorage:
                     visual_direction=post.visual_direction,
                     media_url=post.media_url,
                     media_type=post.media_type,
+                    media_data=post.media_data,
+                    media_data_format=post.media_data_format,
+                    media_thumbnail=post.media_thumbnail,
                     product_ids=post.product_ids,
                     link_url=post.link_url,
                     utm_source=post.utm_source,
@@ -437,9 +468,9 @@ class SocialMediaStorage:
                 r = await db.execute(select(SocialMediaStrategy.uuid).where(SocialMediaStrategy.id == p.strategy_id))
                 strategy_uuid = r.scalar_one_or_none()
 
-            return self._db_post_to_dataclass(p, strategy_uuid)
+            return self._db_post_to_dataclass(p, strategy_uuid, include_media_data=True)
 
-    def _db_post_to_dataclass(self, p, strategy_uuid=None) -> Post:
+    def _db_post_to_dataclass(self, p, strategy_uuid=None, include_media_data=False) -> Post:
         return Post(
             id=p.uuid,
             strategy_id=strategy_uuid,
@@ -464,6 +495,9 @@ class SocialMediaStorage:
             published_at=p.published_at.isoformat() + "Z" if p.published_at else None,
             approved_by=p.approved_by,
             approved_at=p.approved_at.isoformat() + "Z" if p.approved_at else None,
+            media_data=p.media_data if include_media_data else None,
+            media_data_format=p.media_data_format,
+            media_thumbnail=p.media_thumbnail,
         )
 
     async def _get_all_posts_db(self, status=None, post_type=None, strategy_id=None,
@@ -661,6 +695,112 @@ class SocialMediaStorage:
                 "synced_at": row.synced_at.isoformat() + "Z" if row.synced_at else None,
             }
 
+    # ---------- Account Snapshots ----------
+
+    async def save_account_snapshot_async(self, snapshot: Dict):
+        """Save daily account-level metrics snapshot."""
+        if not self.use_db:
+            # JSON fallback: append to snapshots list
+            data = self._load_data()
+            data.setdefault("account_snapshots", [])
+            # Replace existing for same date
+            data["account_snapshots"] = [
+                s for s in data["account_snapshots"]
+                if s.get("date") != snapshot.get("date")
+            ]
+            data["account_snapshots"].append(snapshot)
+            self._save_data(data)
+            return
+
+        from database.connection import get_db
+        from database.models import SocialMediaAccountSnapshot
+        from sqlalchemy import select
+
+        async with get_db() as db:
+            snap_date = datetime.strptime(snapshot["date"], "%Y-%m-%d").date() if isinstance(snapshot["date"], str) else snapshot["date"]
+            ig_id = snapshot.get("ig_account_id", "default")
+
+            result = await db.execute(
+                select(SocialMediaAccountSnapshot).where(
+                    SocialMediaAccountSnapshot.date == snap_date,
+                    SocialMediaAccountSnapshot.ig_account_id == ig_id,
+                )
+            )
+            existing = result.scalar_one_or_none()
+
+            if existing:
+                for key in ["impressions", "reach", "profile_views", "website_clicks",
+                            "follower_count", "follows", "unfollows",
+                            "total_likes", "total_comments", "total_shares", "total_saves",
+                            "posts_published", "stories_published", "reels_published",
+                            "online_followers"]:
+                    if key in snapshot:
+                        setattr(existing, key, snapshot[key])
+                existing.synced_at = datetime.utcnow()
+            else:
+                db.add(SocialMediaAccountSnapshot(
+                    date=snap_date,
+                    ig_account_id=ig_id,
+                    impressions=snapshot.get("impressions", 0),
+                    reach=snapshot.get("reach", 0),
+                    profile_views=snapshot.get("profile_views", 0),
+                    website_clicks=snapshot.get("website_clicks", 0),
+                    follower_count=snapshot.get("follower_count", 0),
+                    follows=snapshot.get("follows", 0),
+                    unfollows=snapshot.get("unfollows", 0),
+                    total_likes=snapshot.get("total_likes", 0),
+                    total_comments=snapshot.get("total_comments", 0),
+                    total_shares=snapshot.get("total_shares", 0),
+                    total_saves=snapshot.get("total_saves", 0),
+                    posts_published=snapshot.get("posts_published", 0),
+                    stories_published=snapshot.get("stories_published", 0),
+                    reels_published=snapshot.get("reels_published", 0),
+                    online_followers=snapshot.get("online_followers"),
+                ))
+
+    async def get_account_snapshots_async(self, start_date: str, end_date: str) -> List[Dict]:
+        """Get account snapshots for a date range."""
+        if not self.use_db:
+            data = self._load_data()
+            snapshots = data.get("account_snapshots", [])
+            return [s for s in snapshots if start_date <= s.get("date", "") <= end_date]
+
+        from database.connection import get_db
+        from database.models import SocialMediaAccountSnapshot
+        from sqlalchemy import select
+
+        async with get_db() as db:
+            sd = datetime.strptime(start_date, "%Y-%m-%d").date()
+            ed = datetime.strptime(end_date, "%Y-%m-%d").date()
+
+            result = await db.execute(
+                select(SocialMediaAccountSnapshot)
+                .where(SocialMediaAccountSnapshot.date >= sd)
+                .where(SocialMediaAccountSnapshot.date <= ed)
+                .order_by(SocialMediaAccountSnapshot.date.asc())
+            )
+            rows = result.scalars().all()
+
+            return [{
+                "date": row.date.isoformat(),
+                "ig_account_id": row.ig_account_id,
+                "impressions": row.impressions or 0,
+                "reach": row.reach or 0,
+                "profile_views": row.profile_views or 0,
+                "website_clicks": row.website_clicks or 0,
+                "follower_count": row.follower_count or 0,
+                "follows": row.follows or 0,
+                "unfollows": row.unfollows or 0,
+                "total_likes": row.total_likes or 0,
+                "total_comments": row.total_comments or 0,
+                "total_shares": row.total_shares or 0,
+                "total_saves": row.total_saves or 0,
+                "posts_published": row.posts_published or 0,
+                "stories_published": row.stories_published or 0,
+                "reels_published": row.reels_published or 0,
+                "online_followers": row.online_followers,
+            } for row in rows]
+
 
 # ============================================================
 # INSTAGRAM PUBLISHER — Meta Content Publishing API
@@ -714,6 +854,13 @@ class InstagramPublisher:
                                           "media_type": "REELS", "access_token": self.access_token})
         return data["id"]
 
+    async def create_story_container(self, ig_account_id: str, image_url: str) -> str:
+        """Create an Instagram Story container (no caption for stories)"""
+        data = await self._request("POST", f"{META_GRAPH_URL}/{ig_account_id}/media",
+                                    data={"image_url": image_url, "media_type": "STORIES",
+                                          "access_token": self.access_token})
+        return data["id"]
+
     async def create_carousel_container(self, ig_account_id: str, children_ids: List[str], caption: str) -> str:
         data = await self._request("POST", f"{META_GRAPH_URL}/{ig_account_id}/media",
                                     data={"media_type": "CAROUSEL", "caption": caption,
@@ -747,6 +894,89 @@ class InstagramPublisher:
         except Exception as e:
             print(f"[InstagramPublisher] Facebook mirror failed: {e}")
             return None
+
+    async def fetch_account_insights(self, ig_account_id: str, since: date, until: date) -> List[Dict]:
+        """Fetch account-level daily insights from Instagram Insights API.
+        Returns a list of daily metric dicts for the date range."""
+        results = []
+        try:
+            # IG API allows max 30 days per request
+            since_ts = int(datetime.combine(since, datetime.min.time()).timestamp())
+            until_ts = int(datetime.combine(until + timedelta(days=1), datetime.min.time()).timestamp())
+
+            # Account-level metrics
+            metrics = "impressions,reach,profile_views,website_clicks,follower_count"
+            data = await self._request("GET", f"{META_GRAPH_URL}/{ig_account_id}/insights",
+                                        params={"metric": metrics, "period": "day",
+                                                "since": since_ts, "until": until_ts,
+                                                "access_token": self.access_token})
+
+            # Parse response: each metric has a list of daily values
+            daily_map = {}  # date_str -> {metric: value}
+            for metric_data in data.get("data", []):
+                metric_name = metric_data["name"]
+                for val in metric_data.get("values", []):
+                    end_time = val.get("end_time", "")[:10]  # "2024-01-15T07:00:00+0000" -> "2024-01-15"
+                    if end_time not in daily_map:
+                        daily_map[end_time] = {"date": end_time}
+                    daily_map[end_time][metric_name] = val.get("value", 0)
+
+            results = sorted(daily_map.values(), key=lambda d: d["date"])
+        except Exception as e:
+            print(f"[InstagramPublisher] Failed to fetch account insights: {e}")
+
+        return results
+
+    async def fetch_account_demographics(self, ig_account_id: str) -> Dict:
+        """Fetch audience demographics (city, country, gender/age)."""
+        try:
+            data = await self._request("GET", f"{META_GRAPH_URL}/{ig_account_id}/insights",
+                                        params={"metric": "audience_city,audience_country,audience_gender_age",
+                                                "period": "lifetime",
+                                                "access_token": self.access_token})
+            result = {}
+            for item in data.get("data", []):
+                result[item["name"]] = item["values"][0]["value"] if item.get("values") else {}
+            return result
+        except Exception as e:
+            print(f"[InstagramPublisher] Failed to fetch demographics: {e}")
+            return {}
+
+    async def fetch_online_followers(self, ig_account_id: str) -> Dict:
+        """Fetch online followers distribution by hour."""
+        try:
+            data = await self._request("GET", f"{META_GRAPH_URL}/{ig_account_id}/insights",
+                                        params={"metric": "online_followers",
+                                                "period": "lifetime",
+                                                "access_token": self.access_token})
+            for item in data.get("data", []):
+                if item["name"] == "online_followers":
+                    return item["values"][0]["value"] if item.get("values") else {}
+            return {}
+        except Exception as e:
+            print(f"[InstagramPublisher] Failed to fetch online followers: {e}")
+            return {}
+
+    async def fetch_recent_media_detailed(self, ig_account_id: str, limit: int = 50) -> List[Dict]:
+        """Fetch recent media with full engagement metrics."""
+        try:
+            data = await self._request("GET", f"{META_GRAPH_URL}/{ig_account_id}/media",
+                                        params={"fields": "id,caption,timestamp,media_type,like_count,comments_count,permalink,media_url,thumbnail_url",
+                                                "limit": limit, "access_token": self.access_token})
+            media_list = data.get("data", [])
+
+            # Enrich with insights for each post
+            for media in media_list:
+                try:
+                    insights = await self.fetch_post_insights(media["id"])
+                    media["insights"] = insights
+                except Exception:
+                    media["insights"] = {}
+
+            return media_list
+        except Exception as e:
+            print(f"[InstagramPublisher] Failed to fetch detailed media: {e}")
+            return []
 
     async def fetch_post_insights(self, ig_media_id: str) -> Dict:
         try:
@@ -924,7 +1154,8 @@ HASHTAG STRATEGY: {json.dumps(strategy.hashtag_strategy)}
             "photo": "Create a visually appealing photo post. Focus on aesthetic, storytelling, and brand identity.",
             "reel": "Create an engaging Reel concept. Start with a hook in the first 3 seconds. Keep it dynamic and entertaining.",
             "carousel": "Create a carousel post (multiple slides). Each slide should have a clear purpose. Educational or step-by-step content works well.",
-            "product_feature": "Create a product feature post. Highlight key benefits, ingredients, and results. Include a clear CTA to shop."
+            "product_feature": "Create a product feature post. Highlight key benefits, ingredients, and results. Include a clear CTA to shop.",
+            "story": "Create an Instagram Story. Vertical 9:16 format. Eye-catching, quick to consume. Bold visuals, minimal text overlay. Engagement-focused (polls, questions, swipe-up)."
         }
 
         system_prompt = f"""You are a social media content creator for Mirai Skin, a premium K-Beauty retailer.
@@ -997,17 +1228,24 @@ DATE RANGE: {strategy.date_range_start} to {strategy.date_range_end}
 
 Generate a batch of posts for this strategy. Return valid JSON."""
 
-        user_prompt = f"""Generate Instagram posts for the full strategy period.
-Create posts following the content mix and posting frequency.
+        user_prompt = f"""Generate Instagram content for the FULL strategy period, covering EVERY DAY.
+
+For EACH DAY in the date range, create:
+- 1 FEED post (rotating types: photo ~50%, carousel ~20%, product_feature ~20%, reel ~10%)
+- 1-3 STORIES (type="story", engagement-focused: polls, questions, behind-the-scenes, quick tips)
+
+Distribute feed post times across optimal windows: 9:00, 12:00, 18:00, 20:00.
+Schedule stories at different times than the feed post (e.g., 8:00, 14:00, 21:00).
+
 UTM LINK FORMAT: https://miraiskin.co/products/{{handle}}?utm_source=instagram&utm_medium=organic&utm_campaign={campaign_slug}
 
 Return JSON:
 {{
   "posts": [
     {{
-      "post_type": "photo|reel|carousel|product_feature",
-      "caption": "Full caption with hashtags",
-      "visual_direction": "Visual description",
+      "post_type": "photo|reel|carousel|product_feature|story",
+      "caption": "Full caption with hashtags (shorter for stories)",
+      "visual_direction": "Visual description for AI image generation",
       "suggested_media_type": "IMAGE|VIDEO|CAROUSEL_ALBUM",
       "scheduled_date": "YYYY-MM-DD",
       "scheduled_time": "HH:MM",
@@ -1087,6 +1325,86 @@ Return JSON:
         await self.storage.save_post_async(post)
         return post
 
+    async def _generate_image(self, visual_direction: str, post_type: str) -> tuple:
+        """Generate an image using DALL-E 3 and return (b64_data, thumbnail, format)."""
+        size = "1024x1792" if post_type in ("story", "reel") else "1024x1024"
+        enhanced_prompt = f"Professional K-Beauty skincare brand photography. {visual_direction}. Clean modern aesthetic, high-quality product photography style."
+
+        response = self.client.images.generate(
+            model="dall-e-3",
+            prompt=enhanced_prompt,
+            size=size,
+            quality="standard",
+            response_format="b64_json",
+            n=1,
+        )
+        b64_data = response.data[0].b64_json
+        thumbnail = compress_to_thumbnail(b64_data, 256)
+        return b64_data, thumbnail, "png"
+
+    async def _generate_video(self, visual_direction: str) -> tuple:
+        """Try to generate a short video via Gemini Veo. Returns (b64_data, thumbnail, format) or (None, None, None)."""
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            return None, None, None
+
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel("gemini-2.0-flash")
+            prompt = f"Generate a short 5-second vertical video for Instagram Reels. K-Beauty skincare brand aesthetic. {visual_direction}"
+            response = model.generate_content(prompt)
+            # If video generation is available and returns data
+            if hasattr(response, 'candidates') and response.candidates:
+                for part in response.candidates[0].content.parts:
+                    if hasattr(part, 'inline_data') and part.inline_data.mime_type.startswith("video/"):
+                        video_b64 = base64.b64encode(part.inline_data.data).decode("utf-8")
+                        # Generate thumbnail from first frame would need ffmpeg - use placeholder
+                        return video_b64, "", "mp4"
+            return None, None, None
+        except Exception as e:
+            print(f"[SocialMediaAgent] Gemini video generation failed: {e}")
+            return None, None, None
+
+    async def generate_media_for_post(self, post_uuid: str) -> Post:
+        """Generate AI image/video for a post using its visual_direction."""
+        post = await self.storage.get_post_async(post_uuid)
+        if not post:
+            raise ValueError(f"Post not found: {post_uuid}")
+        if not post.visual_direction:
+            raise ValueError("Post has no visual_direction to generate from")
+
+        if post.post_type == "reel":
+            # Try Gemini video first, fall back to DALL-E image
+            video_data, video_thumb, video_fmt = await self._generate_video(post.visual_direction)
+            if video_data:
+                post.media_data = video_data
+                post.media_thumbnail = video_thumb
+                post.media_data_format = video_fmt
+                post.media_type = "VIDEO"
+            else:
+                # Fallback to DALL-E image
+                img, thumb, fmt = await self._generate_image(post.visual_direction, post.post_type)
+                post.media_data = img
+                post.media_thumbnail = thumb
+                post.media_data_format = fmt
+                post.media_type = "IMAGE"
+        else:
+            img, thumb, fmt = await self._generate_image(post.visual_direction, post.post_type)
+            post.media_data = img
+            post.media_thumbnail = thumb
+            post.media_data_format = fmt
+            if not post.media_type:
+                post.media_type = "IMAGE"
+
+        # Set the media_url to our serve endpoint so Meta API can fetch it
+        base_url = os.getenv("RENDER_EXTERNAL_URL", "https://mirai-managment-dashboard.onrender.com")
+        post.media_url = f"{base_url}/api/social-media/media/{post.id}"
+        post.updated_at = datetime.utcnow().isoformat() + "Z"
+
+        await self.storage.save_post_async(post)
+        return post
+
     def build_utm_link(self, product_url: str, campaign: str, post_uuid: Optional[str] = None) -> str:
         """Generate UTM-tagged link"""
         separator = "&" if "?" in product_url else "?"
@@ -1155,8 +1473,10 @@ Return JSON:
         await self.storage.save_post_async(post)
 
         try:
-            # Create container based on media type
-            if post.media_type == "VIDEO" or post.post_type == "reel":
+            # Create container based on media type / post type
+            if post.post_type == "story":
+                container_id = await publisher.create_story_container(ig_account_id, post.media_url)
+            elif post.media_type == "VIDEO" or post.post_type == "reel":
                 container_id = await publisher.create_reel_container(ig_account_id, post.media_url, post.caption)
             else:
                 container_id = await publisher.create_image_container(ig_account_id, post.media_url, post.caption)
@@ -1232,6 +1552,254 @@ Return JSON:
                 print(f"[SocialMediaAgent] Failed to sync insights for {post.id}: {e}")
 
         return synced
+
+    async def sync_account_insights(self, days: int = 30) -> int:
+        """Sync account-level daily metrics from Instagram Insights API."""
+        try:
+            publisher = InstagramPublisher()
+            ig_account_id = await publisher.get_ig_account_id()
+        except ValueError as e:
+            print(f"[SocialMediaAgent] Cannot sync account insights: {e}")
+            return 0
+
+        end_dt = date.today()
+        start_dt = end_dt - timedelta(days=days)
+
+        # Fetch account-level insights from IG API
+        daily_data = await publisher.fetch_account_insights(ig_account_id, start_dt, end_dt)
+
+        # Also get current follower count from profile
+        try:
+            profile_info = await publisher.get_profile_info(ig_account_id)
+            current_followers = profile_info.get("followers_count", 0)
+        except Exception:
+            current_followers = 0
+
+        # Get recent media to count content published per day
+        try:
+            recent_media = await publisher.get_recent_media(ig_account_id, limit=50)
+        except Exception:
+            recent_media = []
+
+        # Build per-day content counts from recent_media
+        daily_content = {}
+        for media in recent_media:
+            ts = media.get("timestamp", "")[:10]
+            if ts:
+                daily_content.setdefault(ts, {"posts": 0, "stories": 0, "reels": 0})
+                mt = media.get("media_type", "")
+                if mt == "VIDEO":
+                    daily_content[ts]["reels"] += 1
+                else:
+                    daily_content[ts]["posts"] += 1
+
+        # Also count from our own published posts
+        our_posts = await self.storage.get_all_posts_async(status="published")
+        for p in our_posts:
+            if p.published_at:
+                pub_date = p.published_at[:10]
+                daily_content.setdefault(pub_date, {"posts": 0, "stories": 0, "reels": 0})
+                if p.post_type == "story":
+                    daily_content[pub_date]["stories"] += 1
+                elif p.post_type == "reel":
+                    daily_content[pub_date]["reels"] += 1
+                else:
+                    daily_content[pub_date]["posts"] += 1
+
+        synced = 0
+        for day_data in daily_data:
+            day_date = day_data.get("date", "")
+            content = daily_content.get(day_date, {})
+            snapshot = {
+                "date": day_date,
+                "ig_account_id": ig_account_id,
+                "impressions": day_data.get("impressions", 0),
+                "reach": day_data.get("reach", 0),
+                "profile_views": day_data.get("profile_views", 0),
+                "website_clicks": day_data.get("website_clicks", 0),
+                "follower_count": day_data.get("follower_count", current_followers),
+                "posts_published": content.get("posts", 0),
+                "stories_published": content.get("stories", 0),
+                "reels_published": content.get("reels", 0),
+            }
+            await self.storage.save_account_snapshot_async(snapshot)
+            synced += 1
+
+        return synced
+
+    async def get_analytics(self, period_days: int = 7, end_date_str: Optional[str] = None) -> Dict:
+        """Get analytics with period comparison.
+
+        Returns current period metrics, previous period metrics, deltas,
+        daily data for charts, top posts, and post-type breakdowns.
+        """
+        end_dt = date.fromisoformat(end_date_str) if end_date_str else date.today()
+        start_dt = end_dt - timedelta(days=period_days - 1)
+        prev_end_dt = start_dt - timedelta(days=1)
+        prev_start_dt = prev_end_dt - timedelta(days=period_days - 1)
+
+        # Get snapshots for both periods
+        current_snapshots = await self.storage.get_account_snapshots_async(
+            start_dt.isoformat(), end_dt.isoformat()
+        )
+        prev_snapshots = await self.storage.get_account_snapshots_async(
+            prev_start_dt.isoformat(), prev_end_dt.isoformat()
+        )
+
+        def _sum_metric(snapshots, key):
+            return sum(s.get(key, 0) for s in snapshots)
+
+        def _avg_metric(snapshots, key):
+            vals = [s.get(key, 0) for s in snapshots if s.get(key, 0) > 0]
+            return round(sum(vals) / len(vals), 1) if vals else 0
+
+        def _delta(current, previous):
+            if previous == 0:
+                return 100 if current > 0 else 0
+            return round((current - previous) / previous * 100, 1)
+
+        # Aggregate current period
+        c_impressions = _sum_metric(current_snapshots, "impressions")
+        c_reach = _sum_metric(current_snapshots, "reach")
+        c_profile_views = _sum_metric(current_snapshots, "profile_views")
+        c_website_clicks = _sum_metric(current_snapshots, "website_clicks")
+        c_followers = current_snapshots[-1].get("follower_count", 0) if current_snapshots else 0
+        c_follows = _sum_metric(current_snapshots, "follows")
+        c_likes = _sum_metric(current_snapshots, "total_likes")
+        c_comments = _sum_metric(current_snapshots, "total_comments")
+        c_saves = _sum_metric(current_snapshots, "total_saves")
+        c_shares = _sum_metric(current_snapshots, "total_shares")
+        c_engagement = c_likes + c_comments + c_saves + c_shares
+        c_posts = _sum_metric(current_snapshots, "posts_published")
+        c_stories = _sum_metric(current_snapshots, "stories_published")
+        c_reels = _sum_metric(current_snapshots, "reels_published")
+
+        # Aggregate previous period
+        p_impressions = _sum_metric(prev_snapshots, "impressions")
+        p_reach = _sum_metric(prev_snapshots, "reach")
+        p_profile_views = _sum_metric(prev_snapshots, "profile_views")
+        p_website_clicks = _sum_metric(prev_snapshots, "website_clicks")
+        p_followers = prev_snapshots[-1].get("follower_count", 0) if prev_snapshots else 0
+        p_engagement = (
+            _sum_metric(prev_snapshots, "total_likes") +
+            _sum_metric(prev_snapshots, "total_comments") +
+            _sum_metric(prev_snapshots, "total_saves") +
+            _sum_metric(prev_snapshots, "total_shares")
+        )
+
+        # Engagement rate
+        c_eng_rate = round(c_engagement / c_reach * 100, 2) if c_reach else 0
+        p_eng_rate = round(p_engagement / p_reach * 100, 2) if p_reach else 0
+
+        # Get post-level insights for top posts in current period
+        insights = await self.storage.get_insights_async()
+        published_posts = await self.storage.get_all_posts_async(status="published")
+
+        # Build top posts list with metrics
+        insight_map = {i.post_id: i for i in insights}
+        top_posts = []
+        for post in published_posts:
+            if post.id in insight_map:
+                ins = insight_map[post.id]
+                top_posts.append({
+                    "id": post.id,
+                    "post_type": post.post_type,
+                    "caption": (post.caption or "")[:100],
+                    "media_thumbnail": post.media_thumbnail,
+                    "published_at": post.published_at,
+                    "impressions": ins.impressions,
+                    "reach": ins.reach,
+                    "likes": ins.likes,
+                    "comments": ins.comments,
+                    "saves": ins.saves,
+                    "shares": ins.shares,
+                    "engagement": ins.engagement,
+                })
+        top_posts.sort(key=lambda x: x.get("engagement", 0), reverse=True)
+
+        # Post type breakdown from our published posts
+        type_breakdown = {}
+        for post in published_posts:
+            pt = post.post_type or "photo"
+            if pt not in type_breakdown:
+                type_breakdown[pt] = {"count": 0, "impressions": 0, "reach": 0, "engagement": 0}
+            type_breakdown[pt]["count"] += 1
+            if post.id in insight_map:
+                ins = insight_map[post.id]
+                type_breakdown[pt]["impressions"] += ins.impressions
+                type_breakdown[pt]["reach"] += ins.reach
+                type_breakdown[pt]["engagement"] += ins.engagement
+
+        # Add avg per post for each type
+        for pt, data in type_breakdown.items():
+            cnt = data["count"]
+            data["avg_impressions"] = round(data["impressions"] / cnt) if cnt else 0
+            data["avg_reach"] = round(data["reach"] / cnt) if cnt else 0
+            data["avg_engagement"] = round(data["engagement"] / cnt) if cnt else 0
+
+        # Also try to get live data from IG API for real-time profile stats
+        live_profile = {}
+        try:
+            publisher = InstagramPublisher()
+            ig_account_id = await publisher.get_ig_account_id()
+            live_profile = await publisher.get_profile_info(ig_account_id)
+        except Exception:
+            pass
+
+        return {
+            "period": {
+                "start": start_dt.isoformat(),
+                "end": end_dt.isoformat(),
+                "days": period_days,
+                "prev_start": prev_start_dt.isoformat(),
+                "prev_end": prev_end_dt.isoformat(),
+            },
+            "current": {
+                "impressions": c_impressions,
+                "reach": c_reach,
+                "profile_views": c_profile_views,
+                "website_clicks": c_website_clicks,
+                "follower_count": c_followers,
+                "net_followers": c_follows,
+                "engagement": c_engagement,
+                "engagement_rate": c_eng_rate,
+                "likes": c_likes,
+                "comments": c_comments,
+                "saves": c_saves,
+                "shares": c_shares,
+                "posts_published": c_posts,
+                "stories_published": c_stories,
+                "reels_published": c_reels,
+            },
+            "previous": {
+                "impressions": p_impressions,
+                "reach": p_reach,
+                "profile_views": p_profile_views,
+                "website_clicks": p_website_clicks,
+                "follower_count": p_followers,
+                "engagement": p_engagement,
+                "engagement_rate": p_eng_rate,
+            },
+            "deltas": {
+                "impressions": _delta(c_impressions, p_impressions),
+                "reach": _delta(c_reach, p_reach),
+                "profile_views": _delta(c_profile_views, p_profile_views),
+                "website_clicks": _delta(c_website_clicks, p_website_clicks),
+                "follower_count": _delta(c_followers, p_followers),
+                "engagement": _delta(c_engagement, p_engagement),
+                "engagement_rate": round(c_eng_rate - p_eng_rate, 2),
+            },
+            "daily": current_snapshots,
+            "previous_daily": prev_snapshots,
+            "top_posts": top_posts[:10],
+            "type_breakdown": type_breakdown,
+            "live_profile": {
+                "username": live_profile.get("username", ""),
+                "followers_count": live_profile.get("followers_count", c_followers),
+                "media_count": live_profile.get("media_count", 0),
+                "biography": live_profile.get("biography", ""),
+            },
+        }
 
 
 # ============================================================

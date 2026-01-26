@@ -579,6 +579,9 @@ class SocialMediaPost(Base):
     visual_direction = Column(Text)  # AI description of what the visual should be
     media_url = Column(Text)  # URL of uploaded media
     media_type = Column(String(20))  # IMAGE, VIDEO, CAROUSEL_ALBUM
+    media_data = Column(Text, nullable=True)        # base64-encoded full image
+    media_data_format = Column(String(10), nullable=True)  # "png", "jpeg", "mp4"
+    media_thumbnail = Column(Text, nullable=True)    # base64 JPEG thumbnail (256px)
     product_ids = Column(JSON)  # Linked Shopify product GIDs
     link_url = Column(Text)  # Website link with UTM params
     utm_source = Column(String(50), default='instagram')
@@ -644,6 +647,49 @@ class SocialMediaProfileCache(Base):
     best_posting_times = Column(JSON)  # Data-driven optimal times
     top_hashtags = Column(JSON)  # Best performing hashtags
     synced_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SocialMediaAccountSnapshot(Base):
+    """Daily account-level Instagram metrics for historical tracking"""
+    __tablename__ = "social_media_account_snapshots"
+
+    id = Column(Integer, primary_key=True)
+    date = Column(Date, nullable=False, index=True)
+    ig_account_id = Column(String(100), nullable=False)
+
+    # Account-level metrics (from IG Insights API)
+    impressions = Column(Integer, default=0)
+    reach = Column(Integer, default=0)
+    profile_views = Column(Integer, default=0)
+    website_clicks = Column(Integer, default=0)
+    follower_count = Column(Integer, default=0)
+    follows = Column(Integer, default=0)      # new followers gained that day
+    unfollows = Column(Integer, default=0)     # followers lost that day
+    email_contacts = Column(Integer, default=0)
+    text_message_clicks = Column(Integer, default=0)
+    get_directions_clicks = Column(Integer, default=0)
+    phone_call_clicks = Column(Integer, default=0)
+
+    # Engagement aggregates (summed from posts published in this period)
+    total_likes = Column(Integer, default=0)
+    total_comments = Column(Integer, default=0)
+    total_shares = Column(Integer, default=0)
+    total_saves = Column(Integer, default=0)
+
+    # Content stats
+    posts_published = Column(Integer, default=0)
+    stories_published = Column(Integer, default=0)
+    reels_published = Column(Integer, default=0)
+
+    # Online followers distribution (JSON: {hour: count})
+    online_followers = Column(JSON)
+
+    synced_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint('date', 'ig_account_id', name='uq_sm_account_snapshot'),
+        Index('idx_sm_snapshot_date', 'date', 'ig_account_id'),
+    )
 
 
 # ============================================================
