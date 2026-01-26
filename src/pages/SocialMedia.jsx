@@ -1389,52 +1389,61 @@ export default function SocialMedia() {
               </DialogHeader>
               <div className="space-y-4">
                 {/* Image preview */}
-                {selectedPost.media_thumbnail || selectedPost.media_url ? (
-                  <div>
-                    <Label className="text-xs text-gray-500 mb-2 block">Media Preview</Label>
-                    <div className="bg-gray-100 rounded-lg overflow-hidden flex items-center justify-center"
-                         style={{ maxHeight: "400px" }}>
-                      {selectedPost.media_data_format === "mp4" ? (
-                        <video
-                          src={`${API_URL}/social-media/media/${selectedPost.id}`}
-                          controls className="max-h-[400px] rounded-lg"
-                        />
-                      ) : selectedPost.media_thumbnail ? (
-                        <img
-                          src={`${API_URL}/social-media/media/${selectedPost.id}`}
-                          alt="Post preview"
-                          className="max-h-[400px] rounded-lg object-contain"
-                          onError={(e) => {
-                            // Fall back to thumbnail if full image fails
-                            e.target.src = `data:image/jpeg;base64,${selectedPost.media_thumbnail}`;
-                          }}
-                        />
-                      ) : selectedPost.media_url ? (
-                        <img src={selectedPost.media_url} alt="Post media" className="max-h-[400px] rounded-lg object-contain" />
-                      ) : null}
-                    </div>
-                    <div className="mt-2 flex gap-2">
-                      <Button size="sm" variant="outline" onClick={() => generateMediaForPost(selectedPost.id)}
-                              disabled={generatingMedia}>
-                        {generatingMedia ? <RotateCw className="h-4 w-4 animate-spin mr-1" /> : <RefreshCw className="h-4 w-4 mr-1" />}
-                        {generatingMedia ? "Generating..." : "Regenerate Image"}
-                      </Button>
-                    </div>
-                  </div>
-                ) : selectedPost.visual_direction ? (
-                  <div>
-                    <Label className="text-xs text-gray-500 mb-2 block">Media Preview</Label>
-                    <div className="bg-gray-100 rounded-lg p-8 text-center">
-                      <Image className="h-12 w-12 mx-auto mb-2 text-gray-300" />
-                      <p className="text-sm text-gray-500 mb-3">No image generated yet</p>
-                      <Button size="sm" onClick={() => generateMediaForPost(selectedPost.id)}
-                              disabled={generatingMedia}>
-                        {generatingMedia ? <RotateCw className="h-4 w-4 animate-spin mr-1" /> : <Sparkles className="h-4 w-4 mr-1" />}
-                        {generatingMedia ? "Generating..." : "Generate Image"}
-                      </Button>
-                    </div>
-                  </div>
-                ) : null}
+                {(() => {
+                  const hasGeneratedMedia = !!(selectedPost.media_data_format || selectedPost.media_thumbnail);
+                  const mediaApiUrl = `${API_URL}/social-media/media/${selectedPost.id}`;
+
+                  if (hasGeneratedMedia) {
+                    return (
+                      <div>
+                        <Label className="text-xs text-gray-500 mb-2 block">Media Preview</Label>
+                        <div className="bg-gray-100 rounded-lg overflow-hidden flex items-center justify-center"
+                             style={{ maxHeight: "400px" }}>
+                          {selectedPost.media_data_format === "mp4" ? (
+                            <video src={mediaApiUrl} controls className="max-h-[400px] rounded-lg" />
+                          ) : (
+                            <img
+                              src={selectedPost.media_thumbnail ? `data:image/jpeg;base64,${selectedPost.media_thumbnail}` : mediaApiUrl}
+                              alt="Post preview"
+                              className="max-h-[400px] rounded-lg object-contain cursor-pointer"
+                              onClick={() => window.open(mediaApiUrl, '_blank')}
+                              title="Click to view full resolution"
+                            />
+                          )}
+                        </div>
+                        <div className="mt-2 flex gap-2">
+                          <Button size="sm" variant="outline" onClick={() => generateMediaForPost(selectedPost.id)}
+                                  disabled={generatingMedia}>
+                            {generatingMedia ? <RotateCw className="h-4 w-4 animate-spin mr-1" /> : <RefreshCw className="h-4 w-4 mr-1" />}
+                            {generatingMedia ? "Generating..." : "Regenerate Image"}
+                          </Button>
+                          <Button size="sm" variant="ghost" className="text-xs" onClick={() => window.open(mediaApiUrl, '_blank')}>
+                            <ExternalLink className="h-3 w-3 mr-1" /> Full Size
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  if (selectedPost.visual_direction) {
+                    return (
+                      <div>
+                        <Label className="text-xs text-gray-500 mb-2 block">Media Preview</Label>
+                        <div className="bg-gray-100 rounded-lg p-8 text-center">
+                          <Image className="h-12 w-12 mx-auto mb-2 text-gray-300" />
+                          <p className="text-sm text-gray-500 mb-3">No image generated yet</p>
+                          <Button size="sm" onClick={() => generateMediaForPost(selectedPost.id)}
+                                  disabled={generatingMedia}>
+                            {generatingMedia ? <RotateCw className="h-4 w-4 animate-spin mr-1" /> : <Sparkles className="h-4 w-4 mr-1" />}
+                            {generatingMedia ? "Generating..." : "Generate Image"}
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return null;
+                })()}
 
                 <div>
                   <Label className="text-xs text-gray-500">Caption</Label>

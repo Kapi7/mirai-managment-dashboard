@@ -1547,6 +1547,30 @@ app.all('/api/blog/*', async (req, res) => {
 
 // ==================== SOCIAL MEDIA ====================
 
+// Serve generated media as raw binary (must be before the generic JSON proxy)
+app.get('/api/social-media/media/:uuid', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const url = `${pythonBackendUrl}/social-media/media/${req.params.uuid}`;
+
+    const response = await fetch(url, { signal: AbortSignal.timeout(30000) });
+    if (!response.ok) {
+      return res.status(response.status).json({ error: 'Media not found' });
+    }
+
+    const contentType = response.headers.get('content-type') || 'application/octet-stream';
+    const cacheControl = response.headers.get('cache-control') || 'public, max-age=86400';
+    res.set('Content-Type', contentType);
+    res.set('Cache-Control', cacheControl);
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    res.send(buffer);
+  } catch (error) {
+    console.error('Media proxy error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Generic proxy for all /api/social-media/* routes
 app.all('/api/social-media/*', async (req, res) => {
   try {
