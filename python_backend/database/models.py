@@ -692,6 +692,29 @@ class SocialMediaAccountSnapshot(Base):
     )
 
 
+class SocialMediaConnection(Base):
+    """Stores Meta/Instagram account connection credentials"""
+    __tablename__ = "social_media_connections"
+
+    id = Column(Integer, primary_key=True)
+    platform = Column(String(20), nullable=False, default="instagram")
+    access_token = Column(Text, nullable=False)
+    page_id = Column(String(100))
+    ig_account_id = Column(String(100))
+    ig_username = Column(String(100))
+    ig_followers = Column(Integer, default=0)
+    ig_profile_pic = Column(Text, nullable=True)
+    token_expires_at = Column(DateTime, nullable=True)
+    token_type = Column(String(20), default="long_lived")
+    is_active = Column(Boolean, default=True)
+    connected_at = Column(DateTime, default=datetime.utcnow)
+    last_validated_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index('idx_sm_connection_platform', 'platform'),
+    )
+
+
 # ============================================================
 # BLOG CONTENT SYSTEM
 # ============================================================

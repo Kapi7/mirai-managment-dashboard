@@ -2256,6 +2256,187 @@ class SMRejectRequest(_SMBaseModel):
 class SMRegenerateRequest(_SMBaseModel):
     hints: str
 
+class SMConnectRequest(_SMBaseModel):
+    access_token: str
+    page_id: str
+
+
+# ---------- Account Connection ----------
+
+@app.get("/social-media/account/status")
+async def sm_account_status(user: dict = Depends(require_auth)):
+    """Get Instagram account connection status"""
+    try:
+        from social_media_service import create_social_media_storage, validate_meta_token
+        storage = create_social_media_storage()
+        connection = await storage.get_active_connection_async("instagram")
+
+        if not connection:
+            # Check if env vars are set as fallback
+            env_token = os.getenv("META_ACCESS_TOKEN")
+            env_page = os.getenv("META_PAGE_ID")
+            if env_token and env_page:
+                token_info = await validate_meta_token(env_token)
+                return {
+                    "connected": token_info.get("valid", False),
+                    "source": "environment",
+                    "token_valid": token_info.get("valid", False),
+                    "token_expires_at": token_info.get("expires_at"),
+                    "days_until_expiry": token_info.get("days_until_expiry"),
+                    "scopes": token_info.get("scopes", []),
+                    "page_id": env_page,
+                    "ig_account_id": os.getenv("META_IG_ACCOUNT_ID"),
+                }
+            return {"connected": False, "source": None}
+
+        # Validate stored token
+        token_info = await validate_meta_token(connection["access_token"])
+        connection_safe = {k: v for k, v in connection.items() if k != "access_token"}
+        connection_safe["token_valid"] = token_info.get("valid", False)
+        connection_safe["token_expires_at"] = token_info.get("expires_at")
+        connection_safe["days_until_expiry"] = token_info.get("days_until_expiry")
+        connection_safe["scopes"] = token_info.get("scopes", [])
+        connection_safe["is_expired"] = token_info.get("is_expired", False)
+        connection_safe["connected"] = token_info.get("valid", False)
+        connection_safe["source"] = "database"
+        return connection_safe
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to check account status: {str(e)}")
+
+
+@app.post("/social-media/account/connect")
+async def sm_account_connect(req: SMConnectRequest, user: dict = Depends(require_auth)):
+    """Connect an Instagram account by providing Meta access token and Page ID"""
+    try:
+        from social_media_service import (
+            create_social_media_storage, validate_meta_token,
+            exchange_for_long_lived_token, fetch_ig_account_from_token
+        )
+
+        token = req.access_token.strip()
+        page_id = req.page_id.strip()
+
+        # 1. Validate the token
+        token_info = await validate_meta_token(token)
+        if not token_info.get("valid"):
+            raise HTTPException(status_code=400, detail="Invalid access token. Please check and try again.")
+
+        # 2. If short-lived, try to exchange for long-lived
+        token_type = "long_lived"
+        expires_at = None
+        if token_info.get("expires_at_ts"):
+            expires_dt = datetime.utcfromtimestamp(token_info["expires_at_ts"])
+            days_left = (expires_dt - datetime.utcnow()).days
+            if days_left < 5:
+                # Try to exchange for long-lived
+                exchange = await exchange_for_long_lived_token(token)
+                if exchange.get("access_token"):
+                    token = exchange["access_token"]
+                    token_type = "long_lived"
+                    if exchange.get("expires_in"):
+                        expires_at = datetime.utcnow() + timedelta(seconds=exchange["expires_in"])
+                else:
+                    # Keep the original token
+                    expires_at = expires_dt
+            else:
+                expires_at = expires_dt
+        elif token_info.get("days_until_expiry") is None:
+            # Never-expiring token (Page token)
+            token_type = "page_token"
+
+        # 3. Fetch IG account info
+        ig_info = await fetch_ig_account_from_token(token, page_id)
+        if ig_info.get("error"):
+            raise HTTPException(status_code=400, detail=ig_info["error"])
+
+        # 4. Save to database
+        storage = create_social_media_storage()
+        connection_data = {
+            "platform": "instagram",
+            "access_token": token,
+            "page_id": page_id,
+            "ig_account_id": ig_info.get("ig_account_id"),
+            "ig_username": ig_info.get("ig_username"),
+            "ig_followers": ig_info.get("ig_followers", 0),
+            "ig_profile_pic": ig_info.get("ig_profile_pic"),
+            "token_expires_at": expires_at,
+            "token_type": token_type,
+        }
+        conn_id = await storage.save_connection_async(connection_data)
+
+        return {
+            "success": True,
+            "connection_id": conn_id,
+            "ig_username": ig_info.get("ig_username"),
+            "ig_followers": ig_info.get("ig_followers", 0),
+            "ig_account_id": ig_info.get("ig_account_id"),
+            "ig_profile_pic": ig_info.get("ig_profile_pic"),
+            "page_name": ig_info.get("page_name"),
+            "token_type": token_type,
+            "token_expires_at": expires_at.isoformat() if expires_at else None,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to connect account: {str(e)}")
+
+
+@app.post("/social-media/account/refresh")
+async def sm_account_refresh(user: dict = Depends(require_auth)):
+    """Refresh the Instagram account token"""
+    try:
+        from social_media_service import (
+            create_social_media_storage, refresh_long_lived_token,
+            validate_meta_token, fetch_ig_account_from_token
+        )
+        storage = create_social_media_storage()
+        connection = await storage.get_active_connection_async("instagram")
+        if not connection:
+            raise HTTPException(status_code=400, detail="No active Instagram connection found")
+
+        result = await refresh_long_lived_token(connection["access_token"])
+        if result.get("error"):
+            raise HTTPException(status_code=400, detail=result["error"])
+
+        new_token = result["access_token"]
+        expires_at = None
+        if result.get("expires_in"):
+            expires_at = datetime.utcnow() + timedelta(seconds=result["expires_in"])
+
+        # Update the connection
+        await storage.update_connection_async(connection["id"], {
+            "access_token": new_token,
+            "token_expires_at": expires_at,
+            "last_validated_at": datetime.utcnow(),
+        })
+
+        # Re-fetch profile info with new token
+        ig_info = await fetch_ig_account_from_token(new_token, connection["page_id"])
+
+        return {
+            "success": True,
+            "token_type": "long_lived",
+            "token_expires_at": expires_at.isoformat() if expires_at else None,
+            "ig_username": ig_info.get("ig_username", connection.get("ig_username")),
+            "ig_followers": ig_info.get("ig_followers", connection.get("ig_followers")),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to refresh token: {str(e)}")
+
+
+@app.post("/social-media/account/disconnect")
+async def sm_account_disconnect(user: dict = Depends(require_auth)):
+    """Disconnect the Instagram account"""
+    try:
+        from social_media_service import create_social_media_storage
+        storage = create_social_media_storage()
+        await storage.disconnect_async("instagram")
+        return {"success": True, "message": "Instagram account disconnected"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to disconnect: {str(e)}")
+
 
 # ---------- Profile & Voice ----------
 

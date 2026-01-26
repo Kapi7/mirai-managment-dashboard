@@ -29,7 +29,7 @@ import {
   Target, TrendingUp, Heart, MessageCircle, Bookmark, Users,
   ExternalLink, RefreshCw, ChevronLeft, ChevronRight, Layers,
   Zap, Globe, Plus, Filter, ArrowUpRight, ArrowDownRight, Minus,
-  MousePointer, UserPlus,
+  MousePointer, UserPlus, Settings, Link, Unlink, Shield, AlertTriangle, Copy,
 } from "lucide-react";
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid,
@@ -132,6 +132,15 @@ export default function SocialMedia() {
 
   // Profile/voice state
   const [analyzingVoice, setAnalyzingVoice] = useState(false);
+
+  // Account connection state
+  const [accountStatus, setAccountStatus] = useState(null);
+  const [accountLoading, setAccountLoading] = useState(false);
+  const [connectFormOpen, setConnectFormOpen] = useState(false);
+  const [connectToken, setConnectToken] = useState("");
+  const [connectPageId, setConnectPageId] = useState("");
+  const [connecting, setConnecting] = useState(false);
+  const [refreshingToken, setRefreshingToken] = useState(false);
 
   // Initial load
   useEffect(() => {
@@ -433,6 +442,77 @@ export default function SocialMedia() {
     }
   };
 
+  // Account connection functions
+  const fetchAccountStatus = useCallback(async () => {
+    setAccountLoading(true);
+    try {
+      const data = await apiFetch("/social-media/account/status");
+      setAccountStatus(data);
+    } catch (e) {
+      console.error("Failed to fetch account status:", e);
+      setAccountStatus({ connected: false });
+    } finally {
+      setAccountLoading(false);
+    }
+  }, [apiFetch]);
+
+  const connectAccount = async () => {
+    if (!connectToken.trim() || !connectPageId.trim()) {
+      toast({ title: "Error", description: "Both access token and Page ID are required", variant: "destructive" });
+      return;
+    }
+    setConnecting(true);
+    try {
+      const data = await apiFetch("/social-media/account/connect", {
+        method: "POST",
+        body: JSON.stringify({ access_token: connectToken.trim(), page_id: connectPageId.trim() }),
+      });
+      toast({
+        title: "Account Connected",
+        description: `Connected to @${data.ig_username} (${data.ig_followers?.toLocaleString()} followers)`,
+      });
+      setConnectFormOpen(false);
+      setConnectToken("");
+      setConnectPageId("");
+      fetchAccountStatus();
+    } catch (e) {
+      toast({ title: "Connection Failed", description: e.message, variant: "destructive" });
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  const refreshAccountToken = async () => {
+    setRefreshingToken(true);
+    try {
+      const data = await apiFetch("/social-media/account/refresh", { method: "POST" });
+      toast({ title: "Token Refreshed", description: `New token valid for ~60 days` });
+      fetchAccountStatus();
+    } catch (e) {
+      toast({ title: "Refresh Failed", description: e.message, variant: "destructive" });
+    } finally {
+      setRefreshingToken(false);
+    }
+  };
+
+  const disconnectAccount = async () => {
+    if (!confirm("Are you sure you want to disconnect this Instagram account?")) return;
+    try {
+      await apiFetch("/social-media/account/disconnect", { method: "POST" });
+      toast({ title: "Disconnected", description: "Instagram account disconnected" });
+      setAccountStatus({ connected: false });
+    } catch (e) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    }
+  };
+
+  // Fetch account status when Account tab is active
+  useEffect(() => {
+    if (activeTab === "account") {
+      fetchAccountStatus();
+    }
+  }, [activeTab]);
+
   // Filtered posts
   const filteredPosts = posts.filter(p => {
     if (statusFilter !== "all" && p.status !== statusFilter) return false;
@@ -503,6 +583,7 @@ export default function SocialMedia() {
           <TabsTrigger value="calendar" className="gap-1"><Calendar className="h-4 w-4" /> Calendar</TabsTrigger>
           <TabsTrigger value="queue" className="gap-1"><Layers className="h-4 w-4" /> Post Queue</TabsTrigger>
           <TabsTrigger value="analytics" className="gap-1"><BarChart3 className="h-4 w-4" /> Analytics</TabsTrigger>
+          <TabsTrigger value="account" className="gap-1"><Settings className="h-4 w-4" /> Account</TabsTrigger>
         </TabsList>
 
         {/* ==================== STRATEGY TAB ==================== */}
@@ -1370,6 +1451,288 @@ export default function SocialMedia() {
               </CardContent>
             </Card>
           )}
+        </TabsContent>
+
+        {/* ==================== ACCOUNT TAB ==================== */}
+        <TabsContent value="account">
+          <div className="space-y-6">
+            {/* Connection Status Card */}
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <Share2 className="h-5 w-5" /> Instagram Connection
+                    </CardTitle>
+                    <CardDescription>Manage your Instagram Business Account connection</CardDescription>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={fetchAccountStatus} disabled={accountLoading}>
+                    <RefreshCw className={`h-4 w-4 mr-1 ${accountLoading ? "animate-spin" : ""}`} /> Check Status
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {accountLoading && !accountStatus ? (
+                  <div className="space-y-3">
+                    <Skeleton className="h-20 w-full" />
+                    <Skeleton className="h-4 w-1/2" />
+                  </div>
+                ) : accountStatus?.connected ? (
+                  <div className="space-y-4">
+                    {/* Connected Account Info */}
+                    <div className="flex items-center gap-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+                      <div className="relative">
+                        {accountStatus.ig_profile_pic ? (
+                          <img src={accountStatus.ig_profile_pic} alt="" className="h-16 w-16 rounded-full object-cover border-2 border-green-400" />
+                        ) : (
+                          <div className="h-16 w-16 rounded-full bg-green-200 flex items-center justify-center">
+                            <Users className="h-8 w-8 text-green-600" />
+                          </div>
+                        )}
+                        <div className="absolute -bottom-1 -right-1 h-5 w-5 bg-green-500 rounded-full flex items-center justify-center">
+                          <CheckCircle className="h-3 w-3 text-white" />
+                        </div>
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="text-lg font-semibold text-green-800">
+                          @{accountStatus.ig_username || "Connected"}
+                        </h3>
+                        <p className="text-sm text-green-700">
+                          {accountStatus.ig_followers?.toLocaleString() || 0} followers
+                        </p>
+                        <p className="text-xs text-green-600">
+                          Source: {accountStatus.source === "database" ? "Saved in app" : "Environment variables"}
+                        </p>
+                      </div>
+                      <Badge className="bg-green-100 text-green-800 border-green-300">Connected</Badge>
+                    </div>
+
+                    {/* Token Status */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="p-3 rounded-lg border bg-white">
+                        <div className="flex items-center gap-2 text-sm font-medium text-gray-600 mb-1">
+                          <Shield className="h-4 w-4" /> Token Status
+                        </div>
+                        <p className={`font-semibold ${accountStatus.token_valid ? "text-green-600" : "text-red-600"}`}>
+                          {accountStatus.token_valid ? "Valid" : "Invalid / Expired"}
+                        </p>
+                      </div>
+                      <div className="p-3 rounded-lg border bg-white">
+                        <div className="flex items-center gap-2 text-sm font-medium text-gray-600 mb-1">
+                          <Clock className="h-4 w-4" /> Expires
+                        </div>
+                        <p className={`font-semibold ${
+                          accountStatus.days_until_expiry === null ? "text-green-600" :
+                          accountStatus.days_until_expiry < 7 ? "text-red-600" :
+                          accountStatus.days_until_expiry < 30 ? "text-yellow-600" : "text-green-600"
+                        }`}>
+                          {accountStatus.days_until_expiry === null
+                            ? "Never (Page Token)"
+                            : accountStatus.days_until_expiry < 0
+                            ? "Expired"
+                            : `${accountStatus.days_until_expiry} days left`}
+                        </p>
+                      </div>
+                      <div className="p-3 rounded-lg border bg-white">
+                        <div className="flex items-center gap-2 text-sm font-medium text-gray-600 mb-1">
+                          <Link className="h-4 w-4" /> Account ID
+                        </div>
+                        <p className="font-semibold text-gray-900 text-sm font-mono">
+                          {accountStatus.ig_account_id || accountStatus.page_id || "N/A"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Token Expiry Warning */}
+                    {accountStatus.days_until_expiry !== null && accountStatus.days_until_expiry < 14 && (
+                      <div className={`flex items-start gap-3 p-3 rounded-lg border ${
+                        accountStatus.days_until_expiry < 0 ? "bg-red-50 border-red-200" :
+                        accountStatus.days_until_expiry < 7 ? "bg-orange-50 border-orange-200" :
+                        "bg-yellow-50 border-yellow-200"
+                      }`}>
+                        <AlertTriangle className={`h-5 w-5 mt-0.5 ${
+                          accountStatus.days_until_expiry < 0 ? "text-red-500" :
+                          accountStatus.days_until_expiry < 7 ? "text-orange-500" : "text-yellow-500"
+                        }`} />
+                        <div>
+                          <p className="font-medium text-sm">
+                            {accountStatus.days_until_expiry < 0 ? "Token has expired!" : "Token expiring soon!"}
+                          </p>
+                          <p className="text-xs text-gray-600 mt-1">
+                            {accountStatus.days_until_expiry < 0
+                              ? "Your access token has expired. Please reconnect your account or refresh the token."
+                              : `Your access token expires in ${accountStatus.days_until_expiry} days. Click "Refresh Token" to extend it, or reconnect with a new token.`}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Scopes */}
+                    {accountStatus.scopes?.length > 0 && (
+                      <div>
+                        <p className="text-sm font-medium text-gray-600 mb-2">Permissions</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {accountStatus.scopes.map(scope => (
+                            <Badge key={scope} variant="outline" className="text-xs font-mono">{scope}</Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Actions */}
+                    <div className="flex gap-2 pt-2 border-t">
+                      <Button variant="outline" onClick={refreshAccountToken} disabled={refreshingToken}>
+                        <RefreshCw className={`h-4 w-4 mr-1 ${refreshingToken ? "animate-spin" : ""}`} />
+                        {refreshingToken ? "Refreshing..." : "Refresh Token"}
+                      </Button>
+                      <Button variant="outline" onClick={() => setConnectFormOpen(true)}>
+                        <Link className="h-4 w-4 mr-1" /> Reconnect
+                      </Button>
+                      <Button variant="outline" className="text-red-600 hover:text-red-700 hover:bg-red-50" onClick={disconnectAccount}>
+                        <Unlink className="h-4 w-4 mr-1" /> Disconnect
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  /* Not Connected */
+                  <div className="text-center py-8">
+                    <div className="mx-auto h-16 w-16 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+                      <Share2 className="h-8 w-8 text-gray-400" />
+                    </div>
+                    <h3 className="text-lg font-semibold mb-2">No Instagram Account Connected</h3>
+                    <p className="text-sm text-gray-500 mb-4 max-w-md mx-auto">
+                      Connect your Instagram Business Account to publish posts, stories, and track analytics.
+                    </p>
+                    <Button onClick={() => setConnectFormOpen(true)}>
+                      <Link className="h-4 w-4 mr-1" /> Connect Instagram
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Connect Form Card */}
+            {connectFormOpen && (
+              <Card className="border-blue-200 bg-blue-50/30">
+                <CardHeader>
+                  <CardTitle className="text-lg">Connect Instagram Account</CardTitle>
+                  <CardDescription>Enter your Meta access token and Facebook Page ID</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div>
+                    <Label className="font-medium">Access Token</Label>
+                    <Textarea
+                      value={connectToken}
+                      onChange={e => setConnectToken(e.target.value)}
+                      placeholder="Paste your Meta User Access Token here..."
+                      className="mt-1 font-mono text-xs h-20"
+                    />
+                  </div>
+                  <div>
+                    <Label className="font-medium">Facebook Page ID</Label>
+                    <Input
+                      value={connectPageId}
+                      onChange={e => setConnectPageId(e.target.value)}
+                      placeholder="e.g., 571704329368702"
+                      className="mt-1 font-mono"
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <Button onClick={connectAccount} disabled={connecting}>
+                      {connecting ? <RotateCw className="h-4 w-4 animate-spin mr-1" /> : <CheckCircle className="h-4 w-4 mr-1" />}
+                      {connecting ? "Connecting..." : "Connect"}
+                    </Button>
+                    <Button variant="outline" onClick={() => { setConnectFormOpen(false); setConnectToken(""); setConnectPageId(""); }}>
+                      Cancel
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Setup Guide */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Zap className="h-5 w-5" /> How to Get Your Access Token
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4 text-sm">
+                  <div className="space-y-3">
+                    <h4 className="font-semibold text-gray-900">Prerequisites</h4>
+                    <ul className="list-disc list-inside space-y-1 text-gray-600">
+                      <li>An Instagram <strong>Professional</strong> account (Business or Creator)</li>
+                      <li>A Facebook Page connected to that Instagram account</li>
+                      <li>A Meta Developer App (free to create)</li>
+                    </ul>
+                  </div>
+
+                  <div className="space-y-3">
+                    <h4 className="font-semibold text-gray-900">Step-by-Step</h4>
+                    <ol className="list-decimal list-inside space-y-2 text-gray-600">
+                      <li>
+                        Go to{" "}
+                        <a href="https://developers.facebook.com/apps/" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                          Meta for Developers <ExternalLink className="h-3 w-3 inline" />
+                        </a>{" "}
+                        and create an app (type: "Business") if you haven't already.
+                      </li>
+                      <li>
+                        In your app, go to <strong>Tools → Graph API Explorer</strong>{" "}
+                        <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                          (direct link) <ExternalLink className="h-3 w-3 inline" />
+                        </a>
+                      </li>
+                      <li>Select your app from the dropdown at the top.</li>
+                      <li>
+                        Click <strong>"Generate Access Token"</strong> and grant these permissions:
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {["pages_show_list", "pages_read_engagement", "pages_manage_posts",
+                            "instagram_basic", "instagram_content_publish", "instagram_manage_insights",
+                            "business_management"].map(p => (
+                            <Badge key={p} variant="outline" className="text-xs font-mono">{p}</Badge>
+                          ))}
+                        </div>
+                      </li>
+                      <li>Copy the generated <strong>User Access Token</strong> and paste it above.</li>
+                      <li>
+                        Find your <strong>Facebook Page ID</strong>: Go to your Page → About → scroll down to "Page ID".
+                        Or use the Graph API Explorer: <code className="bg-gray-100 px-1 rounded text-xs">GET /me/accounts</code> to list your pages.
+                      </li>
+                    </ol>
+                  </div>
+
+                  <div className="space-y-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                    <h4 className="font-semibold text-amber-800 flex items-center gap-1">
+                      <AlertTriangle className="h-4 w-4" /> Important Notes
+                    </h4>
+                    <ul className="list-disc list-inside space-y-1 text-amber-700 text-xs">
+                      <li>Short-lived tokens last ~1 hour. The app will auto-exchange them for long-lived tokens (~60 days).</li>
+                      <li>Long-lived tokens can be refreshed before they expire using the "Refresh Token" button.</li>
+                      <li>For auto-refresh to work, set <code className="bg-amber-100 px-1 rounded">META_APP_ID</code> and <code className="bg-amber-100 px-1 rounded">META_APP_SECRET</code> in your environment.</li>
+                      <li>The Graph API Explorer token is a <strong>short-lived User Token</strong>. The system will exchange it for a long-lived one automatically.</li>
+                    </ul>
+                  </div>
+
+                  <div className="space-y-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                    <h4 className="font-semibold text-blue-800">Quick Method: Get a Long-Lived Token Directly</h4>
+                    <ol className="list-decimal list-inside space-y-1 text-blue-700 text-xs">
+                      <li>Go to the Graph API Explorer and generate a short-lived token with the permissions above.</li>
+                      <li>
+                        Visit{" "}
+                        <a href="https://developers.facebook.com/tools/accesstoken/" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                          Access Token Tool <ExternalLink className="h-3 w-3 inline" />
+                        </a>{" "}
+                        → click <strong>"Debug"</strong> on your User Token → click <strong>"Extend Access Token"</strong>.
+                      </li>
+                      <li>Copy the extended token (valid ~60 days) and paste it in the form above.</li>
+                    </ol>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
       </Tabs>
 

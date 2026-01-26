@@ -801,6 +801,268 @@ class SocialMediaStorage:
                 "online_followers": row.online_followers,
             } for row in rows]
 
+    # ---------- Connection management ----------
+
+    async def save_connection_async(self, connection_data: Dict) -> int:
+        """Save or update a Meta/Instagram connection in the database."""
+        if not self.use_db:
+            # File-based fallback
+            data = self._load_data()
+            data["connection"] = connection_data
+            self._save_data(data)
+            return 1
+
+        from database.connection import get_db
+        from database.models import SocialMediaConnection
+        from sqlalchemy import select
+
+        async with get_db() as db:
+            # Deactivate existing connections for this platform
+            existing = await db.execute(
+                select(SocialMediaConnection).where(
+                    SocialMediaConnection.platform == connection_data.get("platform", "instagram"),
+                    SocialMediaConnection.is_active == True
+                )
+            )
+            for row in existing.scalars().all():
+                row.is_active = False
+
+            # Create new connection
+            conn = SocialMediaConnection(
+                platform=connection_data.get("platform", "instagram"),
+                access_token=connection_data["access_token"],
+                page_id=connection_data.get("page_id"),
+                ig_account_id=connection_data.get("ig_account_id"),
+                ig_username=connection_data.get("ig_username"),
+                ig_followers=connection_data.get("ig_followers", 0),
+                ig_profile_pic=connection_data.get("ig_profile_pic"),
+                token_expires_at=connection_data.get("token_expires_at"),
+                token_type=connection_data.get("token_type", "long_lived"),
+                is_active=True,
+                last_validated_at=datetime.utcnow(),
+            )
+            db.add(conn)
+            await db.flush()
+            return conn.id
+
+    async def get_active_connection_async(self, platform: str = "instagram") -> Optional[Dict]:
+        """Get the active connection for a platform."""
+        if not self.use_db:
+            data = self._load_data()
+            return data.get("connection")
+
+        from database.connection import get_db
+        from database.models import SocialMediaConnection
+        from sqlalchemy import select
+
+        async with get_db() as db:
+            result = await db.execute(
+                select(SocialMediaConnection).where(
+                    SocialMediaConnection.platform == platform,
+                    SocialMediaConnection.is_active == True
+                ).order_by(SocialMediaConnection.id.desc()).limit(1)
+            )
+            row = result.scalar_one_or_none()
+            if not row:
+                return None
+            return {
+                "id": row.id,
+                "platform": row.platform,
+                "access_token": row.access_token,
+                "page_id": row.page_id,
+                "ig_account_id": row.ig_account_id,
+                "ig_username": row.ig_username,
+                "ig_followers": row.ig_followers or 0,
+                "ig_profile_pic": row.ig_profile_pic,
+                "token_expires_at": row.token_expires_at.isoformat() if row.token_expires_at else None,
+                "token_type": row.token_type,
+                "is_active": row.is_active,
+                "connected_at": row.connected_at.isoformat() if row.connected_at else None,
+                "last_validated_at": row.last_validated_at.isoformat() if row.last_validated_at else None,
+            }
+
+    async def update_connection_async(self, connection_id: int, updates: Dict):
+        """Update fields on an existing connection."""
+        if not self.use_db:
+            data = self._load_data()
+            if data.get("connection"):
+                data["connection"].update(updates)
+                self._save_data(data)
+            return
+
+        from database.connection import get_db
+        from database.models import SocialMediaConnection
+        from sqlalchemy import select
+
+        async with get_db() as db:
+            result = await db.execute(
+                select(SocialMediaConnection).where(SocialMediaConnection.id == connection_id)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                for key, value in updates.items():
+                    if hasattr(row, key):
+                        setattr(row, key, value)
+
+    async def disconnect_async(self, platform: str = "instagram"):
+        """Deactivate all connections for a platform."""
+        if not self.use_db:
+            data = self._load_data()
+            data.pop("connection", None)
+            self._save_data(data)
+            return
+
+        from database.connection import get_db
+        from database.models import SocialMediaConnection
+        from sqlalchemy import select
+
+        async with get_db() as db:
+            result = await db.execute(
+                select(SocialMediaConnection).where(
+                    SocialMediaConnection.platform == platform,
+                    SocialMediaConnection.is_active == True
+                )
+            )
+            for row in result.scalars().all():
+                row.is_active = False
+
+
+# ============================================================
+# META TOKEN MANAGEMENT
+# ============================================================
+
+async def validate_meta_token(access_token: str) -> Dict:
+    """Validate a Meta access token and return its info (expiry, scopes, etc.)."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        # Debug token to get expiry and validity
+        resp = await client.get(
+            f"{META_GRAPH_URL}/debug_token",
+            params={"input_token": access_token, "access_token": access_token}
+        )
+        if resp.status_code != 200:
+            return {"valid": False, "error": f"Token validation failed (HTTP {resp.status_code})"}
+
+        data = resp.json().get("data", {})
+        is_valid = data.get("is_valid", False)
+        expires_at = data.get("expires_at", 0)
+        scopes = data.get("scopes", [])
+        app_id = data.get("app_id", "")
+
+        result = {
+            "valid": is_valid,
+            "app_id": app_id,
+            "scopes": scopes,
+            "expires_at": datetime.utcfromtimestamp(expires_at).isoformat() if expires_at else None,
+            "expires_at_ts": expires_at,
+            "is_expired": expires_at > 0 and datetime.utcfromtimestamp(expires_at) < datetime.utcnow(),
+            "token_type": data.get("type", "unknown"),
+        }
+
+        # Check days until expiry
+        if expires_at and expires_at > 0:
+            expires_dt = datetime.utcfromtimestamp(expires_at)
+            days_left = (expires_dt - datetime.utcnow()).days
+            result["days_until_expiry"] = days_left
+        else:
+            result["days_until_expiry"] = None  # Never expires (page tokens)
+
+        return result
+
+
+async def exchange_for_long_lived_token(short_token: str) -> Dict:
+    """Exchange a short-lived token for a long-lived one (~60 days).
+    Requires META_APP_ID and META_APP_SECRET env vars."""
+    app_id = os.getenv("META_APP_ID")
+    app_secret = os.getenv("META_APP_SECRET")
+    if not app_id or not app_secret:
+        return {"error": "META_APP_ID and META_APP_SECRET required for token exchange"}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            f"{META_GRAPH_URL}/oauth/access_token",
+            params={
+                "grant_type": "fb_exchange_token",
+                "client_id": app_id,
+                "client_secret": app_secret,
+                "fb_exchange_token": short_token,
+            }
+        )
+        if resp.status_code != 200:
+            return {"error": f"Token exchange failed: {resp.text}"}
+
+        data = resp.json()
+        return {
+            "access_token": data.get("access_token"),
+            "token_type": "long_lived",
+            "expires_in": data.get("expires_in"),  # seconds (~5184000 = 60 days)
+        }
+
+
+async def refresh_long_lived_token(current_token: str) -> Dict:
+    """Refresh a long-lived token to get a new one with extended expiry.
+    Only works if the current token is still valid and not expired."""
+    app_id = os.getenv("META_APP_ID")
+    app_secret = os.getenv("META_APP_SECRET")
+    if not app_id or not app_secret:
+        return {"error": "META_APP_ID and META_APP_SECRET required for token refresh"}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            f"{META_GRAPH_URL}/oauth/access_token",
+            params={
+                "grant_type": "fb_exchange_token",
+                "client_id": app_id,
+                "client_secret": app_secret,
+                "fb_exchange_token": current_token,
+            }
+        )
+        if resp.status_code != 200:
+            return {"error": f"Token refresh failed: {resp.text}"}
+
+        data = resp.json()
+        return {
+            "access_token": data.get("access_token"),
+            "token_type": "long_lived",
+            "expires_in": data.get("expires_in"),
+        }
+
+
+async def fetch_ig_account_from_token(access_token: str, page_id: str) -> Dict:
+    """Given a valid token and page ID, fetch the linked Instagram Business Account info."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        # Get IG account ID from Page
+        resp = await client.get(
+            f"{META_GRAPH_URL}/{page_id}",
+            params={"fields": "instagram_business_account,name,picture", "access_token": access_token}
+        )
+        if resp.status_code != 200:
+            return {"error": f"Failed to fetch page info: {resp.text}"}
+
+        page_data = resp.json()
+        ig_biz = page_data.get("instagram_business_account", {})
+        ig_id = ig_biz.get("id")
+        if not ig_id:
+            return {"error": "No Instagram Business Account linked to this Facebook Page. Ensure you have a Professional (Business or Creator) Instagram account connected to this Page."}
+
+        # Get IG profile details
+        resp2 = await client.get(
+            f"{META_GRAPH_URL}/{ig_id}",
+            params={"fields": "username,followers_count,media_count,profile_picture_url,biography", "access_token": access_token}
+        )
+        if resp2.status_code != 200:
+            return {"error": f"Failed to fetch IG profile: {resp2.text}"}
+
+        ig_data = resp2.json()
+        return {
+            "ig_account_id": ig_id,
+            "ig_username": ig_data.get("username"),
+            "ig_followers": ig_data.get("followers_count", 0),
+            "ig_media_count": ig_data.get("media_count", 0),
+            "ig_profile_pic": ig_data.get("profile_picture_url"),
+            "ig_biography": ig_data.get("biography"),
+            "page_name": page_data.get("name"),
+        }
+
 
 # ============================================================
 # INSTAGRAM PUBLISHER — Meta Content Publishing API
@@ -1916,4 +2178,17 @@ def create_social_media_storage() -> SocialMediaStorage:
     return SocialMediaStorage()
 
 def create_instagram_publisher() -> InstagramPublisher:
+    return InstagramPublisher()
+
+async def create_instagram_publisher_from_db() -> InstagramPublisher:
+    """Create an InstagramPublisher using credentials stored in the database.
+    Falls back to environment variables if no DB connection exists."""
+    storage = SocialMediaStorage()
+    connection = await storage.get_active_connection_async("instagram")
+    if connection:
+        return InstagramPublisher(
+            access_token=connection["access_token"],
+            page_id=connection.get("page_id"),
+        )
+    # Fallback to env vars
     return InstagramPublisher()
