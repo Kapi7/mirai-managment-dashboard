@@ -15,7 +15,8 @@ import {
   Truck,
   ClipboardList,
   Target,
-  FileText
+  FileText,
+  Share2
 } from "lucide-react";
 import {
   Sidebar,
@@ -55,6 +56,7 @@ const navigationSections = [
     items: [
       { title: "Meta Ads", url: createPageUrl("Marketing"), icon: Target },
       { title: "Blog Creator", url: createPageUrl("BlogCreator"), icon: FileText },
+      { title: "Social Media", url: createPageUrl("SocialMedia"), icon: Share2 },
     ]
   },
   {

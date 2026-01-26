@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, date
 from calendar import monthrange
 import os
+import json
 import jwt
 import httpx
 from typing import List, Optional, Dict, Any
@@ -2222,6 +2223,463 @@ async def seo_agent_get_ready_content():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get ready content: {str(e)}")
+
+
+# ==================== SOCIAL MEDIA MANAGER ====================
+
+from pydantic import BaseModel as _SMBaseModel
+
+class SMStrategyGenerateRequest(_SMBaseModel):
+    goals: List[str]
+    date_range_start: str
+    date_range_end: str
+    product_focus: Optional[List[str]] = None
+
+class SMPostGenerateRequest(_SMBaseModel):
+    post_type: str  # photo, reel, carousel, product_feature
+    strategy_id: Optional[str] = None
+    product_ids: Optional[List[str]] = None
+    topic_hint: Optional[str] = None
+
+class SMPostUpdateRequest(_SMBaseModel):
+    caption: Optional[str] = None
+    visual_direction: Optional[str] = None
+    media_url: Optional[str] = None
+    media_type: Optional[str] = None
+    scheduled_at: Optional[str] = None
+    link_url: Optional[str] = None
+    product_ids: Optional[List[str]] = None
+
+class SMRejectRequest(_SMBaseModel):
+    reason: str = ""
+
+class SMRegenerateRequest(_SMBaseModel):
+    hints: str
+
+
+# ---------- Profile & Voice ----------
+
+@app.get("/social-media/profile")
+async def sm_get_profile(user: dict = Depends(require_auth)):
+    """Get Instagram profile + cached brand voice analysis"""
+    try:
+        from social_media_service import create_social_media_storage
+        storage = create_social_media_storage()
+        cache = await storage.get_profile_cache_async()
+
+        if cache:
+            if cache.get("brand_voice_analysis"):
+                try:
+                    cache["brand_voice_analysis"] = json.loads(cache["brand_voice_analysis"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            return {"profile": cache}
+
+        # Try to fetch live from IG
+        try:
+            from social_media_service import create_instagram_publisher
+            publisher = create_instagram_publisher()
+            ig_id = await publisher.get_ig_account_id()
+            profile = await publisher.get_profile_info(ig_id)
+            return {"profile": {**profile, "ig_account_id": ig_id}}
+        except Exception:
+            return {"profile": None, "message": "No profile data cached. Run voice analysis first."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get profile: {str(e)}")
+
+
+@app.post("/social-media/analyze-voice")
+async def sm_analyze_voice(user: dict = Depends(require_auth)):
+    """Trigger brand voice re-analysis from Instagram posts"""
+    try:
+        from social_media_service import create_social_media_agent
+        agent = create_social_media_agent()
+        result = await agent.analyze_brand_voice()
+        return {"analysis": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to analyze voice: {str(e)}")
+
+
+# ---------- Strategy ----------
+
+@app.post("/social-media/strategy/generate")
+async def sm_generate_strategy(req: SMStrategyGenerateRequest, user: dict = Depends(require_auth)):
+    """AI generates a content strategy"""
+    try:
+        from social_media_service import create_social_media_agent
+        from dataclasses import asdict
+        agent = create_social_media_agent()
+        strategy = await agent.generate_strategy(
+            goals=req.goals,
+            date_range_start=req.date_range_start,
+            date_range_end=req.date_range_end,
+            product_focus=req.product_focus,
+            user_email=user.get("email", "system")
+        )
+        return {"strategy": asdict(strategy)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate strategy: {str(e)}")
+
+
+@app.get("/social-media/strategies")
+async def sm_list_strategies(status: Optional[str] = None, user: dict = Depends(require_auth)):
+    """List all strategies"""
+    try:
+        from social_media_service import create_social_media_storage
+        from dataclasses import asdict
+        storage = create_social_media_storage()
+        strategies = await storage.get_all_strategies_async(status)
+        return {"strategies": [asdict(s) for s in strategies]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list strategies: {str(e)}")
+
+
+@app.get("/social-media/strategy/{uuid}")
+async def sm_get_strategy(uuid: str, user: dict = Depends(require_auth)):
+    """Get strategy detail"""
+    try:
+        from social_media_service import create_social_media_storage
+        from dataclasses import asdict
+        storage = create_social_media_storage()
+        strategy = await storage.get_strategy_async(uuid)
+        if not strategy:
+            raise HTTPException(status_code=404, detail="Strategy not found")
+        return {"strategy": asdict(strategy)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get strategy: {str(e)}")
+
+
+@app.post("/social-media/strategy/{uuid}/approve")
+async def sm_approve_strategy(uuid: str, user: dict = Depends(require_auth)):
+    """Approve a strategy"""
+    try:
+        from social_media_service import create_social_media_storage
+        from dataclasses import asdict
+        storage = create_social_media_storage()
+        strategy = await storage.get_strategy_async(uuid)
+        if not strategy:
+            raise HTTPException(status_code=404, detail="Strategy not found")
+        strategy.status = "approved"
+        strategy.approved_at = datetime.utcnow().isoformat() + "Z"
+        strategy.updated_at = datetime.utcnow().isoformat() + "Z"
+        await storage.save_strategy_async(strategy)
+        return {"strategy": asdict(strategy)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to approve strategy: {str(e)}")
+
+
+@app.post("/social-media/strategy/{uuid}/reject")
+async def sm_reject_strategy(uuid: str, req: SMRejectRequest, user: dict = Depends(require_auth)):
+    """Reject a strategy with feedback"""
+    try:
+        from social_media_service import create_social_media_storage
+        from dataclasses import asdict
+        storage = create_social_media_storage()
+        strategy = await storage.get_strategy_async(uuid)
+        if not strategy:
+            raise HTTPException(status_code=404, detail="Strategy not found")
+        strategy.status = "rejected"
+        strategy.rejection_reason = req.reason
+        strategy.updated_at = datetime.utcnow().isoformat() + "Z"
+        await storage.save_strategy_async(strategy)
+        return {"strategy": asdict(strategy)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to reject strategy: {str(e)}")
+
+
+# ---------- Content Calendar & Posts ----------
+
+@app.get("/social-media/calendar")
+async def sm_get_calendar(start_date: Optional[str] = None, end_date: Optional[str] = None,
+                           user: dict = Depends(require_auth)):
+    """Get posts in date range for calendar view"""
+    try:
+        from social_media_service import create_social_media_storage
+        from dataclasses import asdict
+        storage = create_social_media_storage()
+        posts = await storage.get_all_posts_async(start_date=start_date, end_date=end_date)
+        return {"posts": [asdict(p) for p in posts]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get calendar: {str(e)}")
+
+
+@app.post("/social-media/post/generate")
+async def sm_generate_post(req: SMPostGenerateRequest, user: dict = Depends(require_auth)):
+    """AI generates a single post"""
+    try:
+        from social_media_service import create_social_media_agent
+        from dataclasses import asdict
+        agent = create_social_media_agent()
+        post = await agent.generate_post_content(
+            post_type=req.post_type,
+            strategy_id=req.strategy_id,
+            product_ids=req.product_ids,
+            topic_hint=req.topic_hint,
+            user_email=user.get("email", "system")
+        )
+        return {"post": asdict(post)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate post: {str(e)}")
+
+
+@app.post("/social-media/post/generate-batch")
+async def sm_generate_batch(strategy_id: str, user: dict = Depends(require_auth)):
+    """AI generates multiple posts for a strategy"""
+    try:
+        from social_media_service import create_social_media_agent
+        from dataclasses import asdict
+        agent = create_social_media_agent()
+        posts = await agent.generate_batch_posts(strategy_id, user_email=user.get("email", "system"))
+        return {"posts": [asdict(p) for p in posts], "count": len(posts)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate batch: {str(e)}")
+
+
+@app.get("/social-media/posts")
+async def sm_list_posts(status: Optional[str] = None, post_type: Optional[str] = None,
+                         strategy_id: Optional[str] = None, user: dict = Depends(require_auth)):
+    """List posts with optional filters"""
+    try:
+        from social_media_service import create_social_media_storage
+        from dataclasses import asdict
+        storage = create_social_media_storage()
+        posts = await storage.get_all_posts_async(status=status, post_type=post_type, strategy_id=strategy_id)
+        return {"posts": [asdict(p) for p in posts]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list posts: {str(e)}")
+
+
+@app.get("/social-media/post/{uuid}")
+async def sm_get_post(uuid: str, user: dict = Depends(require_auth)):
+    """Get post detail"""
+    try:
+        from social_media_service import create_social_media_storage
+        from dataclasses import asdict
+        storage = create_social_media_storage()
+        post = await storage.get_post_async(uuid)
+        if not post:
+            raise HTTPException(status_code=404, detail="Post not found")
+        return {"post": asdict(post)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get post: {str(e)}")
+
+
+@app.put("/social-media/post/{uuid}")
+async def sm_update_post(uuid: str, req: SMPostUpdateRequest, user: dict = Depends(require_auth)):
+    """Edit post details"""
+    try:
+        from social_media_service import create_social_media_storage
+        from dataclasses import asdict
+        storage = create_social_media_storage()
+        post = await storage.get_post_async(uuid)
+        if not post:
+            raise HTTPException(status_code=404, detail="Post not found")
+
+        if req.caption is not None:
+            post.caption = req.caption
+        if req.visual_direction is not None:
+            post.visual_direction = req.visual_direction
+        if req.media_url is not None:
+            post.media_url = req.media_url
+        if req.media_type is not None:
+            post.media_type = req.media_type
+        if req.scheduled_at is not None:
+            post.scheduled_at = req.scheduled_at
+        if req.link_url is not None:
+            post.link_url = req.link_url
+        if req.product_ids is not None:
+            post.product_ids = req.product_ids
+        post.updated_at = datetime.utcnow().isoformat() + "Z"
+
+        await storage.save_post_async(post)
+        return {"post": asdict(post)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update post: {str(e)}")
+
+
+@app.post("/social-media/post/{uuid}/approve")
+async def sm_approve_post(uuid: str, user: dict = Depends(require_auth)):
+    """Approve post for publishing"""
+    try:
+        from social_media_service import create_social_media_storage
+        from dataclasses import asdict
+        storage = create_social_media_storage()
+        post = await storage.get_post_async(uuid)
+        if not post:
+            raise HTTPException(status_code=404, detail="Post not found")
+        post.status = "approved"
+        post.approved_at = datetime.utcnow().isoformat() + "Z"
+        post.updated_at = datetime.utcnow().isoformat() + "Z"
+        await storage.save_post_async(post)
+        return {"post": asdict(post)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to approve post: {str(e)}")
+
+
+@app.post("/social-media/post/{uuid}/reject")
+async def sm_reject_post(uuid: str, req: SMRejectRequest, user: dict = Depends(require_auth)):
+    """Reject post with correction notes"""
+    try:
+        from social_media_service import create_social_media_storage
+        from dataclasses import asdict
+        storage = create_social_media_storage()
+        post = await storage.get_post_async(uuid)
+        if not post:
+            raise HTTPException(status_code=404, detail="Post not found")
+        post.status = "rejected"
+        post.rejection_reason = req.reason
+        post.updated_at = datetime.utcnow().isoformat() + "Z"
+        await storage.save_post_async(post)
+        return {"post": asdict(post)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to reject post: {str(e)}")
+
+
+@app.post("/social-media/post/{uuid}/regenerate")
+async def sm_regenerate_post(uuid: str, req: SMRegenerateRequest, user: dict = Depends(require_auth)):
+    """AI regenerate post with hints"""
+    try:
+        from social_media_service import create_social_media_agent
+        from dataclasses import asdict
+        agent = create_social_media_agent()
+        post = await agent.regenerate_post(uuid, req.hints)
+        return {"post": asdict(post)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to regenerate post: {str(e)}")
+
+
+@app.post("/social-media/post/{uuid}/publish")
+async def sm_publish_post(uuid: str, user: dict = Depends(require_auth)):
+    """Publish approved post to Instagram + Facebook"""
+    try:
+        from social_media_service import create_social_media_agent
+        from dataclasses import asdict
+        agent = create_social_media_agent()
+        post = await agent.publish_post(uuid)
+        return {"post": asdict(post)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to publish post: {str(e)}")
+
+
+@app.delete("/social-media/post/{uuid}")
+async def sm_delete_post(uuid: str, user: dict = Depends(require_auth)):
+    """Delete a draft post"""
+    try:
+        from social_media_service import create_social_media_storage
+        storage = create_social_media_storage()
+        deleted = await storage.delete_post_async(uuid)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Post not found")
+        return {"deleted": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete post: {str(e)}")
+
+
+# ---------- Product Integration ----------
+
+@app.get("/social-media/products")
+async def sm_get_products(user: dict = Depends(require_auth)):
+    """Get Shopify products for featuring in posts"""
+    try:
+        if DB_SERVICE_AVAILABLE and db_service:
+            products = await db_service.get_products()
+            return {"products": products}
+
+        from shopify_client import _gql_for
+        return {"products": [], "message": "Product data requires database sync"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get products: {str(e)}")
+
+
+# ---------- Insights & Analytics ----------
+
+@app.get("/social-media/insights")
+async def sm_get_insights(user: dict = Depends(require_auth)):
+    """Overall social performance metrics"""
+    try:
+        from social_media_service import create_social_media_storage
+        from dataclasses import asdict
+        storage = create_social_media_storage()
+        insights = await storage.get_insights_async()
+        posts = await storage.get_all_posts_async(status="published")
+
+        total_impressions = sum(i.impressions for i in insights)
+        total_reach = sum(i.reach for i in insights)
+        total_engagement = sum(i.engagement for i in insights)
+        total_clicks = sum(i.website_clicks for i in insights)
+
+        return {
+            "summary": {
+                "total_posts": len(posts),
+                "total_impressions": total_impressions,
+                "total_reach": total_reach,
+                "total_engagement": total_engagement,
+                "total_website_clicks": total_clicks,
+                "avg_engagement_rate": round(total_engagement / total_reach * 100, 2) if total_reach else 0,
+            },
+            "posts": [asdict(i) for i in insights],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get insights: {str(e)}")
+
+
+@app.get("/social-media/insights/post/{uuid}")
+async def sm_get_post_insights(uuid: str, user: dict = Depends(require_auth)):
+    """Single post performance"""
+    try:
+        from social_media_service import create_social_media_storage
+        from dataclasses import asdict
+        storage = create_social_media_storage()
+        insights = await storage.get_insights_async(post_id=uuid)
+        return {"insights": [asdict(i) for i in insights]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get post insights: {str(e)}")
+
+
+@app.post("/social-media/insights/sync")
+async def sm_sync_insights(user: dict = Depends(require_auth)):
+    """Sync latest insights from Instagram API"""
+    try:
+        from social_media_service import create_social_media_agent
+        agent = create_social_media_agent()
+        synced = await agent.sync_insights()
+        return {"synced": synced}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to sync insights: {str(e)}")
+
+
+@app.get("/social-media/insights/best-times")
+async def sm_best_times(user: dict = Depends(require_auth)):
+    """Data-driven best posting times"""
+    try:
+        from social_media_service import create_social_media_agent
+        agent = create_social_media_agent()
+        result = await agent.suggest_optimal_times()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get best times: {str(e)}")
 
 
 # ---------- Local dev entrypoint ----------

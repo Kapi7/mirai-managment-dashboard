@@ -532,6 +532,124 @@ class AIConversationLog(Base):
 # BLOG CONTENT SYSTEM
 # ============================================================
 
+# ============================================================
+# SOCIAL MEDIA CONTENT SYSTEM
+# ============================================================
+
+class SocialMediaStrategy(Base):
+    """Social media strategy plans that require approval before content creation"""
+    __tablename__ = "social_media_strategies"
+
+    id = Column(Integer, primary_key=True)
+    uuid = Column(String(50), unique=True, nullable=False, index=True)
+    title = Column(Text, nullable=False)
+    description = Column(Text)
+    goals = Column(JSON)  # List of goals (audience growth, engagement, sales)
+    content_mix = Column(JSON)  # Ratio plan: {reels: 40, photos: 40, product: 20}
+    posting_frequency = Column(JSON)  # Posts per week, best times
+    hashtag_strategy = Column(JSON)  # Core + rotating hashtags
+    date_range_start = Column(Date)
+    date_range_end = Column(Date)
+    status = Column(String(50), default='draft', index=True)  # draft, pending_review, approved, rejected, active, completed
+    created_by = Column(String(255))  # User email
+    approved_by = Column(Integer, ForeignKey("users.id"))
+    approved_at = Column(DateTime)
+    rejection_reason = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    posts = relationship("SocialMediaPost", back_populates="strategy", cascade="all, delete-orphan")
+    approver = relationship("User", foreign_keys=[approved_by])
+
+    __table_args__ = (
+        Index('idx_sm_strategy_status', 'status', 'created_at'),
+    )
+
+
+class SocialMediaPost(Base):
+    """Individual social media content pieces in the calendar"""
+    __tablename__ = "social_media_posts"
+
+    id = Column(Integer, primary_key=True)
+    uuid = Column(String(50), unique=True, nullable=False, index=True)
+    strategy_id = Column(Integer, ForeignKey("social_media_strategies.id"))
+    post_type = Column(String(30))  # photo, reel, carousel, product_feature
+    caption = Column(Text)
+    visual_direction = Column(Text)  # AI description of what the visual should be
+    media_url = Column(Text)  # URL of uploaded media
+    media_type = Column(String(20))  # IMAGE, VIDEO, CAROUSEL_ALBUM
+    product_ids = Column(JSON)  # Linked Shopify product GIDs
+    link_url = Column(Text)  # Website link with UTM params
+    utm_source = Column(String(50), default='instagram')
+    utm_medium = Column(String(50), default='organic')
+    utm_campaign = Column(String(100))
+    scheduled_at = Column(DateTime)
+    status = Column(String(50), default='draft', index=True)  # draft, pending_review, approved, scheduled, publishing, published, failed, rejected
+    rejection_reason = Column(Text)
+    ig_container_id = Column(String(100))
+    ig_media_id = Column(String(100))
+    fb_post_id = Column(String(100))
+    published_at = Column(DateTime)
+    approved_by = Column(Integer, ForeignKey("users.id"))
+    approved_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    strategy = relationship("SocialMediaStrategy", back_populates="posts")
+    approver = relationship("User", foreign_keys=[approved_by])
+    insights = relationship("SocialMediaInsight", back_populates="post", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index('idx_sm_post_status', 'status', 'scheduled_at'),
+        Index('idx_sm_post_schedule', 'scheduled_at'),
+    )
+
+
+class SocialMediaInsight(Base):
+    """Post performance metrics synced from Instagram Insights API"""
+    __tablename__ = "social_media_insights"
+
+    id = Column(Integer, primary_key=True)
+    post_id = Column(Integer, ForeignKey("social_media_posts.id", ondelete="CASCADE"))
+    ig_media_id = Column(String(100))
+    impressions = Column(Integer, default=0)
+    reach = Column(Integer, default=0)
+    engagement = Column(Integer, default=0)  # likes + comments + shares + saves
+    likes = Column(Integer, default=0)
+    comments = Column(Integer, default=0)
+    shares = Column(Integer, default=0)
+    saves = Column(Integer, default=0)
+    video_views = Column(Integer, default=0)
+    profile_visits = Column(Integer, default=0)
+    website_clicks = Column(Integer, default=0)
+    follower_delta = Column(Integer, default=0)
+    synced_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    post = relationship("SocialMediaPost", back_populates="insights")
+
+
+class SocialMediaProfileCache(Base):
+    """Cached Instagram profile data for brand voice analysis"""
+    __tablename__ = "social_media_profile_cache"
+
+    id = Column(Integer, primary_key=True)
+    ig_account_id = Column(String(100), unique=True)
+    followers_count = Column(Integer, default=0)
+    media_count = Column(Integer, default=0)
+    recent_captions = Column(JSON)  # Last 25 captions for voice analysis
+    brand_voice_analysis = Column(Text)  # AI-generated voice/tone summary
+    best_posting_times = Column(JSON)  # Data-driven optimal times
+    top_hashtags = Column(JSON)  # Best performing hashtags
+    synced_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ============================================================
+# BLOG CONTENT SYSTEM
+# ============================================================
+
 class BlogDraft(Base):
     """Blog article drafts - AI generated content awaiting approval"""
     __tablename__ = "blog_drafts"
