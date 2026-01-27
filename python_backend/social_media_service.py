@@ -1463,6 +1463,8 @@ class InstagramPublisher:
         metric_sets = []
         if self.is_ig_token:
             metric_sets = [
+                "reach,accounts_engaged,follows_and_unfollows,profile_views",
+                "reach,accounts_engaged,profile_views",
                 "reach,profile_views",
                 "reach",
             ]
@@ -1476,10 +1478,19 @@ class InstagramPublisher:
         data = None
         for metrics in metric_sets:
             try:
+                params = {
+                    "metric": metrics,
+                    "period": "day",
+                    "since": since_ts,
+                    "until": until_ts,
+                    "access_token": self.access_token,
+                }
+                # IGAA tokens need metric_type=time_series for newer metrics
+                if self.is_ig_token:
+                    params["metric_type"] = "time_series"
                 data = await self._request("GET", f"{self.base_url}/{ig_account_id}/insights",
-                                            params={"metric": metrics, "period": "day",
-                                                    "since": since_ts, "until": until_ts,
-                                                    "access_token": self.access_token})
+                                            params=params)
+                print(f"[InstagramPublisher] Insights OK with metrics={metrics}")
                 break  # Success
             except Exception as e:
                 print(f"[InstagramPublisher] Insights failed with metrics={metrics}: {e}")
@@ -1638,7 +1649,7 @@ class SocialMediaAgent:
                 "generationConfig": gen_config,
             }
 
-            resp = requests.post(
+            resp = httpx.post(
                 "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
                 params={"key": self.gemini_api_key},
                 json=payload,
@@ -2324,13 +2335,15 @@ Return JSON:
         return post
 
     async def _generate_image(self, visual_direction: str, post_type: str, engine: str = "gemini",
-                               caption: str = "", product_image_url: str = "") -> tuple:
+                               caption: str = "", product_image_url: str = "",
+                               product_name: str = "") -> tuple:
         """Generate an image. engine: 'gemini' (default, no fallback), or 'dalle'.
         Returns (b64_data, thumbnail, format, engine_used)."""
         if engine == "gemini":
             result = await self._generate_image_gemini(
                 visual_direction, post_type, caption=caption,
                 product_image_url=product_image_url,
+                product_name=product_name,
             )
             if result[0]:
                 print("[SocialMediaAgent] Image generated via Gemini")
@@ -2346,7 +2359,8 @@ Return JSON:
         return None, None, None, None
 
     async def _generate_image_gemini(self, visual_direction: str, post_type: str,
-                                     caption: str = "", product_image_url: str = "") -> tuple:
+                                     caption: str = "", product_image_url: str = "",
+                                     product_name: str = "") -> tuple:
         """Generate image using Google Gemini for natural lifestyle/product photography.
         When product_image_url is provided, downloads it and sends as reference."""
         api_key = self.gemini_api_key or os.getenv("GEMINI_API_KEY")
@@ -2366,9 +2380,13 @@ Return JSON:
 
         product_ref_instruction = ""
         if product_image_url:
+            name_clause = f' The product is "{product_name}".' if product_name else ""
             product_ref_instruction = (
-                " The product shown must be THIS exact product (see reference image). "
-                "Do NOT change the product packaging, label, or colors."
+                f"\n\nCRITICAL — PRODUCT REFERENCE: A reference photo of the real product is attached. "
+                f"You MUST reproduce THIS EXACT product in the generated image — same shape, same color, "
+                f"same label, same packaging. Do NOT invent a different bottle, tube, or container. "
+                f"Do NOT change the product's colors, proportions, or branding. "
+                f"The reference image is the ground truth for what the product looks like.{name_clause}"
             )
 
         prompt = (
@@ -2383,8 +2401,8 @@ Return JSON:
             f"\n\n{INSTAGRAM_IMAGE_RULES}"
         )
 
-        # Build content parts: text + optional reference image
-        parts = [{"text": prompt}]
+        # Build content parts: reference image FIRST (so model sees it before instructions), then text
+        ref_image_part = None
         if product_image_url:
             try:
                 async with httpx.AsyncClient(timeout=30) as dl_client:
@@ -2395,10 +2413,16 @@ Return JSON:
                         if not mime_type.startswith("image/"):
                             mime_type = "image/jpeg"
                         b64_ref = base64.b64encode(img_resp.content).decode("utf-8")
-                        parts.append({"inlineData": {"mimeType": mime_type, "data": b64_ref}})
-                        print(f"[Gemini Image] Product reference image attached ({len(img_resp.content)} bytes)")
+                        ref_image_part = {"inlineData": {"mimeType": mime_type, "data": b64_ref}}
+                        print(f"[Gemini Image] Product reference image attached ({len(img_resp.content)} bytes) for '{product_name}'")
             except Exception as e:
                 print(f"[Gemini Image] Could not download product reference image: {e}")
+
+        # Put image before text so the model processes the reference first
+        parts = []
+        if ref_image_part:
+            parts.append(ref_image_part)
+        parts.append({"text": prompt})
 
         try:
             async with httpx.AsyncClient(timeout=90) as client:
@@ -2464,6 +2488,7 @@ Return JSON:
         Returns (b64_data, thumbnail, format) or (None, None, None)."""
         api_key = self.gemini_api_key or os.getenv("GEMINI_API_KEY")
         if not api_key:
+            print("[Veo2] No GEMINI_API_KEY configured, skipping video generation")
             return None, None, None
 
         # Build prompt with caption context
@@ -2482,6 +2507,7 @@ Return JSON:
             f"{caption_context}"
         )
 
+        print(f"[Veo2] Starting video generation request...")
         veo_url = "https://generativelanguage.googleapis.com/v1beta/models/veo-2.0-generate-001:predictLongRunning"
         poll_base = "https://generativelanguage.googleapis.com/v1beta"
 
@@ -2496,7 +2522,7 @@ Return JSON:
                         "parameters": {
                             "aspectRatio": "9:16",
                             "durationSeconds": 5,
-                            "personGeneration": "dont_allow",
+                            "personGeneration": "allow_adult",
                         },
                     },
                 )
@@ -2613,11 +2639,13 @@ Return JSON:
 
         # Look up product images for reference
         product_image_url = ""
+        product_name = ""
         if post.product_ids:
             try:
                 product_images = await self._get_product_images(post.product_ids)
                 if product_images:
                     product_image_url = product_images[0].get("featured_image_url", "")
+                    product_name = product_images[0].get("title", "")
             except Exception as e:
                 print(f"[SocialMediaAgent] Product image lookup failed: {e}")
 
@@ -2639,6 +2667,7 @@ Return JSON:
                 img, thumb, fmt = await self._generate_image_gemini(
                     augmented_direction, "photo", caption=caption,
                     product_image_url=product_image_url,
+                    product_name=product_name,
                 )
                 if img:
                     slides.append({"data": img, "thumbnail": thumb, "format": fmt})
@@ -2652,8 +2681,9 @@ Return JSON:
             else:
                 raise ValueError(f"Carousel image generation failed (engine={engine}).")
 
-        elif post.post_type == "reel":
+        elif post.post_type in ("reel", "video"):
             # Try Gemini video first, fall back to image (but flag media_type)
+            print(f"[SocialMediaAgent] Attempting Veo2 video generation for post_type={post.post_type}")
             video_data, video_thumb, video_fmt = await self._generate_video(visual_direction, caption=caption)
             if video_data:
                 post.media_data = video_data
@@ -2662,9 +2692,11 @@ Return JSON:
                 post.media_type = "VIDEO"
             else:
                 # Fallback to image but set media_type=IMAGE to flag in UI
+                print("[SocialMediaAgent] Veo2 video failed, falling back to image generation")
                 img, thumb, fmt, _engine = await self._generate_image(
                     visual_direction, post.post_type, engine, caption=caption,
                     product_image_url=product_image_url,
+                    product_name=product_name,
                 )
                 if not img:
                     raise ValueError(f"Image generation failed (engine={engine}). Check GEMINI_API_KEY is configured.")
@@ -2676,6 +2708,7 @@ Return JSON:
             img, thumb, fmt, _engine = await self._generate_image(
                 visual_direction, post.post_type, engine, caption=caption,
                 product_image_url=product_image_url,
+                product_name=product_name,
             )
             if not img:
                 raise ValueError(f"Image generation failed (engine={engine}). Check GEMINI_API_KEY is configured.")
@@ -2917,6 +2950,11 @@ Return JSON:
             if not day_date:
                 continue
             content = daily_content.get(day_date, {})
+
+            # Map IGAA-specific metrics to standard fields
+            engagement = day_data.get("accounts_engaged", 0)
+            follows = day_data.get("follows_and_unfollows", 0)
+
             snapshot = {
                 "date": day_date,
                 "ig_account_id": ig_account_id,
@@ -2925,6 +2963,8 @@ Return JSON:
                 "profile_views": day_data.get("profile_views", 0),
                 "website_clicks": day_data.get("website_clicks", 0),
                 "follower_count": day_data.get("follower_count", current_followers),
+                "follows": follows,
+                "total_likes": engagement,  # accounts_engaged as proxy for engagement
                 "posts_published": content.get("posts", 0),
                 "stories_published": content.get("stories", 0),
                 "reels_published": content.get("reels", 0),
@@ -3050,7 +3090,14 @@ Return JSON:
         # Also try to get live data from IG API for real-time profile stats
         live_profile = {}
         try:
-            publisher = InstagramPublisher()
+            connection = await self.storage.get_active_connection_async("instagram")
+            if connection and connection.get("access_token"):
+                publisher = InstagramPublisher(
+                    access_token=connection["access_token"],
+                    ig_account_id=connection.get("ig_account_id"),
+                )
+            else:
+                publisher = InstagramPublisher()
             ig_account_id = await publisher.get_ig_account_id()
             live_profile = await publisher.get_profile_info(ig_account_id)
         except Exception:
