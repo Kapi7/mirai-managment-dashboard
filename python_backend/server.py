@@ -2591,6 +2591,22 @@ async def sm_reject_strategy(uuid: str, req: SMRejectRequest, user: dict = Depen
         raise HTTPException(status_code=500, detail=f"Failed to reject strategy: {str(e)}")
 
 
+@app.delete("/social-media/strategy/{uuid}")
+async def sm_delete_strategy(uuid: str, user: dict = Depends(require_auth)):
+    """Delete a strategy"""
+    try:
+        from social_media_service import create_social_media_storage
+        storage = create_social_media_storage()
+        deleted = await storage.delete_strategy_async(uuid)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Strategy not found")
+        return {"deleted": True, "id": uuid}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete strategy: {str(e)}")
+
+
 # ---------- Content Calendar & Posts ----------
 
 @app.get("/social-media/calendar")
@@ -2752,6 +2768,22 @@ async def sm_reject_post(uuid: str, req: SMRejectRequest, user: dict = Depends(r
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to reject post: {str(e)}")
+
+
+@app.delete("/social-media/post/{uuid}")
+async def sm_delete_post(uuid: str, user: dict = Depends(require_auth)):
+    """Delete a post"""
+    try:
+        from social_media_service import create_social_media_storage
+        storage = create_social_media_storage()
+        deleted = await storage.delete_post_async(uuid)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Post not found")
+        return {"deleted": True, "id": uuid}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete post: {str(e)}")
 
 
 @app.post("/social-media/post/{uuid}/regenerate")

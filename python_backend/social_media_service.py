@@ -191,6 +191,17 @@ class SocialMediaStorage:
             strategies = [s for s in strategies if s.status == status]
         return sorted(strategies, key=lambda x: x.created_at, reverse=True)
 
+    async def delete_strategy_async(self, strategy_id: str) -> bool:
+        if self.use_db:
+            return await self._delete_strategy_db(strategy_id)
+        data = self._load_data()
+        original_len = len(data["strategies"])
+        data["strategies"] = [s for s in data["strategies"] if s["id"] != strategy_id]
+        if len(data["strategies"]) < original_len:
+            self._save_data(data)
+            return True
+        return False
+
     # ---------- Post CRUD ----------
 
     async def save_post_async(self, post: Post) -> str:
@@ -373,6 +384,17 @@ class SocialMediaStorage:
                 approved_at=s.approved_at.isoformat() + "Z" if s.approved_at else None,
                 content_briefs=s.content_briefs,
             ) for s in rows]
+
+    async def _delete_strategy_db(self, strategy_id: str) -> bool:
+        from database.connection import get_db
+        from database.models import SocialMediaStrategy
+        from sqlalchemy import delete
+
+        async with get_db() as db:
+            result = await db.execute(
+                delete(SocialMediaStrategy).where(SocialMediaStrategy.uuid == strategy_id)
+            )
+            return result.rowcount > 0
 
     async def _save_post_db(self, post: Post) -> str:
         from database.connection import get_db
@@ -1167,9 +1189,14 @@ class InstagramPublisher:
         if self._ig_account_id:
             return self._ig_account_id
         if self.is_ig_token:
-            # For IGAA tokens, /me returns id directly (user_id field doesn't exist)
-            data = await self._request("GET", f"{IG_GRAPH_URL}/me",
-                                        params={"fields": "username", "access_token": self.access_token})
+            # For IGAA tokens, /me returns id directly — request with no fields for max compatibility
+            try:
+                data = await self._request("GET", f"{IG_GRAPH_URL}/me",
+                                            params={"access_token": self.access_token})
+            except Exception:
+                # Fallback: try with explicit fields
+                data = await self._request("GET", f"{IG_GRAPH_URL}/me",
+                                            params={"fields": "username", "access_token": self.access_token})
             self._ig_account_id = data.get("id")
             return self._ig_account_id
         # For Facebook tokens, look up via Page
@@ -2108,9 +2135,9 @@ Return JSON:
 
         try:
             async with httpx.AsyncClient(timeout=90) as client:
-                # Gemini 2.0 Flash with native image generation
+                # Gemini 2.5 Flash Image generation
                 resp = await client.post(
-                    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-preview-image-generation:generateContent",
+                    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent",
                     params={"key": api_key},
                     json={
                         "contents": [{"parts": [{"text": prompt}]}],
@@ -2293,12 +2320,16 @@ Return JSON:
             else:
                 # Fallback to image but set media_type=IMAGE to flag in UI
                 img, thumb, fmt, _engine = await self._generate_image(post.visual_direction, post.post_type, engine, caption=caption)
+                if not img:
+                    raise ValueError(f"Image generation failed (engine={engine}). Check GEMINI_API_KEY is configured.")
                 post.media_data = img
                 post.media_thumbnail = thumb
                 post.media_data_format = fmt
                 post.media_type = "IMAGE"
         else:
             img, thumb, fmt, _engine = await self._generate_image(post.visual_direction, post.post_type, engine, caption=caption)
+            if not img:
+                raise ValueError(f"Image generation failed (engine={engine}). Check GEMINI_API_KEY is configured.")
             post.media_data = img
             post.media_thumbnail = thumb
             post.media_data_format = fmt

@@ -368,7 +368,19 @@ export default function SocialMedia() {
     }
   };
 
+  const deleteStrategy = async (uuid) => {
+    if (!confirm("Delete this strategy? This cannot be undone.")) return;
+    try {
+      await apiFetch(`/social-media/strategy/${uuid}`, { method: "DELETE" });
+      toast({ title: "Strategy Deleted" });
+      fetchStrategies();
+    } catch (e) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    }
+  };
+
   const deletePost = async (uuid) => {
+    if (!confirm("Delete this post? This cannot be undone.")) return;
     try {
       await apiFetch(`/social-media/post/${uuid}`, { method: "DELETE" });
       toast({ title: "Post Deleted" });
@@ -651,6 +663,10 @@ export default function SocialMedia() {
                             <Sparkles className="h-4 w-4 mr-1" /> Generate Posts
                           </Button>
                         )}
+                        <Button size="sm" variant="ghost" className="text-red-500"
+                                onClick={e => { e.stopPropagation(); deleteStrategy(s.id); }}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       </div>
                     </div>
                   </CardContent>
@@ -1086,11 +1102,11 @@ export default function SocialMedia() {
                             <Button size="sm" variant="ghost" onClick={() => { setSelectedPost(p); setRegenerateOpen(true); }}>
                               <RotateCw className="h-4 w-4" />
                             </Button>
-                            <Button size="sm" variant="ghost" className="text-red-500" onClick={() => deletePost(p.id)}>
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
                           </>
                         )}
+                        <Button size="sm" variant="ghost" className="text-red-500" onClick={() => deletePost(p.id)}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                         {(p.status === "draft" || p.status === "pending_review") && (
                           <Button size="sm" variant="outline" className="text-green-600" onClick={() => approvePost(p.id)}>
                             <CheckCircle className="h-4 w-4" />
