@@ -1819,6 +1819,7 @@ export default function SocialMedia() {
                   <DialogTitle className="capitalize">{selectedPost.post_type?.replace("_", " ")} Post</DialogTitle>
                   <StatusBadge status={selectedPost.status} />
                 </div>
+                <DialogDescription>View and manage post details, media, and publishing status</DialogDescription>
               </DialogHeader>
               <div className="space-y-4">
                 {/* Image preview */}
@@ -1973,6 +1974,7 @@ export default function SocialMedia() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Edit Post</DialogTitle>
+            <DialogDescription>Edit the post caption, visual direction, and scheduling</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>

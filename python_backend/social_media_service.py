@@ -15,6 +15,7 @@ import json
 import uuid as uuid_lib
 import base64
 import io
+import asyncio
 from datetime import datetime, date, timedelta
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, asdict, field
@@ -952,7 +953,7 @@ async def validate_meta_token(access_token: str) -> Dict:
             # For Instagram tokens, validate by calling /me with minimal fields
             resp = await client.get(
                 f"{IG_GRAPH_URL}/me",
-                params={"fields": "user_id,username", "access_token": access_token}
+                params={"fields": "username", "access_token": access_token}
             )
             if resp.status_code != 200:
                 err_detail = ""
@@ -973,7 +974,7 @@ async def validate_meta_token(access_token: str) -> Dict:
                 "token_type": "instagram",
                 "days_until_expiry": None,  # IG tokens from app dashboard don't expire easily
                 "ig_username": ig_data.get("username"),
-                "ig_user_id": ig_data.get("user_id"),
+                "ig_user_id": ig_data.get("id"),
             }
 
         # Facebook (EAA) token — use debug_token
@@ -1077,7 +1078,7 @@ async def fetch_ig_account_from_token(access_token: str, page_id: str) -> Dict:
         if is_ig_token:
             # Instagram API token — fetch directly from /me
             # Try full fields first, fall back to minimal if API rejects some fields
-            full_fields = "user_id,username,followers_count,media_count,profile_picture_url,biography"
+            full_fields = "username,followers_count,media_count,profile_picture_url,biography"
             resp = await client.get(
                 f"{IG_GRAPH_URL}/me",
                 params={"fields": full_fields, "access_token": access_token}
@@ -1086,7 +1087,7 @@ async def fetch_ig_account_from_token(access_token: str, page_id: str) -> Dict:
                 # Retry with minimal fields
                 resp = await client.get(
                     f"{IG_GRAPH_URL}/me",
-                    params={"fields": "user_id,username", "access_token": access_token}
+                    params={"fields": "username", "access_token": access_token}
                 )
             if resp.status_code != 200:
                 err_detail = ""
@@ -1098,7 +1099,7 @@ async def fetch_ig_account_from_token(access_token: str, page_id: str) -> Dict:
 
             ig_data = resp.json()
             return {
-                "ig_account_id": ig_data.get("user_id", ig_data.get("id")),
+                "ig_account_id": ig_data.get("id"),
                 "ig_username": ig_data.get("username"),
                 "ig_followers": ig_data.get("followers_count", 0),
                 "ig_media_count": ig_data.get("media_count", 0),
@@ -1166,10 +1167,10 @@ class InstagramPublisher:
         if self._ig_account_id:
             return self._ig_account_id
         if self.is_ig_token:
-            # For IG tokens, fetch user_id from /me endpoint
+            # For IGAA tokens, /me returns id directly (user_id field doesn't exist)
             data = await self._request("GET", f"{IG_GRAPH_URL}/me",
-                                        params={"fields": "user_id,username", "access_token": self.access_token})
-            self._ig_account_id = data.get("user_id", data.get("id"))
+                                        params={"fields": "username", "access_token": self.access_token})
+            self._ig_account_id = data.get("id")
             return self._ig_account_id
         # For Facebook tokens, look up via Page
         data = await self._request("GET", f"{META_GRAPH_URL}/{self.page_id}",
@@ -1183,7 +1184,7 @@ class InstagramPublisher:
     async def get_profile_info(self, ig_account_id: str) -> Dict:
         fields = "followers_count,media_count,username,biography"
         if self.is_ig_token:
-            fields = "user_id,username,followers_count,media_count,biography,profile_picture_url"
+            fields = "username,followers_count,media_count,biography,profile_picture_url"
         data = await self._request("GET", f"{self.base_url}/{ig_account_id}",
                                     params={"fields": fields,
                                             "access_token": self.access_token})
@@ -1257,33 +1258,51 @@ class InstagramPublisher:
         """Fetch account-level daily insights from Instagram Insights API.
         Returns a list of daily metric dicts for the date range."""
         results = []
-        try:
-            since_ts = int(datetime.combine(since, datetime.min.time()).timestamp())
-            until_ts = int(datetime.combine(until + timedelta(days=1), datetime.min.time()).timestamp())
+        since_ts = int(datetime.combine(since, datetime.min.time()).timestamp())
+        until_ts = int(datetime.combine(until + timedelta(days=1), datetime.min.time()).timestamp())
 
-            # IG API uses different metric names than Facebook Graph API
-            if self.is_ig_token:
-                metrics = "reach,follower_count,profile_views,website_clicks"
-            else:
-                metrics = "impressions,reach,profile_views,website_clicks,follower_count"
-            data = await self._request("GET", f"{self.base_url}/{ig_account_id}/insights",
-                                        params={"metric": metrics, "period": "day",
-                                                "since": since_ts, "until": until_ts,
-                                                "access_token": self.access_token})
+        # Try progressively smaller metric sets — IG API availability varies by token type
+        metric_sets = []
+        if self.is_ig_token:
+            metric_sets = [
+                "reach,profile_views",
+                "reach",
+            ]
+        else:
+            metric_sets = [
+                "impressions,reach,profile_views,website_clicks,follower_count",
+                "impressions,reach,follower_count",
+                "reach",
+            ]
 
-            daily_map = {}
-            for metric_data in data.get("data", []):
-                metric_name = metric_data["name"]
-                for val in metric_data.get("values", []):
-                    end_time = val.get("end_time", "")[:10]
-                    if end_time not in daily_map:
-                        daily_map[end_time] = {"date": end_time}
-                    daily_map[end_time][metric_name] = val.get("value", 0)
+        data = None
+        for metrics in metric_sets:
+            try:
+                data = await self._request("GET", f"{self.base_url}/{ig_account_id}/insights",
+                                            params={"metric": metrics, "period": "day",
+                                                    "since": since_ts, "until": until_ts,
+                                                    "access_token": self.access_token})
+                break  # Success
+            except Exception as e:
+                print(f"[InstagramPublisher] Insights failed with metrics={metrics}: {e}")
+                continue
 
-            results = sorted(daily_map.values(), key=lambda d: d["date"])
-        except Exception as e:
-            print(f"[InstagramPublisher] Failed to fetch account insights: {e}")
+        if not data:
+            print("[InstagramPublisher] All insight metric sets failed")
+            return results
 
+        daily_map = {}
+        for metric_data in data.get("data", []):
+            metric_name = metric_data.get("name", "")
+            for val in metric_data.get("values", []):
+                end_time = val.get("end_time", "")[:10]
+                if not end_time:
+                    continue
+                if end_time not in daily_map:
+                    daily_map[end_time] = {"date": end_time}
+                daily_map[end_time][metric_name] = val.get("value", 0)
+
+        results = sorted(daily_map.values(), key=lambda d: d["date"])
         return results
 
     async def fetch_account_demographics(self, ig_account_id: str) -> Dict:
@@ -2147,12 +2166,13 @@ Return JSON:
         return b64_data, thumbnail, "png"
 
     async def _generate_video(self, visual_direction: str, caption: str = "") -> tuple:
-        """Try to generate a short video via Gemini Veo. Returns (b64_data, thumbnail, format) or (None, None, None)."""
+        """Generate a short video via Google Veo 2 (async long-running operation).
+        Returns (b64_data, thumbnail, format) or (None, None, None)."""
         api_key = self.gemini_api_key or os.getenv("GEMINI_API_KEY")
         if not api_key:
             return None, None, None
 
-        # Extract first sentence of caption for context
+        # Build prompt with caption context
         caption_context = ""
         if caption:
             clean_caption = re.sub(r'#\S+', '', caption).strip()
@@ -2160,49 +2180,94 @@ Return JSON:
             if first_sentence:
                 caption_context = f' The video should match this message: "{first_sentence}".'
 
+        prompt = (
+            f"A short cinematic vertical video for Instagram Reels. "
+            f"Premium K-Beauty skincare brand aesthetic. {visual_direction}. "
+            f"Smooth slow motion, natural soft lighting, clean minimal background. "
+            f"Editorial product video style — think Glossier or Aesop brand content."
+            f"{caption_context}"
+        )
+
+        veo_url = "https://generativelanguage.googleapis.com/v1beta/models/veo-2.0-generate-001:predictLongRunning"
+        poll_base = "https://generativelanguage.googleapis.com/v1beta"
+
         try:
-            async with httpx.AsyncClient(timeout=120) as client:
-                prompt = (
-                    f"Generate a short 5-second vertical video for Instagram Reels. "
-                    f"Premium K-Beauty skincare brand aesthetic. {visual_direction}. "
-                    f"Smooth, cinematic, natural lighting."
-                    f"{caption_context}"
-                )
+            async with httpx.AsyncClient(timeout=30) as client:
+                # Step 1: Start the long-running operation
                 resp = await client.post(
-                    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-preview-image-generation:generateContent",
-                    params={"key": api_key},
+                    veo_url,
+                    headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
                     json={
-                        "contents": [{"parts": [{"text": prompt}]}],
-                        "generationConfig": {
-                            "responseModalities": ["VIDEO", "TEXT"],
+                        "instances": [{"prompt": prompt}],
+                        "parameters": {
+                            "aspectRatio": "9:16",
+                            "durationSeconds": "5",
+                            "personGeneration": "dont_allow",
                         },
                     },
-                    headers={"Content-Type": "application/json"},
                 )
 
-                if resp.status_code == 200:
-                    data = resp.json()
-                    candidates = data.get("candidates", [])
-                    if candidates:
-                        parts = candidates[0].get("content", {}).get("parts", [])
-                        for part in parts:
-                            inline = part.get("inlineData", {})
-                            mime = inline.get("mimeType", "")
-                            if mime.startswith("video/"):
-                                b64_data = inline.get("data", "")
-                                if b64_data:
-                                    return b64_data, "", "mp4"
-                            elif mime.startswith("image/"):
-                                # Got an image instead of video — still useful
-                                b64_data = inline.get("data", "")
-                                if b64_data:
-                                    fmt = "png" if "png" in mime else "jpeg"
-                                    thumbnail = compress_to_thumbnail(b64_data, 256)
-                                    return b64_data, thumbnail, fmt
+                if resp.status_code != 200:
+                    err_text = resp.text[:300]
+                    print(f"[Veo2] Failed to start operation (status {resp.status_code}): {err_text}")
+                    return None, None, None
 
-                print(f"[Gemini Video] No video in response (status {resp.status_code})")
+                op_data = resp.json()
+                op_name = op_data.get("name")
+                if not op_name:
+                    print(f"[Veo2] No operation name returned: {op_data}")
+                    return None, None, None
+
+                print(f"[Veo2] Operation started: {op_name}")
+
+            # Step 2: Poll until done (max ~5 minutes, check every 15 seconds)
+            max_polls = 20
+            poll_data = {}
+            for i in range(max_polls):
+                await asyncio.sleep(15)
+                async with httpx.AsyncClient(timeout=30) as client:
+                    poll_resp = await client.get(
+                        f"{poll_base}/{op_name}",
+                        headers={"x-goog-api-key": api_key},
+                    )
+                    if poll_resp.status_code != 200:
+                        print(f"[Veo2] Poll error (status {poll_resp.status_code}): {poll_resp.text[:200]}")
+                        continue
+
+                    poll_data = poll_resp.json()
+                    if poll_data.get("done"):
+                        print(f"[Veo2] Operation complete after {(i+1)*15}s")
+                        # Extract video URI
+                        gen_resp = poll_data.get("response", {}).get("generateVideoResponse", {})
+                        samples = gen_resp.get("generatedSamples", [])
+                        if samples:
+                            video_uri = samples[0].get("video", {}).get("uri", "")
+                            if video_uri:
+                                # Step 3: Download the video
+                                async with httpx.AsyncClient(timeout=120) as dl_client:
+                                    dl_resp = await dl_client.get(
+                                        video_uri,
+                                        headers={"x-goog-api-key": api_key},
+                                        follow_redirects=True,
+                                    )
+                                    if dl_resp.status_code == 200:
+                                        video_bytes = dl_resp.content
+                                        b64_data = base64.b64encode(video_bytes).decode("utf-8")
+                                        print(f"[Veo2] Video downloaded ({len(video_bytes)} bytes)")
+                                        return b64_data, "", "mp4"
+                                    else:
+                                        print(f"[Veo2] Download failed (status {dl_resp.status_code})")
+                        else:
+                            print(f"[Veo2] No samples in response: {poll_data}")
+                        break
+                    else:
+                        print(f"[Veo2] Polling... ({(i+1)*15}s elapsed)")
+
+            if not poll_data.get("done"):
+                print(f"[Veo2] Timed out after {max_polls * 15}s")
+
         except Exception as e:
-            print(f"[Gemini Video] Failed: {e}")
+            print(f"[Veo2] Failed: {e}")
 
         return None, None, None
 
@@ -2401,7 +2466,7 @@ Return JSON:
         try:
             publisher = InstagramPublisher()
             ig_account_id = await publisher.get_ig_account_id()
-        except ValueError as e:
+        except Exception as e:
             print(f"[SocialMediaAgent] Cannot sync account insights: {e}")
             return 0
 
@@ -2437,21 +2502,26 @@ Return JSON:
                     daily_content[ts]["posts"] += 1
 
         # Also count from our own published posts
-        our_posts = await self.storage.get_all_posts_async(status="published")
-        for p in our_posts:
-            if p.published_at:
-                pub_date = p.published_at[:10]
-                daily_content.setdefault(pub_date, {"posts": 0, "stories": 0, "reels": 0})
-                if p.post_type == "story":
-                    daily_content[pub_date]["stories"] += 1
-                elif p.post_type == "reel":
-                    daily_content[pub_date]["reels"] += 1
-                else:
-                    daily_content[pub_date]["posts"] += 1
+        try:
+            our_posts = await self.storage.get_all_posts_async(status="published")
+            for p in our_posts:
+                if p.published_at:
+                    pub_date = p.published_at[:10]
+                    daily_content.setdefault(pub_date, {"posts": 0, "stories": 0, "reels": 0})
+                    if p.post_type == "story":
+                        daily_content[pub_date]["stories"] += 1
+                    elif p.post_type == "reel":
+                        daily_content[pub_date]["reels"] += 1
+                    else:
+                        daily_content[pub_date]["posts"] += 1
+        except Exception as e:
+            print(f"[SocialMediaAgent] Failed to fetch our published posts: {e}")
 
         synced = 0
         for day_data in daily_data:
             day_date = day_data.get("date", "")
+            if not day_date:
+                continue
             content = daily_content.get(day_date, {})
             snapshot = {
                 "date": day_date,
@@ -2465,8 +2535,11 @@ Return JSON:
                 "stories_published": content.get("stories", 0),
                 "reels_published": content.get("reels", 0),
             }
-            await self.storage.save_account_snapshot_async(snapshot)
-            synced += 1
+            try:
+                await self.storage.save_account_snapshot_async(snapshot)
+                synced += 1
+            except Exception as e:
+                print(f"[SocialMediaAgent] Failed to save snapshot for {day_date}: {e}")
 
         return synced
 
