@@ -4889,6 +4889,9 @@ class SMConnectRequest(BaseModel):
     access_token: str
     page_id: str = ""
 
+class SMBulkDeleteRequest(BaseModel):
+    ids: List[str]
+
 
 # ---------- Account Connection ----------
 
@@ -5224,6 +5227,30 @@ async def sm_delete_strategy(uuid: str, user: dict = Depends(require_auth)):
         raise HTTPException(status_code=500, detail=f"Failed to delete strategy: {str(e)}")
 
 
+@app.delete("/social-media/strategies/bulk")
+async def sm_bulk_delete_strategies(req: SMBulkDeleteRequest, user: dict = Depends(require_auth)):
+    """Bulk delete strategies"""
+    try:
+        from social_media_service import create_social_media_storage
+        storage = create_social_media_storage()
+        count = await storage.delete_strategies_bulk(req.ids)
+        return {"deleted": count}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to bulk delete strategies: {str(e)}")
+
+
+@app.delete("/social-media/posts/bulk")
+async def sm_bulk_delete_posts(req: SMBulkDeleteRequest, user: dict = Depends(require_auth)):
+    """Bulk delete posts"""
+    try:
+        from social_media_service import create_social_media_storage
+        storage = create_social_media_storage()
+        count = await storage.delete_posts_bulk(req.ids)
+        return {"deleted": count}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to bulk delete posts: {str(e)}")
+
+
 @app.get("/social-media/calendar")
 async def sm_get_calendar(start_date: Optional[str] = None, end_date: Optional[str] = None,
                            user: dict = Depends(require_auth)):
@@ -5285,6 +5312,12 @@ async def sm_list_posts(status: Optional[str] = None, post_type: Optional[str] =
         for p in posts:
             d = asdict(p)
             d.pop("media_data", None)
+            # Strip full image data from carousel, keep thumbnails + count
+            if d.get("media_carousel"):
+                d["media_carousel"] = [
+                    {"thumbnail": s.get("thumbnail", ""), "format": s.get("format", "png")}
+                    for s in d["media_carousel"]
+                ]
             result.append(d)
         return {"posts": result}
     except Exception as e:
@@ -5438,7 +5471,12 @@ async def sm_generate_media(uuid: str, engine: str = "gemini", user: dict = Depe
         agent = create_social_media_agent()
         post = await agent.generate_media_for_post(uuid, engine=engine)
         post_dict = asdict(post)
-        post_dict.pop("media_data", None)
+        post_dict.pop("media_data", None)  # Don't send full image back
+        if post_dict.get("media_carousel"):
+            post_dict["media_carousel"] = [
+                {"thumbnail": s.get("thumbnail", ""), "format": s.get("format", "png")}
+                for s in post_dict["media_carousel"]
+            ]
         return {"post": post_dict}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -5447,8 +5485,9 @@ async def sm_generate_media(uuid: str, engine: str = "gemini", user: dict = Depe
 
 
 @app.get("/social-media/media/{uuid}")
-async def sm_serve_media(uuid: str):
-    """Serve generated media as raw image/video bytes (unauthenticated for Meta API)"""
+async def sm_serve_media(uuid: str, slide: Optional[int] = None):
+    """Serve generated media as raw image/video bytes (unauthenticated for Meta API).
+    Use ?slide=N to serve carousel slides (0-indexed)."""
     try:
         from social_media_service import create_social_media_storage
         import base64
@@ -5456,8 +5495,19 @@ async def sm_serve_media(uuid: str):
         post = await storage.get_post_async(uuid)
         if not post or not post.media_data:
             raise HTTPException(status_code=404, detail="Media not found")
-        raw = base64.b64decode(post.media_data)
-        fmt = post.media_data_format or "png"
+
+        # Serve carousel slide if requested
+        if slide is not None and slide > 0 and post.media_carousel:
+            if slide < len(post.media_carousel):
+                slide_data = post.media_carousel[slide]
+                raw = base64.b64decode(slide_data["data"])
+                fmt = slide_data.get("format", "png")
+            else:
+                raise HTTPException(status_code=404, detail=f"Slide {slide} not found")
+        else:
+            raw = base64.b64decode(post.media_data)
+            fmt = post.media_data_format or "png"
+
         content_type = {
             "png": "image/png", "jpeg": "image/jpeg",
             "jpg": "image/jpeg", "mp4": "video/mp4",

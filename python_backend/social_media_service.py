@@ -39,6 +39,128 @@ META_GRAPH_URL = "https://graph.facebook.com/v21.0"
 IG_GRAPH_URL = "https://graph.instagram.com/v21.0"
 
 
+# ============================================================
+# BRAND VOICE & CATEGORY PROMPTS
+# ============================================================
+
+MIRAI_BRAND_VOICE = """
+Brand: Mirai Skin — Premium K-Beauty skincare retailer
+Tone: Sophisticated, educational, warm but not clinical. Think trusted friend who knows skincare science.
+Language rules:
+- Never use ALL CAPS for emphasis (use italics-style or natural emphasis)
+- Max 3 emojis per caption, placed naturally (not at start of every line)
+- No generic filler: avoid "game-changer", "holy grail", "obsessed", "literally"
+- Always use full product name exactly as shown in Shopify
+- CTA style: soft and curiosity-driven ("Discover the difference", "Your skin will thank you")
+  NOT aggressive ("BUY NOW", "Don't miss out!", "Limited time!")
+- Hashtag placement: always at the end, separated by a line break
+- Core hashtags: #MiraiSkin #KBeauty #KoreanSkincare (always include)
+"""
+
+INSTAGRAM_IMAGE_RULES = """
+CRITICAL IMAGE RULES — read carefully:
+- Generate a PHOTOGRAPH only. Do NOT render any text, words, letters, numbers, captions,
+  hashtags, watermarks, logos, labels, titles, or typographic elements on the image.
+- On Instagram, the caption is a separate text field below the image — never burn it into the photo.
+- The only exception is if text naturally appears on the product packaging itself (brand name on a bottle label, etc.).
+- Do NOT create collages, split-screens, infographics, diagrams, or multi-panel layouts.
+  Each image must be a single cohesive photograph.
+- For Stories: generate a clean background image. Instagram's native stickers (polls, links,
+  questions) are added by the user in the app — do NOT draw fake UI elements or sticker mockups.
+"""
+
+CATEGORY_PROMPTS = {
+    "how-to": {
+        "visual": "Show the product being used in a routine sequence. Bright, clean, tutorial aesthetic. Hands applying product to skin with soft directional lighting. Think beauty editorial behind-the-scenes.",
+        "caption": "Write as a mini-tutorial with numbered steps. Start with a relatable skin concern, then walk through the routine.",
+        "carousel_slides": [
+            "The product bottle/tube on a clean surface with soft lighting",
+            "Hands dispensing or applying the product to skin — close-up action shot",
+            "Glowing skin result — a close-up of radiant, healthy-looking skin",
+        ],
+        "story_overlays": [
+            {"type": "poll", "question": "Do you use this step in your routine?", "options": ["Yes!", "Not yet"]},
+            {"type": "link_sticker", "label": "Shop Now"},
+        ],
+    },
+    "before-after": {
+        "visual": "Two contrasting skin textures side by side — left showing dull, rough, or dry skin and right showing smooth, hydrated, radiant skin. Same lighting and angle on both sides. Product bottle placed at center bottom. The visual contrast must be dramatic and clear through texture and tone, not through text labels.",
+        "caption": "Start with the skin concern ('Struggling with...'), then reveal the transformation. Mention the specific product and how long it took.",
+        "carousel_slides": [
+            "Close-up of the skin concern — dull, textured, or dry skin under soft lighting",
+            "Hero shot of the product with its key ingredient visible on the label",
+            "The result — same angle as slide 1 but showing transformed, glowing skin",
+        ],
+        "story_overlays": [
+            {"type": "poll", "question": "Can you see the difference?", "options": ["Wow yes", "Show me more"]},
+            {"type": "link_sticker", "label": "Get These Results"},
+        ],
+    },
+    "product-feature": {
+        "visual": "Hero product shot on clean minimal background. Show a texture swatch nearby — a small dollop or smear of the product showing its consistency. A natural ingredient element nearby (e.g., a centella leaf, a snail, a drop of serum). Editorial product photography like Vogue or Allure beauty pages.",
+        "caption": "Lead with the star ingredient or key benefit. Describe texture and experience. End with who it's perfect for.",
+        "carousel_slides": [
+            "Hero product shot — clean background, soft editorial lighting, no distractions",
+            "Texture closeup — product dispensed on a surface or fingertip showing consistency",
+            "The star ingredient in its natural form beside the product (leaf, extract, droplet)",
+        ],
+        "story_overlays": [
+            {"type": "link_sticker", "label": "Shop This Product"},
+        ],
+    },
+    "lifestyle": {
+        "visual": "Product in real daily life context — on a bathroom shelf, bedside table, or held in someone's hand during a morning or evening routine. Warm natural lighting. Lifestyle editorial feel — think a candid moment in a beautiful, lived-in space.",
+        "caption": "Tell a moment story — morning routine, self-care evening, getting ready. Weave the product into daily life naturally.",
+        "carousel_slides": [
+            "Morning or evening scene — product sitting on a vanity or bathroom shelf among other curated items",
+            "Application moment — someone using the product in a natural, candid way",
+            "The finished look — fresh, dewy, glowing skin in natural window light",
+        ],
+        "story_overlays": [
+            {"type": "question", "prompt": "What's your skincare ritual?"},
+        ],
+    },
+    "educational": {
+        "visual": "The key ingredient in its natural form — a real plant, seed, extract, or scientific-looking serum droplet — arranged alongside the product. Clean, minimalist composition. Scientific but beautiful, like a high-end ingredients catalog. No diagrams or text overlays.",
+        "caption": "Start with a surprising skin fact or ingredient science. Explain in simple terms. Connect to the product.",
+        "carousel_slides": [
+            "The ingredient in its natural form — beautiful close-up (plant, mineral, extract droplet)",
+            "The ingredient and product together — showing the connection between nature and formula",
+            "The product hero shot with the ingredient subtly present in the frame",
+        ],
+        "story_overlays": [
+            {"type": "quiz", "question": "Which ingredient does this?", "options": ["Niacinamide", "Centella", "Snail Mucin"]},
+            {"type": "link_sticker", "label": "Learn More"},
+        ],
+    },
+    "testimonial": {
+        "visual": "Warm, soft-lit portrait-style shot — the product held near the face or placed on a surface with soft bokeh background. Trustworthy, genuine aesthetic. Think real-person beauty editorial, not stock photo.",
+        "caption": "Write as a customer voice or share a real story. Include specific results and timeline.",
+        "carousel_slides": [
+            "Warm aesthetic flat-lay or portrait setup with the product in soft lighting",
+            "The product hero shot — clean, elegant, inviting",
+            "Close-up skin result — dewy, healthy-looking skin texture",
+        ],
+        "story_overlays": [
+            {"type": "poll", "question": "Have you tried this?", "options": ["Love it", "Want to try"]},
+            {"type": "link_sticker", "label": "Read Reviews"},
+        ],
+    },
+    "behind-the-scenes": {
+        "visual": "Authentic, slightly less polished. Show ingredients in raw form, a workspace with formulation tools, or Korean skincare culture elements. Documentary-style photography with natural lighting.",
+        "caption": "Share brand story, ingredient sourcing, or why this product was created. Build connection and transparency.",
+        "carousel_slides": [
+            "Behind the brand — workspace, raw ingredients, formulation tools in natural light",
+            "The craftsmanship — a close-up detail of quality or process",
+            "The final product — connecting the process to the finished product on a clean surface",
+        ],
+        "story_overlays": [
+            {"type": "question", "prompt": "What do you want to know about our process?"},
+        ],
+    },
+}
+
+
 def compress_to_thumbnail(b64_data: str, max_size: int = 256) -> str:
     """Compress a base64 PNG image to a small JPEG thumbnail."""
     try:
@@ -52,7 +174,7 @@ def compress_to_thumbnail(b64_data: str, max_size: int = 256) -> str:
         img.save(buf, format="JPEG", quality=70)
         return base64.b64encode(buf.getvalue()).decode("utf-8")
     except Exception as e:
-        print(f"[compress_to_thumbnail] Failed: {e}")
+        print(f"[compress_to_thumbnail] Skipping (Pillow not available): {e}")
         return ""
 
 
@@ -110,6 +232,8 @@ class Post:
     media_data: Optional[str] = None
     media_data_format: Optional[str] = None
     media_thumbnail: Optional[str] = None
+    media_carousel: Optional[List[Dict]] = None  # [{data: b64, thumbnail: b64, format: str}]
+    ig_overlays: Optional[List[Dict]] = None  # [{type: "link_sticker"|"poll"|"question"|..., ...}]
 
 
 @dataclass
@@ -202,6 +326,25 @@ class SocialMediaStorage:
             return True
         return False
 
+    async def delete_strategies_bulk(self, strategy_ids: List[str]) -> int:
+        """Delete multiple strategies. Returns count deleted."""
+        if self.use_db:
+            from database.connection import get_db
+            from database.models import SocialMediaStrategy
+            from sqlalchemy import delete as sql_delete
+            async with get_db() as db:
+                result = await db.execute(
+                    sql_delete(SocialMediaStrategy).where(SocialMediaStrategy.uuid.in_(strategy_ids))
+                )
+                return result.rowcount
+        data = self._load_data()
+        original_len = len(data["strategies"])
+        data["strategies"] = [s for s in data["strategies"] if s["id"] not in strategy_ids]
+        deleted = original_len - len(data["strategies"])
+        if deleted:
+            self._save_data(data)
+        return deleted
+
     # ---------- Post CRUD ----------
 
     async def save_post_async(self, post: Post) -> str:
@@ -252,6 +395,26 @@ class SocialMediaStorage:
             self._save_data(data)
             return True
         return False
+
+    async def delete_posts_bulk(self, post_ids: List[str]) -> int:
+        """Delete multiple posts. Returns count deleted."""
+        if self.use_db:
+            from database.connection import get_db
+            from database.models import SocialMediaPost
+            from sqlalchemy import delete as sql_delete
+            async with get_db() as db:
+                result = await db.execute(
+                    sql_delete(SocialMediaPost).where(SocialMediaPost.uuid.in_(post_ids))
+                )
+                return result.rowcount
+        data = self._load_data()
+        original_len = len(data["posts"])
+        ids_set = set(post_ids)
+        data["posts"] = [p for p in data["posts"] if p["id"] not in ids_set]
+        deleted = original_len - len(data["posts"])
+        if deleted:
+            self._save_data(data)
+        return deleted
 
     # ---------- Insights ----------
 
@@ -448,6 +611,10 @@ class SocialMediaStorage:
                     existing.media_data_format = post.media_data_format
                 if post.media_thumbnail is not None:
                     existing.media_thumbnail = post.media_thumbnail
+                if post.media_carousel is not None:
+                    existing.media_carousel = post.media_carousel
+                if post.ig_overlays is not None:
+                    existing.ig_overlays = post.ig_overlays
                 if strategy_fk:
                     existing.strategy_id = strategy_fk
             else:
@@ -463,6 +630,8 @@ class SocialMediaStorage:
                     media_data=post.media_data,
                     media_data_format=post.media_data_format,
                     media_thumbnail=post.media_thumbnail,
+                    media_carousel=post.media_carousel,
+                    ig_overlays=post.ig_overlays,
                     product_ids=post.product_ids,
                     link_url=post.link_url,
                     utm_source=post.utm_source,
@@ -532,6 +701,8 @@ class SocialMediaStorage:
             media_data=p.media_data if include_media_data else None,
             media_data_format=p.media_data_format,
             media_thumbnail=p.media_thumbnail,
+            media_carousel=getattr(p, 'media_carousel', None),
+            ig_overlays=getattr(p, 'ig_overlays', None),
         )
 
     async def _get_all_posts_db(self, status=None, post_type=None, strategy_id=None,
@@ -1822,16 +1993,24 @@ HASHTAG STRATEGY: {json.dumps(strategy.hashtag_strategy)}
             campaign_slug = re.sub(r'[^a-z0-9]+', '-', strategy.title.lower()).strip('-')
 
         type_instructions = {
-            "photo": "Create a visually appealing photo post. Focus on aesthetic, storytelling, and brand identity.",
-            "reel": "Create an engaging Reel concept. Start with a hook in the first 3 seconds. Keep it dynamic and entertaining.",
-            "carousel": "Create a carousel post (multiple slides). Each slide should have a clear purpose. Educational or step-by-step content works well.",
-            "product_feature": "Create a product feature post. Highlight key benefits, ingredients, and results. Include a clear CTA to shop.",
-            "story": "Create an Instagram Story. Vertical 9:16 format. Eye-catching, quick to consume. Bold visuals, minimal text overlay. Engagement-focused (polls, questions, swipe-up)."
+            "photo": "Create a photo post. The image must be a pure photograph — no text, labels, or overlays. Caption text is separate on Instagram.",
+            "reel": "Create a Reel concept. Start with a hook in the first 3 seconds. The visual_direction describes what to film, not text to overlay.",
+            "carousel": "Create a carousel post (multiple photo slides). Each slide is a standalone photograph — no text burned on images. Use carousel to show sequence/variety.",
+            "product_feature": "Create a product feature post. The image is editorial product photography. Caption has the benefits, CTA, and hashtags — not the image.",
+            "story": "Create an Instagram Story. The image is a clean vertical background. Instagram-native stickers (polls, questions, link stickers, countdowns) are added by the user via the app — describe them in ig_overlays, not in the image."
         }
 
         system_prompt = f"""You are a social media content creator for Mirai Skin, a premium K-Beauty retailer.
-Brand voice guide: {voice_guide}
+
+{MIRAI_BRAND_VOICE}
+
+Profile voice analysis: {voice_guide}
 {strategy_context}
+
+HOW INSTAGRAM WORKS:
+- The IMAGE is a pure photograph. Text, captions, and hashtags go in a separate caption field — NEVER on the image.
+- Stories use Instagram-native stickers (polls, questions, links) added via the app — not burned into the image.
+- visual_direction must describe ONLY what the photo looks like (subject, lighting, composition, mood).
 
 Create Instagram content. Return valid JSON."""
 
@@ -1850,14 +2029,21 @@ UTM LINK FORMAT: https://miraiskin.co/products/{{handle}}?utm_source=instagram&u
 
 Return JSON:
 {{
-  "caption": "Full caption text including hashtags",
-  "visual_direction": "Detailed description of what the image/video should look like",
+  "caption": "Full caption text including hashtags (this is the TEXT BELOW the image on Instagram)",
+  "visual_direction": "Describe ONLY the photograph — subject, lighting, composition, mood. NEVER text/labels on the image.",
   "suggested_media_type": "IMAGE or VIDEO or CAROUSEL_ALBUM",
   "hashtags": ["#tag1", "#tag2"],
-  "link_url": "UTM-tagged link if applicable"
-}}"""
+  "link_url": "UTM-tagged link if applicable",
+  "ig_overlays": [{{"type": "link_sticker|poll|question|countdown|mention|location", "..."}}]
+}}
+
+ig_overlays are optional — use them for stories or posts that benefit from interactive stickers.
+The visual_direction MUST NEVER include instructions to render text on the image."""
 
         result = json.loads(self._call_ai(system_prompt, user_prompt))
+
+        # Resolve ig_overlays
+        ig_overlays = result.get("ig_overlays")
 
         post = Post(
             id=str(uuid_lib.uuid4()),
@@ -1874,6 +2060,7 @@ Return JSON:
             utm_source="instagram",
             utm_medium="organic",
             utm_campaign=campaign_slug or "general",
+            ig_overlays=ig_overlays,
         )
         await self.storage.save_post_async(post)
         return post
@@ -1906,18 +2093,44 @@ Return JSON:
 
             briefs_text = json.dumps(batch, indent=2)
 
+            # Build per-category caption instructions for briefs in this batch
+            category_instructions = ""
+            for brief in batch:
+                cat = brief.get("content_category", "")
+                if cat and cat in CATEGORY_PROMPTS:
+                    category_instructions += f"\nFor '{cat}' posts: {CATEGORY_PROMPTS[cat]['caption']}"
+
             system_prompt = f"""You are a social media content creator for Mirai Skin, a premium K-Beauty retailer.
-Brand voice guide: {voice_guide}
+
+{MIRAI_BRAND_VOICE}
+
+Profile voice analysis: {voice_guide}
 
 STRATEGY: {strategy.title}
 HASHTAG STRATEGY: {json.dumps(strategy.hashtag_strategy)}
 
+CATEGORY-SPECIFIC INSTRUCTIONS:{category_instructions}
+
+HOW INSTAGRAM WORKS (you must follow these rules):
+- Feed posts (photo, carousel): The IMAGE is a pure photograph. NO text, labels, captions, or
+  watermarks on the image. The caption is a separate text field that appears below the image.
+- Stories: The IMAGE is a clean background. Instagram's native stickers (polls, questions,
+  links, countdowns, music, location) are added on top by the user in the app.
+  Describe the sticker suggestions in ig_overlays, not in the image itself.
+- Reels: The VIDEO is the content. Text overlays can be described but are added via
+  Instagram's text tool, not burned into the video.
+- visual_direction MUST describe only what the PHOTOGRAPH should look like — never include
+  instructions to render text, logos, labels, or Instagram UI elements on the image.
+
 Generate Instagram posts from the content briefs below. Each post must:
+- Follow the brand voice rules strictly (max 3 emojis, no ALL CAPS, soft CTAs)
 - Reference the specific product BY NAME in the caption
 - Match the content_category angle in tone and structure
-- Include the visual_style direction in the visual_direction field
+- Include the visual_style direction in the visual_direction field (photography only, no text on image)
 - For reels: describe motion/action in visual_direction
 - Include relevant hashtags from the strategy
+- Place hashtags at the end, separated by a line break
+- For stories: suggest ig_overlays (link stickers, polls, questions, etc.)
 
 Return valid JSON."""
 
@@ -1934,14 +2147,26 @@ Return JSON:
       "post_type": "photo|reel|carousel|story",
       "content_category": "the category from the brief",
       "caption": "Full caption mentioning the product by name, with hashtags",
-      "visual_direction": "Detailed visual description combining the brief's visual_style with the product and caption context",
+      "visual_direction": "Describe ONLY the photograph — subject, lighting, composition, mood. Never include text or labels to render on the image.",
       "scheduled_date": "YYYY-MM-DD from the brief",
       "scheduled_time": "HH:MM from the brief",
       "product_ids": ["shopify_gid from the brief"],
-      "link_url": "UTM link to the product"
+      "link_url": "UTM link to the product",
+      "ig_overlays": [
+        {{"type": "link_sticker", "label": "Shop Now", "url": "product UTM link"}},
+        {{"type": "poll", "question": "...", "options": ["...", "..."]}},
+        {{"type": "question", "prompt": "Ask us anything about..."}},
+        {{"type": "countdown", "name": "Launch day!"}},
+        {{"type": "mention", "username": "@miraiskin"}},
+        {{"type": "location", "name": "Seoul, Korea"}}
+      ]
     }}
   ]
-}}"""
+}}
+
+IMPORTANT: ig_overlays are OPTIONAL — include them only for stories and posts where interactive
+elements make sense. For regular photo/carousel posts, you may include a link_sticker only.
+The visual_direction must NEVER mention rendering text or UI elements on the photograph."""
 
             result = json.loads(self._call_ai(system_prompt, user_prompt, max_tokens=4000))
             posts_data = result.get("posts", [])
@@ -1951,6 +2176,14 @@ Return JSON:
                 if p_data.get("scheduled_date"):
                     time_str = p_data.get("scheduled_time", "10:00")
                     scheduled_dt = f"{p_data['scheduled_date']}T{time_str}:00Z"
+
+                # Resolve ig_overlays: AI-generated > category defaults
+                ig_overlays = p_data.get("ig_overlays")
+                if not ig_overlays:
+                    cat = p_data.get("content_category", "")
+                    if cat in CATEGORY_PROMPTS and CATEGORY_PROMPTS[cat].get("story_overlays"):
+                        if p_data.get("post_type") == "story":
+                            ig_overlays = CATEGORY_PROMPTS[cat]["story_overlays"]
 
                 post = Post(
                     id=str(uuid_lib.uuid4()),
@@ -1969,6 +2202,7 @@ Return JSON:
                     utm_medium="organic",
                     utm_campaign=campaign_slug,
                     scheduled_at=scheduled_dt,
+                    ig_overlays=ig_overlays,
                 )
                 await self.storage.save_post_async(post)
                 created_posts.append(post)
@@ -2089,11 +2323,15 @@ Return JSON:
         await self.storage.save_post_async(post)
         return post
 
-    async def _generate_image(self, visual_direction: str, post_type: str, engine: str = "gemini", caption: str = "") -> tuple:
+    async def _generate_image(self, visual_direction: str, post_type: str, engine: str = "gemini",
+                               caption: str = "", product_image_url: str = "") -> tuple:
         """Generate an image. engine: 'gemini' (default, no fallback), or 'dalle'.
         Returns (b64_data, thumbnail, format, engine_used)."""
         if engine == "gemini":
-            result = await self._generate_image_gemini(visual_direction, post_type, caption=caption)
+            result = await self._generate_image_gemini(
+                visual_direction, post_type, caption=caption,
+                product_image_url=product_image_url,
+            )
             if result[0]:
                 print("[SocialMediaAgent] Image generated via Gemini")
                 return result + ("gemini",)
@@ -2107,21 +2345,31 @@ Return JSON:
 
         return None, None, None, None
 
-    async def _generate_image_gemini(self, visual_direction: str, post_type: str, caption: str = "") -> tuple:
-        """Generate image using Google Gemini for natural lifestyle/product photography."""
+    async def _generate_image_gemini(self, visual_direction: str, post_type: str,
+                                     caption: str = "", product_image_url: str = "") -> tuple:
+        """Generate image using Google Gemini for natural lifestyle/product photography.
+        When product_image_url is provided, downloads it and sends as reference."""
         api_key = self.gemini_api_key or os.getenv("GEMINI_API_KEY")
         if not api_key:
             return None, None, None
 
         aspect = "9:16" if post_type in ("story", "reel") else "1:1"
 
-        # Extract first sentence of caption (strip hashtags) for context
+        # Extract the subject/mood from the caption (without quoting it — that causes text rendering)
         caption_context = ""
         if caption:
             clean_caption = re.sub(r'#\S+', '', caption).strip()
+            # Take just the first sentence and describe it as mood/subject, not literal text
             first_sentence = clean_caption.split('.')[0].strip()
-            if first_sentence:
-                caption_context = f' The image should match this caption message: "{first_sentence}".'
+            if first_sentence and len(first_sentence) > 10:
+                caption_context = f" The mood and subject of the image should evoke: {first_sentence}."
+
+        product_ref_instruction = ""
+        if product_image_url:
+            product_ref_instruction = (
+                " The product shown must be THIS exact product (see reference image). "
+                "Do NOT change the product packaging, label, or colors."
+            )
 
         prompt = (
             f"Professional Instagram photo for a premium K-Beauty skincare brand called Mirai Skin. "
@@ -2131,7 +2379,26 @@ Return JSON:
             f"NOT an AI collage or digital art. Think Glossier or Aesop brand photography. "
             f"Aspect ratio: {aspect}."
             f"{caption_context}"
+            f"{product_ref_instruction}"
+            f"\n\n{INSTAGRAM_IMAGE_RULES}"
         )
+
+        # Build content parts: text + optional reference image
+        parts = [{"text": prompt}]
+        if product_image_url:
+            try:
+                async with httpx.AsyncClient(timeout=30) as dl_client:
+                    img_resp = await dl_client.get(product_image_url, follow_redirects=True)
+                    if img_resp.status_code == 200:
+                        content_type = img_resp.headers.get("content-type", "image/jpeg")
+                        mime_type = content_type.split(";")[0].strip()
+                        if not mime_type.startswith("image/"):
+                            mime_type = "image/jpeg"
+                        b64_ref = base64.b64encode(img_resp.content).decode("utf-8")
+                        parts.append({"inlineData": {"mimeType": mime_type, "data": b64_ref}})
+                        print(f"[Gemini Image] Product reference image attached ({len(img_resp.content)} bytes)")
+            except Exception as e:
+                print(f"[Gemini Image] Could not download product reference image: {e}")
 
         try:
             async with httpx.AsyncClient(timeout=90) as client:
@@ -2140,7 +2407,7 @@ Return JSON:
                     "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent",
                     params={"key": api_key},
                     json={
-                        "contents": [{"parts": [{"text": prompt}]}],
+                        "contents": [{"parts": parts}],
                         "generationConfig": {
                             "responseModalities": ["IMAGE", "TEXT"],
                         },
@@ -2228,7 +2495,7 @@ Return JSON:
                         "instances": [{"prompt": prompt}],
                         "parameters": {
                             "aspectRatio": "9:16",
-                            "durationSeconds": "5",
+                            "durationSeconds": 5,
                             "personGeneration": "dont_allow",
                         },
                     },
@@ -2298,6 +2565,35 @@ Return JSON:
 
         return None, None, None
 
+    async def _get_product_images(self, product_ids: List[str]) -> List[Dict]:
+        """Look up product images from DB for the given Shopify GIDs.
+        Returns [{title, featured_image_url, images: [{url, altText}]}]"""
+        if not product_ids or not DATABASE_AVAILABLE:
+            return []
+
+        try:
+            from database.connection import get_db
+            from database.models import Product
+            from sqlalchemy import select
+
+            async with get_db() as db:
+                result = await db.execute(
+                    select(Product).where(Product.shopify_gid.in_(product_ids))
+                )
+                rows = result.scalars().all()
+                return [
+                    {
+                        "title": row.title,
+                        "featured_image_url": row.featured_image_url or "",
+                        "images": row.images or [],
+                    }
+                    for row in rows
+                    if row.featured_image_url
+                ]
+        except Exception as e:
+            print(f"[SocialMediaAgent] _get_product_images failed: {e}")
+            return []
+
     async def generate_media_for_post(self, post_uuid: str, engine: str = "gemini") -> Post:
         """Generate AI image/video for a post using its visual_direction + caption.
         engine: 'gemini' (default, no DALL-E fallback), 'dalle' (explicit)."""
@@ -2309,9 +2605,56 @@ Return JSON:
 
         caption = post.caption or ""
 
-        if post.post_type == "reel":
+        # Enhance visual_direction with category-specific prompts
+        visual_direction = post.visual_direction
+        if post.content_category and post.content_category in CATEGORY_PROMPTS:
+            cat_visual = CATEGORY_PROMPTS[post.content_category]["visual"]
+            visual_direction = f"{cat_visual} {visual_direction}"
+
+        # Look up product images for reference
+        product_image_url = ""
+        if post.product_ids:
+            try:
+                product_images = await self._get_product_images(post.product_ids)
+                if product_images:
+                    product_image_url = product_images[0].get("featured_image_url", "")
+            except Exception as e:
+                print(f"[SocialMediaAgent] Product image lookup failed: {e}")
+
+        if post.post_type == "carousel":
+            # Generate multiple images for carousel
+            slides = []
+            cat = post.content_category or ""
+            if cat in CATEGORY_PROMPTS and CATEGORY_PROMPTS[cat].get("carousel_slides"):
+                slide_prompts = CATEGORY_PROMPTS[cat]["carousel_slides"]
+            else:
+                slide_prompts = [
+                    "Hero product shot — clean background, product centered",
+                    "Product in use — lifestyle context, hands applying product",
+                    "Results/texture — close-up of product texture or skin result",
+                ]
+
+            for slide_prompt in slide_prompts:
+                augmented_direction = f"{visual_direction}. {slide_prompt}"
+                img, thumb, fmt = await self._generate_image_gemini(
+                    augmented_direction, "photo", caption=caption,
+                    product_image_url=product_image_url,
+                )
+                if img:
+                    slides.append({"data": img, "thumbnail": thumb, "format": fmt})
+
+            if slides:
+                post.media_data = slides[0]["data"]
+                post.media_thumbnail = slides[0]["thumbnail"]
+                post.media_data_format = slides[0]["format"]
+                post.media_carousel = slides
+                post.media_type = "CAROUSEL_ALBUM"
+            else:
+                raise ValueError(f"Carousel image generation failed (engine={engine}).")
+
+        elif post.post_type == "reel":
             # Try Gemini video first, fall back to image (but flag media_type)
-            video_data, video_thumb, video_fmt = await self._generate_video(post.visual_direction, caption=caption)
+            video_data, video_thumb, video_fmt = await self._generate_video(visual_direction, caption=caption)
             if video_data:
                 post.media_data = video_data
                 post.media_thumbnail = video_thumb
@@ -2319,7 +2662,10 @@ Return JSON:
                 post.media_type = "VIDEO"
             else:
                 # Fallback to image but set media_type=IMAGE to flag in UI
-                img, thumb, fmt, _engine = await self._generate_image(post.visual_direction, post.post_type, engine, caption=caption)
+                img, thumb, fmt, _engine = await self._generate_image(
+                    visual_direction, post.post_type, engine, caption=caption,
+                    product_image_url=product_image_url,
+                )
                 if not img:
                     raise ValueError(f"Image generation failed (engine={engine}). Check GEMINI_API_KEY is configured.")
                 post.media_data = img
@@ -2327,7 +2673,10 @@ Return JSON:
                 post.media_data_format = fmt
                 post.media_type = "IMAGE"
         else:
-            img, thumb, fmt, _engine = await self._generate_image(post.visual_direction, post.post_type, engine, caption=caption)
+            img, thumb, fmt, _engine = await self._generate_image(
+                visual_direction, post.post_type, engine, caption=caption,
+                product_image_url=product_image_url,
+            )
             if not img:
                 raise ValueError(f"Image generation failed (engine={engine}). Check GEMINI_API_KEY is configured.")
             post.media_data = img
@@ -2463,7 +2812,14 @@ Return JSON:
         synced = 0
 
         try:
-            publisher = InstagramPublisher()
+            connection = await self.storage.get_active_connection_async("instagram")
+            if connection and connection.get("access_token"):
+                publisher = InstagramPublisher(
+                    access_token=connection["access_token"],
+                    ig_account_id=connection.get("ig_account_id"),
+                )
+            else:
+                publisher = InstagramPublisher()
         except ValueError:
             return 0
 
@@ -2495,7 +2851,14 @@ Return JSON:
     async def sync_account_insights(self, days: int = 30) -> int:
         """Sync account-level daily metrics from Instagram Insights API."""
         try:
-            publisher = InstagramPublisher()
+            connection = await self.storage.get_active_connection_async("instagram")
+            if connection and connection.get("access_token"):
+                publisher = InstagramPublisher(
+                    access_token=connection["access_token"],
+                    ig_account_id=connection.get("ig_account_id"),
+                )
+            else:
+                publisher = InstagramPublisher()
             ig_account_id = await publisher.get_ig_account_id()
         except Exception as e:
             print(f"[SocialMediaAgent] Cannot sync account insights: {e}")

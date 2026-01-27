@@ -140,6 +140,13 @@ export default function SocialMedia() {
   // Media generation state
   const [generatingMedia, setGeneratingMedia] = useState(false);
 
+  // Bulk selection state
+  const [selectedStrategies, setSelectedStrategies] = useState(new Set());
+  const [selectedPosts, setSelectedPosts] = useState(new Set());
+
+  // Carousel state
+  const [carouselSlide, setCarouselSlide] = useState(0);
+
   // Profile/voice state
   const [analyzingVoice, setAnalyzingVoice] = useState(false);
 
@@ -390,6 +397,56 @@ export default function SocialMedia() {
     }
   };
 
+  const bulkDeleteStrategies = async () => {
+    if (selectedStrategies.size === 0) return;
+    if (!confirm(`Delete ${selectedStrategies.size} strategies? This cannot be undone.`)) return;
+    try {
+      const data = await apiFetch("/social-media/strategies/bulk", {
+        method: "DELETE",
+        body: JSON.stringify({ ids: [...selectedStrategies] }),
+      });
+      toast({ title: "Strategies Deleted", description: `${data.deleted} strategies removed` });
+      setSelectedStrategies(new Set());
+      fetchStrategies();
+    } catch (e) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    }
+  };
+
+  const bulkDeletePosts = async () => {
+    if (selectedPosts.size === 0) return;
+    if (!confirm(`Delete ${selectedPosts.size} posts? This cannot be undone.`)) return;
+    try {
+      const data = await apiFetch("/social-media/posts/bulk", {
+        method: "DELETE",
+        body: JSON.stringify({ ids: [...selectedPosts] }),
+      });
+      toast({ title: "Posts Deleted", description: `${data.deleted} posts removed` });
+      setSelectedPosts(new Set());
+      fetchPosts();
+    } catch (e) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    }
+  };
+
+  const toggleStrategySelection = (id) => {
+    setSelectedStrategies(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const togglePostSelection = (id) => {
+    setSelectedPosts(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   const analyzeVoice = async () => {
     setAnalyzingVoice(true);
     try {
@@ -454,6 +511,7 @@ export default function SocialMedia() {
       const data = await apiFetch(`/social-media/post/${uuid}/generate-media`, { method: "POST" });
       toast({ title: "Image Generated", description: "AI image created successfully" });
       fetchPosts();
+      setCarouselSlide(0);
       if (postDetailOpen && selectedPost?.id === uuid) {
         setSelectedPost(data.post);
       }
@@ -628,12 +686,34 @@ export default function SocialMedia() {
             </Card>
           ) : (
             <div className="grid gap-4">
+              {strategies.length > 1 && (
+                <div className="flex items-center gap-2 px-1">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-gray-300"
+                    checked={selectedStrategies.size === strategies.length && strategies.length > 0}
+                    onChange={(e) => {
+                      if (e.target.checked) setSelectedStrategies(new Set(strategies.map(s => s.id)));
+                      else setSelectedStrategies(new Set());
+                    }}
+                  />
+                  <span className="text-xs text-gray-500">Select All ({strategies.length})</span>
+                </div>
+              )}
               {strategies.map(s => (
-                <Card key={s.id} className="hover:shadow-md transition-shadow cursor-pointer"
+                <Card key={s.id} className={`hover:shadow-md transition-shadow cursor-pointer ${selectedStrategies.has(s.id) ? "ring-2 ring-indigo-400" : ""}`}
                       onClick={() => { setSelectedStrategy(s); setStrategyDetailOpen(true); }}>
                   <CardContent className="py-4">
                     <div className="flex items-start justify-between">
-                      <div className="flex-1">
+                      <div className="flex items-start gap-3 flex-1">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 mt-1 rounded border-gray-300 shrink-0"
+                          checked={selectedStrategies.has(s.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={() => toggleStrategySelection(s.id)}
+                        />
+                        <div className="flex-1">
                         <div className="flex items-center gap-2 mb-1">
                           <h3 className="font-semibold">{s.title}</h3>
                           <StatusBadge status={s.status} />
@@ -644,7 +724,8 @@ export default function SocialMedia() {
                           {s.goals && <span><Target className="h-3 w-3 inline mr-1" />{s.goals.join(", ")}</span>}
                         </div>
                       </div>
-                      <div className="flex gap-1 ml-4">
+                      </div>
+                      <div className="flex gap-1 ml-4 shrink-0">
                         {s.status === "pending_review" && (
                           <>
                             <Button size="sm" variant="outline" className="text-green-600"
@@ -672,6 +753,19 @@ export default function SocialMedia() {
                   </CardContent>
                 </Card>
               ))}
+            </div>
+          )}
+
+          {/* Floating action bar for bulk strategy selection */}
+          {selectedStrategies.size > 0 && (
+            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-white border shadow-lg rounded-full px-6 py-3 flex items-center gap-4">
+              <span className="text-sm font-medium">{selectedStrategies.size} selected</span>
+              <Button size="sm" variant="destructive" onClick={bulkDeleteStrategies}>
+                <Trash2 className="h-4 w-4 mr-1" /> Delete Selected
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setSelectedStrategies(new Set())}>
+                Clear
+              </Button>
             </div>
           )}
 
@@ -1034,30 +1128,63 @@ export default function SocialMedia() {
             </Card>
           ) : (
             <div className="grid gap-3">
+              {filteredPosts.length > 1 && (
+                <div className="flex items-center gap-2 px-1">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-gray-300"
+                    checked={selectedPosts.size === filteredPosts.length && filteredPosts.length > 0}
+                    onChange={(e) => {
+                      if (e.target.checked) setSelectedPosts(new Set(filteredPosts.map(p => p.id)));
+                      else setSelectedPosts(new Set());
+                    }}
+                  />
+                  <span className="text-xs text-gray-500">Select All ({filteredPosts.length})</span>
+                </div>
+              )}
               {filteredPosts.map(p => (
-                <Card key={p.id} className="hover:shadow-md transition-shadow">
+                <Card key={p.id} className={`hover:shadow-md transition-shadow ${selectedPosts.has(p.id) ? "ring-2 ring-indigo-400" : ""}`}>
                   <CardContent className="py-3">
                     <div className="flex items-start gap-3">
+                      {/* Selection checkbox */}
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 mt-1 rounded border-gray-300 shrink-0"
+                        checked={selectedPosts.has(p.id)}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={() => togglePostSelection(p.id)}
+                      />
+
                       {/* Thumbnail or type indicator */}
-                      {p.media_thumbnail ? (
-                        <img
-                          src={`data:image/jpeg;base64,${p.media_thumbnail}`}
-                          alt=""
-                          className="w-16 h-16 rounded-lg object-cover shrink-0 border"
-                        />
-                      ) : (
-                        <div className={`${POST_TYPE_COLORS[p.post_type] || "bg-gray-400"} w-16 h-16 rounded-lg flex flex-col items-center justify-center shrink-0 gap-1`}>
-                          <PostTypeIcon type={p.post_type} className="h-5 w-5 text-white" />
-                          {p.visual_direction && (
-                            <button
-                              className="text-[9px] text-white/80 hover:text-white underline"
-                              onClick={(e) => { e.stopPropagation(); generateMediaForPost(p.id); }}
-                            >
-                              {generatingMedia ? "..." : "Gen"}
-                            </button>
-                          )}
-                        </div>
-                      )}
+                      <div className="relative shrink-0">
+                        {p.media_thumbnail ? (
+                          <img
+                            src={`data:image/jpeg;base64,${p.media_thumbnail}`}
+                            alt=""
+                            className="w-16 h-16 rounded-lg object-cover border"
+                          />
+                        ) : (
+                          <div className={`${POST_TYPE_COLORS[p.post_type] || "bg-gray-400"} w-16 h-16 rounded-lg flex flex-col items-center justify-center gap-1`}>
+                            <PostTypeIcon type={p.post_type} className="h-5 w-5 text-white" />
+                            {p.visual_direction && (
+                              <button
+                                className="text-[9px] text-white/80 hover:text-white underline"
+                                onClick={(e) => { e.stopPropagation(); generateMediaForPost(p.id); }}
+                              >
+                                {generatingMedia ? "..." : "Gen"}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        {/* Carousel slide indicator dots */}
+                        {p.media_carousel && p.media_carousel.length > 1 && (
+                          <div className="flex gap-0.5 justify-center mt-1">
+                            {p.media_carousel.map((_, i) => (
+                              <div key={i} className="w-1.5 h-1.5 rounded-full bg-gray-400" />
+                            ))}
+                          </div>
+                        )}
+                      </div>
 
                       {/* Content */}
                       <div className="flex-1 min-w-0">
@@ -1087,7 +1214,7 @@ export default function SocialMedia() {
 
                       {/* Actions */}
                       <div className="flex gap-1 shrink-0">
-                        <Button size="sm" variant="ghost" onClick={() => { setSelectedPost(p); setPostDetailOpen(true); }}>
+                        <Button size="sm" variant="ghost" onClick={() => { setSelectedPost(p); setCarouselSlide(0); setPostDetailOpen(true); }}>
                           <Eye className="h-4 w-4" />
                         </Button>
                         {(p.status === "draft" || p.status === "rejected") && (
@@ -1122,6 +1249,19 @@ export default function SocialMedia() {
                   </CardContent>
                 </Card>
               ))}
+            </div>
+          )}
+
+          {/* Floating action bar for bulk post selection */}
+          {selectedPosts.size > 0 && (
+            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-white border shadow-lg rounded-full px-6 py-3 flex items-center gap-4">
+              <span className="text-sm font-medium">{selectedPosts.size} selected</span>
+              <Button size="sm" variant="destructive" onClick={bulkDeletePosts}>
+                <Trash2 className="h-4 w-4 mr-1" /> Delete Selected
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setSelectedPosts(new Set())}>
+                Clear
+              </Button>
             </div>
           )}
         </TabsContent>
@@ -1842,32 +1982,73 @@ export default function SocialMedia() {
                 {(() => {
                   const hasGeneratedMedia = !!(selectedPost.media_data_format || selectedPost.media_thumbnail);
                   const mediaApiUrl = `${API_URL}/social-media/media/${selectedPost.id}`;
+                  const isCarousel = selectedPost.media_carousel && selectedPost.media_carousel.length > 1;
+                  const slideCount = isCarousel ? selectedPost.media_carousel.length : 1;
 
                   if (hasGeneratedMedia) {
+                    // Build the current slide URL and thumbnail
+                    const currentSlideUrl = carouselSlide > 0
+                      ? `${mediaApiUrl}?slide=${carouselSlide}`
+                      : mediaApiUrl;
+                    const currentThumb = isCarousel && selectedPost.media_carousel[carouselSlide]
+                      ? selectedPost.media_carousel[carouselSlide].thumbnail
+                      : selectedPost.media_thumbnail;
+
                     return (
                       <div>
-                        <Label className="text-xs text-gray-500 mb-2 block">Media Preview</Label>
-                        <div className="bg-gray-100 rounded-lg overflow-hidden flex items-center justify-center"
+                        <Label className="text-xs text-gray-500 mb-2 block">
+                          Media Preview {isCarousel && `(Slide ${carouselSlide + 1} of ${slideCount})`}
+                        </Label>
+                        <div className="relative bg-gray-100 rounded-lg overflow-hidden flex items-center justify-center"
                              style={{ maxHeight: "400px" }}>
                           {selectedPost.media_data_format === "mp4" ? (
                             <video src={mediaApiUrl} controls className="max-h-[400px] rounded-lg" />
                           ) : (
                             <img
-                              src={selectedPost.media_thumbnail ? `data:image/jpeg;base64,${selectedPost.media_thumbnail}` : mediaApiUrl}
-                              alt="Post preview"
+                              src={currentThumb ? `data:image/jpeg;base64,${currentThumb}` : currentSlideUrl}
+                              alt={`Post preview${isCarousel ? ` slide ${carouselSlide + 1}` : ""}`}
                               className="max-h-[400px] rounded-lg object-contain cursor-pointer"
-                              onClick={() => window.open(mediaApiUrl, '_blank')}
+                              onClick={() => window.open(currentSlideUrl, '_blank')}
                               title="Click to view full resolution"
                             />
                           )}
+                          {/* Carousel navigation arrows */}
+                          {isCarousel && (
+                            <>
+                              <button
+                                className="absolute left-2 top-1/2 -translate-y-1/2 bg-white/80 hover:bg-white rounded-full p-1.5 shadow"
+                                onClick={(e) => { e.stopPropagation(); setCarouselSlide((carouselSlide - 1 + slideCount) % slideCount); }}
+                              >
+                                <ChevronLeft className="h-5 w-5" />
+                              </button>
+                              <button
+                                className="absolute right-2 top-1/2 -translate-y-1/2 bg-white/80 hover:bg-white rounded-full p-1.5 shadow"
+                                onClick={(e) => { e.stopPropagation(); setCarouselSlide((carouselSlide + 1) % slideCount); }}
+                              >
+                                <ChevronRight className="h-5 w-5" />
+                              </button>
+                            </>
+                          )}
                         </div>
+                        {/* Carousel dots */}
+                        {isCarousel && (
+                          <div className="flex gap-1.5 justify-center mt-2">
+                            {selectedPost.media_carousel.map((_, i) => (
+                              <button
+                                key={i}
+                                className={`w-2.5 h-2.5 rounded-full transition-colors ${i === carouselSlide ? "bg-indigo-600" : "bg-gray-300 hover:bg-gray-400"}`}
+                                onClick={() => setCarouselSlide(i)}
+                              />
+                            ))}
+                          </div>
+                        )}
                         <div className="mt-2 flex gap-2">
                           <Button size="sm" variant="outline" onClick={() => generateMediaForPost(selectedPost.id)}
                                   disabled={generatingMedia}>
                             {generatingMedia ? <RotateCw className="h-4 w-4 animate-spin mr-1" /> : <RefreshCw className="h-4 w-4 mr-1" />}
                             {generatingMedia ? "Generating..." : "Regenerate Image"}
                           </Button>
-                          <Button size="sm" variant="ghost" className="text-xs" onClick={() => window.open(mediaApiUrl, '_blank')}>
+                          <Button size="sm" variant="ghost" className="text-xs" onClick={() => window.open(currentSlideUrl, '_blank')}>
                             <ExternalLink className="h-3 w-3 mr-1" /> Full Size
                           </Button>
                         </div>
@@ -1903,6 +2084,57 @@ export default function SocialMedia() {
                   <div>
                     <Label className="text-xs text-gray-500">Visual Direction</Label>
                     <div className="bg-blue-50 rounded-lg p-3 text-sm">{selectedPost.visual_direction}</div>
+                  </div>
+                )}
+                {selectedPost.ig_overlays && selectedPost.ig_overlays.length > 0 && (
+                  <div>
+                    <Label className="text-xs text-gray-500">Instagram Overlays / Stickers</Label>
+                    <div className="bg-purple-50 rounded-lg p-3 space-y-2">
+                      {selectedPost.ig_overlays.map((overlay, i) => {
+                        const overlayIcons = {
+                          link_sticker: <Link className="h-3.5 w-3.5" />,
+                          poll: <BarChart3 className="h-3.5 w-3.5" />,
+                          question: <MessageCircle className="h-3.5 w-3.5" />,
+                          countdown: <Clock className="h-3.5 w-3.5" />,
+                          mention: <Users className="h-3.5 w-3.5" />,
+                          location: <Globe className="h-3.5 w-3.5" />,
+                        };
+                        const icon = overlayIcons[overlay.type] || <Layers className="h-3.5 w-3.5" />;
+                        return (
+                          <div key={i} className="flex items-start gap-2 text-sm">
+                            <span className="mt-0.5 text-purple-600">{icon}</span>
+                            <div>
+                              <span className="font-medium capitalize text-purple-800">
+                                {overlay.type?.replace(/_/g, " ")}
+                              </span>
+                              {overlay.label && (
+                                <span className="text-purple-600 ml-1">— {overlay.label}</span>
+                              )}
+                              {overlay.url && (
+                                <span className="text-purple-500 ml-1 text-xs break-all">({overlay.url})</span>
+                              )}
+                              {overlay.question && (
+                                <span className="text-purple-600 ml-1">— "{overlay.question}"</span>
+                              )}
+                              {overlay.options && (
+                                <span className="text-purple-500 ml-1 text-xs">
+                                  [{overlay.options.join(" / ")}]
+                                </span>
+                              )}
+                              {overlay.handle && (
+                                <span className="text-purple-600 ml-1">@{overlay.handle}</span>
+                              )}
+                              {overlay.name && !overlay.label && (
+                                <span className="text-purple-600 ml-1">— {overlay.name}</span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      <p className="text-xs text-purple-400 mt-1">
+                        Add these using Instagram's native sticker tools when posting Stories
+                      </p>
+                    </div>
                   </div>
                 )}
                 <div className="grid grid-cols-2 gap-4 text-sm">

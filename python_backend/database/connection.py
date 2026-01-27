@@ -251,6 +251,24 @@ async def init_db():
                     END IF;
                 END $$;
                 """,
+                # Add media_carousel column to social_media_posts
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'social_media_posts' AND column_name = 'media_carousel') THEN
+                        ALTER TABLE social_media_posts ADD COLUMN media_carousel JSONB;
+                    END IF;
+                END $$;
+                """,
+                # Add ig_overlays column to social_media_posts
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'social_media_posts' AND column_name = 'ig_overlays') THEN
+                        ALTER TABLE social_media_posts ADD COLUMN ig_overlays JSONB;
+                    END IF;
+                END $$;
+                """,
             ]
 
             for migration in migrations:

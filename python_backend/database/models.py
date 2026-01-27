@@ -593,6 +593,8 @@ class SocialMediaPost(Base):
     media_data = Column(Text, nullable=True)        # base64-encoded full image
     media_data_format = Column(String(10), nullable=True)  # "png", "jpeg", "mp4"
     media_thumbnail = Column(Text, nullable=True)    # base64 JPEG thumbnail (256px)
+    media_carousel = Column(JSON, nullable=True)     # [{data: b64, thumbnail: b64, format: str}]
+    ig_overlays = Column(JSON, nullable=True)        # [{type: "link_sticker"|"poll"|"question"|..., ...}]
     product_ids = Column(JSON)  # Linked Shopify product GIDs
     link_url = Column(Text)  # Website link with UTM params
     utm_source = Column(String(50), default='instagram')
