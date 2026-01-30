@@ -612,6 +612,7 @@ class SocialMediaStorage:
                 if post.media_thumbnail is not None:
                     existing.media_thumbnail = post.media_thumbnail
                 if post.media_carousel is not None:
+                    print(f"[_save_post_db] Updating existing post {post.id}: media_carousel has {len(post.media_carousel)} slides")
                     existing.media_carousel = post.media_carousel
                 if post.ig_overlays is not None:
                     existing.ig_overlays = post.ig_overlays
@@ -2783,7 +2784,19 @@ Return JSON:
         post.media_url = f"{base_url}/api/social-media/media/{post.id}"
         post.updated_at = datetime.utcnow().isoformat() + "Z"
 
+        # Debug: verify carousel before save
+        if post.media_carousel:
+            print(f"[SocialMediaAgent] PRE-SAVE: media_carousel has {len(post.media_carousel)} slides")
+
         await self.storage.save_post_async(post)
+
+        # Debug: verify carousel after save - re-fetch from DB to confirm persistence
+        saved_post = await self.storage.get_post_async(post.id)
+        if saved_post and saved_post.media_carousel:
+            print(f"[SocialMediaAgent] POST-SAVE (from DB): media_carousel has {len(saved_post.media_carousel)} slides")
+        elif saved_post:
+            print(f"[SocialMediaAgent] POST-SAVE (from DB): media_carousel is EMPTY or None")
+
         return post
 
     def build_utm_link(self, product_url: str, campaign: str, post_uuid: Optional[str] = None) -> str:
