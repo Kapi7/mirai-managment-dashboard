@@ -1905,13 +1905,31 @@ Return JSON:
                 lines.append(f"  {i+1}. {bs.get('product_title', 'Unknown')} — ${bs.get('total_sales', 0):.0f} revenue, {bs.get('total_qty', 0)} units")
             bestseller_summary = "TOP BESTSELLERS (last 30 days):\n" + "\n".join(lines)
 
+        # Group products by brand for better AI visibility
         catalog_summary = ""
         if product_catalog:
-            lines = []
-            for p in product_catalog[:20]:
-                price_str = f"${p['price_min']}" if p.get('price_min') else "N/A"
-                lines.append(f"  - {p['title']} (handle: {p['handle']}, type: {p.get('product_type','')}, price: {price_str}, gid: {p['shopify_gid']})")
-            catalog_summary = "PRODUCT CATALOG:\n" + "\n".join(lines)
+            # Extract brand from product title (usually first word before space or first part)
+            brands = {}
+            for p in product_catalog:
+                title = p.get('title', '')
+                # Common K-Beauty brands - extract from title
+                brand = title.split()[0] if title else "Other"
+                # Handle multi-word brands
+                for known_brand in ["Beauty of Joseon", "COSRX", "Torriden", "Abib", "Anua", "Numbuzin", "Skin1004", "Isntree", "Mixsoon", "Haruharu"]:
+                    if title.startswith(known_brand):
+                        brand = known_brand
+                        break
+                if brand not in brands:
+                    brands[brand] = []
+                brands[brand].append(p)
+
+            lines = ["PRODUCT CATALOG BY BRAND (you MUST use products from different brands each day):"]
+            for brand, products in sorted(brands.items()):
+                lines.append(f"\n  [{brand}] - {len(products)} products:")
+                for p in products[:5]:  # Show up to 5 products per brand
+                    price_str = f"${p['price_min']}" if p.get('price_min') else "N/A"
+                    lines.append(f"    • {p['title']} (handle: {p['handle']}, gid: {p['shopify_gid']})")
+            catalog_summary = "\n".join(lines)
 
         system_prompt = f"""You are a social media strategist for Mirai Skin, a premium K-Beauty retailer.
 Create a detailed Instagram content strategy that is a CONTENT MAP — every day gets specific content briefs
@@ -2045,7 +2063,7 @@ INSTRUCTIONS: {type_instructions.get(post_type, type_instructions['photo'])}
 {product_context}
 {f'TOPIC HINT: {topic_hint}' if topic_hint else ''}
 
-UTM LINK FORMAT: https://miraiskin.co/products/{{handle}}?utm_source=instagram&utm_medium=organic&utm_campaign={campaign_slug or 'general'}
+UTM LINK FORMAT: https://mirai-skin.com/products/{{handle}}?utm_source=instagram&utm_medium=organic&utm_campaign={campaign_slug or 'general'}
 
 Return JSON:
 {{
@@ -2158,7 +2176,7 @@ Return valid JSON."""
 
 {briefs_text}
 
-UTM LINK FORMAT: https://miraiskin.co/products/{{handle}}?utm_source=instagram&utm_medium=organic&utm_campaign={campaign_slug}
+UTM LINK FORMAT: https://mirai-skin.com/products/{{handle}}?utm_source=instagram&utm_medium=organic&utm_campaign={campaign_slug}
 
 Return JSON:
 {{
@@ -2255,7 +2273,7 @@ For EACH DAY in the date range, create:
 Distribute feed post times across optimal windows: 9:00, 12:00, 18:00, 20:00.
 Schedule stories at different times than the feed post (e.g., 8:00, 14:00, 21:00).
 
-UTM LINK FORMAT: https://miraiskin.co/products/{{handle}}?utm_source=instagram&utm_medium=organic&utm_campaign={campaign_slug}
+UTM LINK FORMAT: https://mirai-skin.com/products/{{handle}}?utm_source=instagram&utm_medium=organic&utm_campaign={campaign_slug}
 
 Return JSON:
 {{
