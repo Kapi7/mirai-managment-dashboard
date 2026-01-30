@@ -1500,6 +1500,10 @@ class InstagramPublisher:
             print("[InstagramPublisher] All insight metric sets failed")
             return results
 
+        # Log which metrics were actually returned
+        returned_metrics = [m.get("name") for m in data.get("data", [])]
+        print(f"[InstagramPublisher] Metrics returned: {returned_metrics}")
+
         daily_map = {}
         for metric_data in data.get("data", []):
             metric_name = metric_data.get("name", "")
@@ -1512,6 +1516,7 @@ class InstagramPublisher:
                 daily_map[end_time][metric_name] = val.get("value", 0)
 
         results = sorted(daily_map.values(), key=lambda d: d["date"])
+        print(f"[InstagramPublisher] Parsed {len(results)} days of insights")
         return results
 
     async def fetch_account_demographics(self, ig_account_id: str) -> Dict:
@@ -1927,7 +1932,10 @@ DATE RANGE: {date_range_start} to {date_range_end}
 PRODUCT FOCUS: {json.dumps(product_focus or [])}
 
 Rules for content_briefs:
-- Feature bestsellers more frequently (top 5 should appear 2-3x each across the period)
+- DIVERSIFY products — feature a DIFFERENT product from the catalog each day
+- Never feature the same product on consecutive days
+- Spread coverage across the ENTIRE catalog, not just bestsellers
+- Include at least one bestseller per week, but prioritize variety over repetition
 - Reels MUST have post_type "reel"
 - Mix content_category across the week — never repeat the same category on consecutive days
 - Each day: 1 feed post + 1-2 stories
@@ -2483,7 +2491,8 @@ Return JSON:
         thumbnail = compress_to_thumbnail(b64_data, 256)
         return b64_data, thumbnail, "png"
 
-    async def _generate_video(self, visual_direction: str, caption: str = "") -> tuple:
+    async def _generate_video(self, visual_direction: str, caption: str = "",
+                               product_name: str = "") -> tuple:
         """Generate a short video via Google Veo 2 (async long-running operation).
         Returns (b64_data, thumbnail, format) or (None, None, None)."""
         api_key = self.gemini_api_key or os.getenv("GEMINI_API_KEY")
@@ -2491,20 +2500,28 @@ Return JSON:
             print("[Veo2] No GEMINI_API_KEY configured, skipping video generation")
             return None, None, None
 
-        # Build prompt with caption context
+        # Build prompt with product context
+        product_context = ""
+        if product_name:
+            product_context = f' The video features "{product_name}" skincare product.'
+
+        # Extract subject/mood from caption (not literal text)
         caption_context = ""
         if caption:
             clean_caption = re.sub(r'#\S+', '', caption).strip()
             first_sentence = clean_caption.split('.')[0].strip()
-            if first_sentence:
-                caption_context = f' The video should match this message: "{first_sentence}".'
+            if first_sentence and len(first_sentence) > 10:
+                caption_context = f' The mood should evoke: {first_sentence}.'
 
         prompt = (
             f"A short cinematic vertical video for Instagram Reels. "
-            f"Premium K-Beauty skincare brand aesthetic. {visual_direction}. "
+            f"Premium K-Beauty skincare brand aesthetic.{product_context} {visual_direction}. "
             f"Smooth slow motion, natural soft lighting, clean minimal background. "
             f"Editorial product video style — think Glossier or Aesop brand content."
             f"{caption_context}"
+            f"\n\nCRITICAL: Do NOT render any text, words, captions, titles, labels, or watermarks "
+            f"in the video. The video should be purely visual — text is added separately in Instagram's "
+            f"text tool. Show only the product, hands, skin, or environment."
         )
 
         print(f"[Veo2] Starting video generation request...")
@@ -2650,7 +2667,7 @@ Return JSON:
                 print(f"[SocialMediaAgent] Product image lookup failed: {e}")
 
         if post.post_type == "carousel":
-            # Generate multiple images for carousel
+            # Generate multiple images for carousel IN PARALLEL for speed
             slides = []
             cat = post.content_category or ""
             if cat in CATEGORY_PROMPTS and CATEGORY_PROMPTS[cat].get("carousel_slides"):
@@ -2662,15 +2679,30 @@ Return JSON:
                     "Results/texture — close-up of product texture or skin result",
                 ]
 
-            for slide_prompt in slide_prompts:
-                augmented_direction = f"{visual_direction}. {slide_prompt}"
-                img, thumb, fmt = await self._generate_image_gemini(
-                    augmented_direction, "photo", caption=caption,
-                    product_image_url=product_image_url,
-                    product_name=product_name,
-                )
-                if img:
-                    slides.append({"data": img, "thumbnail": thumb, "format": fmt})
+            print(f"[SocialMediaAgent] Generating {len(slide_prompts)} carousel slides in parallel...")
+
+            async def gen_slide(slide_prompt, idx):
+                try:
+                    augmented_direction = f"{visual_direction}. {slide_prompt}"
+                    img, thumb, fmt = await self._generate_image_gemini(
+                        augmented_direction, "photo", caption=caption,
+                        product_image_url=product_image_url,
+                        product_name=product_name,
+                    )
+                    if img:
+                        print(f"[SocialMediaAgent] Carousel slide {idx+1} generated successfully")
+                        return {"data": img, "thumbnail": thumb, "format": fmt}
+                    else:
+                        print(f"[SocialMediaAgent] Carousel slide {idx+1} generation returned None")
+                except Exception as e:
+                    print(f"[SocialMediaAgent] Carousel slide {idx+1} failed: {e}")
+                return None
+
+            # Run all slide generations in parallel
+            results = await asyncio.gather(*[gen_slide(sp, i) for i, sp in enumerate(slide_prompts)])
+            slides = [r for r in results if r is not None]
+
+            print(f"[SocialMediaAgent] Carousel complete: {len(slides)} of {len(slide_prompts)} slides generated")
 
             if slides:
                 post.media_data = slides[0]["data"]
@@ -2684,7 +2716,9 @@ Return JSON:
         elif post.post_type in ("reel", "video"):
             # Try Gemini video first, fall back to image (but flag media_type)
             print(f"[SocialMediaAgent] Attempting Veo2 video generation for post_type={post.post_type}")
-            video_data, video_thumb, video_fmt = await self._generate_video(visual_direction, caption=caption)
+            video_data, video_thumb, video_fmt = await self._generate_video(
+                visual_direction, caption=caption, product_name=product_name
+            )
             if video_data:
                 post.media_data = video_data
                 post.media_thumbnail = video_thumb
@@ -2916,17 +2950,23 @@ Return JSON:
         except Exception:
             recent_media = []
 
-        # Build per-day content counts from recent_media
+        # Build per-day content counts and engagement from recent_media
         daily_content = {}
         for media in recent_media:
             ts = media.get("timestamp", "")[:10]
             if ts:
-                daily_content.setdefault(ts, {"posts": 0, "stories": 0, "reels": 0})
+                daily_content.setdefault(ts, {
+                    "posts": 0, "stories": 0, "reels": 0,
+                    "likes": 0, "comments": 0
+                })
                 mt = media.get("media_type", "")
                 if mt == "VIDEO":
                     daily_content[ts]["reels"] += 1
                 else:
                     daily_content[ts]["posts"] += 1
+                # Aggregate engagement from media
+                daily_content[ts]["likes"] += media.get("like_count", 0) or 0
+                daily_content[ts]["comments"] += media.get("comments_count", 0) or 0
 
         # Also count from our own published posts
         try:
@@ -2952,8 +2992,11 @@ Return JSON:
             content = daily_content.get(day_date, {})
 
             # Map IGAA-specific metrics to standard fields
+            # Use accounts_engaged if available, otherwise use aggregated likes from media
             engagement = day_data.get("accounts_engaged", 0)
             follows = day_data.get("follows_and_unfollows", 0)
+            likes_from_media = content.get("likes", 0)
+            comments_from_media = content.get("comments", 0)
 
             snapshot = {
                 "date": day_date,
@@ -2964,7 +3007,8 @@ Return JSON:
                 "website_clicks": day_data.get("website_clicks", 0),
                 "follower_count": day_data.get("follower_count", current_followers),
                 "follows": follows,
-                "total_likes": engagement,  # accounts_engaged as proxy for engagement
+                "total_likes": engagement if engagement else likes_from_media,
+                "total_comments": comments_from_media,
                 "posts_published": content.get("posts", 0),
                 "stories_published": content.get("stories", 0),
                 "reels_published": content.get("reels", 0),
