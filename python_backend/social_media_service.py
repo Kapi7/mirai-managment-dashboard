@@ -1932,10 +1932,11 @@ DATE RANGE: {date_range_start} to {date_range_end}
 PRODUCT FOCUS: {json.dumps(product_focus or [])}
 
 Rules for content_briefs:
-- DIVERSIFY products — feature a DIFFERENT product from the catalog each day
-- Never feature the same product on consecutive days
-- Spread coverage across the ENTIRE catalog, not just bestsellers
-- Include at least one bestseller per week, but prioritize variety over repetition
+- WE ARE A HOUSE OF BRANDS — feature products from DIFFERENT brands across the catalog
+- NEVER repeat the same brand or product on consecutive days
+- Spread coverage across ALL brands in the catalog (Abib, Beauty of Joseon, COSRX, Torriden, etc.)
+- Each week should feature products from at least 4-5 DIFFERENT brands
+- Prioritize variety and discovery over pushing any single product or brand
 - Reels MUST have post_type "reel"
 - Mix content_category across the week — never repeat the same category on consecutive days
 - Each day: 1 feed post + 1-2 stories
@@ -2514,14 +2515,17 @@ Return JSON:
                 caption_context = f' The mood should evoke: {first_sentence}.'
 
         prompt = (
-            f"A short cinematic vertical video for Instagram Reels. "
-            f"Premium K-Beauty skincare brand aesthetic.{product_context} {visual_direction}. "
-            f"Smooth slow motion, natural soft lighting, clean minimal background. "
-            f"Editorial product video style — think Glossier or Aesop brand content."
+            f"A cinematic vertical video for Instagram Reels showing a REAL PERSON using skincare.{product_context} "
+            f"{visual_direction}. "
+            f"Show a human moment: hands applying product to face, someone doing their skincare routine, "
+            f"gentle facial massage, or morning/evening self-care ritual. "
+            f"Natural soft lighting, warm tones, real skin texture visible. "
+            f"Smooth slow motion movements. Intimate, authentic, aspirational lifestyle content. "
+            f"Think real influencer content, not stock footage."
             f"{caption_context}"
             f"\n\nCRITICAL: Do NOT render any text, words, captions, titles, labels, or watermarks "
             f"in the video. The video should be purely visual — text is added separately in Instagram's "
-            f"text tool. Show only the product, hands, skin, or environment."
+            f"text tool. Show only the product, hands, skin, face, or environment. No graphics or overlays."
         )
 
         print(f"[Veo2] Starting video generation request...")
@@ -2538,7 +2542,7 @@ Return JSON:
                         "instances": [{"prompt": prompt}],
                         "parameters": {
                             "aspectRatio": "9:16",
-                            "durationSeconds": 5,
+                            "durationSeconds": 8,
                             "personGeneration": "allow_adult",
                         },
                     },
@@ -2703,6 +2707,10 @@ Return JSON:
             slides = [r for r in results if r is not None]
 
             print(f"[SocialMediaAgent] Carousel complete: {len(slides)} of {len(slide_prompts)} slides generated")
+            for i, s in enumerate(slides):
+                has_data = bool(s.get("data"))
+                has_thumb = bool(s.get("thumbnail"))
+                print(f"[SocialMediaAgent] Slide {i+1}: data={has_data}, thumbnail={has_thumb}, format={s.get('format')}")
 
             if slides:
                 post.media_data = slides[0]["data"]
@@ -2917,25 +2925,31 @@ Return JSON:
 
     async def sync_account_insights(self, days: int = 30) -> int:
         """Sync account-level daily metrics from Instagram Insights API."""
+        print(f"[SocialMediaAgent] Starting account insights sync for {days} days...")
         try:
             connection = await self.storage.get_active_connection_async("instagram")
             if connection and connection.get("access_token"):
+                print(f"[SocialMediaAgent] Using DB connection (token type: {'IGAA' if connection['access_token'].startswith('IGAA') else 'EAA'})")
                 publisher = InstagramPublisher(
                     access_token=connection["access_token"],
                     ig_account_id=connection.get("ig_account_id"),
                 )
             else:
+                print("[SocialMediaAgent] No DB connection, using env vars")
                 publisher = InstagramPublisher()
             ig_account_id = await publisher.get_ig_account_id()
+            print(f"[SocialMediaAgent] IG Account ID: {ig_account_id}")
         except Exception as e:
             print(f"[SocialMediaAgent] Cannot sync account insights: {e}")
             return 0
 
         end_dt = date.today()
         start_dt = end_dt - timedelta(days=days)
+        print(f"[SocialMediaAgent] Fetching insights from {start_dt} to {end_dt}")
 
         # Fetch account-level insights from IG API
         daily_data = await publisher.fetch_account_insights(ig_account_id, start_dt, end_dt)
+        print(f"[SocialMediaAgent] Received {len(daily_data)} days of insight data")
 
         # Also get current follower count from profile
         try:
