@@ -1756,6 +1756,7 @@ class SocialMediaAgent:
                         "handle": p.get("handle", ""),
                         "description": (p.get("description") or "")[:200],
                         "product_type": p.get("productType", ""),
+                        "vendor": p.get("vendor", ""),  # Brand from Shopify
                         "tags": p.get("tags", []),
                         "price_min": float(price_min) if price_min else None,
                         "price_max": float(price_max) if price_max else None,
@@ -1781,6 +1782,7 @@ class SocialMediaAgent:
                     "handle": p.get("handle", ""),
                     "description": (p.get("description") or "")[:200],
                     "product_type": p.get("productType", ""),
+                    "vendor": p.get("vendor", ""),  # Brand from Shopify
                     "tags": p.get("tags", []),
                     "price_min": min(prices) if prices else None,
                     "price_max": max(prices) if prices else None,
@@ -1887,6 +1889,7 @@ Return JSON:
                         "handle": r.handle or "",
                         "description": (r.description or "")[:200],
                         "product_type": r.product_type or "",
+                        "vendor": r.vendor or "",  # Include vendor/brand from Shopify
                         "tags": r.tags or [],
                         "price_min": float(r.price_min) if r.price_min else None,
                         "price_max": float(r.price_max) if r.price_max else None,
@@ -1906,29 +1909,32 @@ Return JSON:
                 lines.append(f"  {i+1}. {bs.get('product_title', 'Unknown')} — ${bs.get('total_sales', 0):.0f} revenue, {bs.get('total_qty', 0)} units")
             bestseller_summary = "TOP BESTSELLERS (last 30 days):\n" + "\n".join(lines)
 
-        # Group products by brand for better AI visibility
+        # Group products by brand (using vendor field from Shopify)
         catalog_summary = ""
         if product_catalog:
-            # Extract brand from product title (usually first word before space or first part)
             brands = {}
             for p in product_catalog:
-                title = p.get('title', '')
-                # Common K-Beauty brands - extract from title
-                brand = title.split()[0] if title else "Other"
-                # Handle multi-word brands
-                for known_brand in ["Beauty of Joseon", "COSRX", "Torriden", "Abib", "Anua", "Numbuzin", "Skin1004", "Isntree", "Mixsoon", "Haruharu"]:
-                    if title.startswith(known_brand):
-                        brand = known_brand
-                        break
+                # Use vendor field (actual brand from Shopify), fallback to title extraction
+                brand = p.get('vendor', '').strip()
+                if not brand:
+                    title = p.get('title', '')
+                    brand = title.split()[0] if title else "Other"
+                    # Handle multi-word brands
+                    for known_brand in ["Beauty of Joseon", "COSRX", "Torriden", "Abib", "Anua", "Numbuzin", "Skin1004", "Isntree", "Mixsoon", "Haruharu"]:
+                        if title.startswith(known_brand):
+                            brand = known_brand
+                            break
                 if brand not in brands:
                     brands[brand] = []
                 brands[brand].append(p)
 
-            lines = ["PRODUCT CATALOG BY BRAND (you MUST use products from different brands each day):"]
+            # Count brands for emphasis
+            brand_count = len(brands)
+            lines = [f"PRODUCT CATALOG - {brand_count} BRANDS AVAILABLE (you MUST feature products from DIFFERENT brands):"]
+            lines.append(f"*** CRITICAL: Rotate through ALL {brand_count} brands. Never feature the same brand twice in a row! ***\n")
             for brand, products in sorted(brands.items()):
-                lines.append(f"\n  [{brand}] - {len(products)} products:")
-                for p in products[:5]:  # Show up to 5 products per brand
-                    price_str = f"${p['price_min']}" if p.get('price_min') else "N/A"
+                lines.append(f"  [{brand}] - {len(products)} products:")
+                for p in products[:8]:  # Show up to 8 products per brand for better coverage
                     lines.append(f"    • {p['title']} (handle: {p['handle']}, gid: {p['shopify_gid']})")
             catalog_summary = "\n".join(lines)
 
@@ -1951,14 +1957,18 @@ DATE RANGE: {date_range_start} to {date_range_end}
 PRODUCT FOCUS: {json.dumps(product_focus or [])}
 
 Rules for content_briefs:
-- WE ARE A HOUSE OF BRANDS — feature products from DIFFERENT brands across the catalog
-- NEVER repeat the same brand or product on consecutive days
-- Spread coverage across ALL brands in the catalog (Abib, Beauty of Joseon, COSRX, Torriden, etc.)
-- Each week should feature products from at least 4-5 DIFFERENT brands
-- Prioritize variety and discovery over pushing any single product or brand
+*** CRITICAL BRAND DIVERSITY RULES ***
+- WE ARE A HOUSE OF BRANDS — you MUST feature products from MANY DIFFERENT brands
+- FORBIDDEN: Using the same brand on consecutive days (e.g., if Day 1 is Abib, Day 2 CANNOT be Abib)
+- REQUIRED: Use a DIFFERENT brand for each post. Rotate through: Abib, Beauty of Joseon, COSRX, Torriden, Anua, Numbuzin, Skin1004, Isntree, Mixsoon, Haruharu, etc.
+- Each week MUST feature products from at least 5-6 DIFFERENT brands minimum
+- NEVER feature the same product twice in the strategy
+- Track which brands you've used and deliberately pick from unused brands
+
+Content rules:
 - Reels MUST have post_type "reel"
 - Mix content_category across the week — never repeat the same category on consecutive days
-- Each day: 1 feed post + 1-2 stories
+- Each day: 1 feed post + 1-2 stories (stories can be same brand as feed post that day, but different product)
 - Every brief must reference a SPECIFIC product from the catalog by shopify_gid, title, and handle
 - Distribute post times across optimal windows: 09:00, 12:00, 18:00, 20:00
 - Stories at different times than feed posts
