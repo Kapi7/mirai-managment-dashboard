@@ -140,8 +140,17 @@ class DatabaseService:
                     # PSP fee estimate for this order (2.9% + $0.30)
                     psp_fee = round(net * 0.029 + 0.30, 2) if net > 0 else 0
 
-                    # Shipping cost estimate (80% of shipping charged)
-                    shipping_cost = round(shipping * 0.8, 2)
+                    # Shipping cost from matrix lookup (weight + country)
+                    try:
+                        from master_report_mirai import _lookup_matrix_shipping_usd, _canonical_geo
+                        weight_kg = (order.total_weight_g or 0) / 1000.0
+                        country_code = order.country_code or ""
+                        country_name = order.country or ""
+                        geo = _canonical_geo(country_name, country_code)
+                        shipping_cost = round(_lookup_matrix_shipping_usd(geo, weight_kg), 2)
+                    except Exception:
+                        # Fallback to 80% estimate if matrix lookup fails
+                        shipping_cost = round(shipping * 0.8, 2)
 
                     # Profit = net + shipping - shipping_cost - cogs - psp_fee
                     profit = net + shipping - shipping_cost - cogs - psp_fee
