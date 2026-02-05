@@ -1301,21 +1301,29 @@ export default function SocialMedia() {
             </p>
           )}
 
+          {/* Token type notice */}
+          {analytics?.token_type === "igaa" && (
+            <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+              <strong>Note:</strong> Instagram API tokens have limited metrics. Impressions and Website Clicks are not available. For full metrics, connect via Facebook Business.
+            </div>
+          )}
+
           {/* KPI Cards with period comparison */}
           {(() => {
             const c = analytics?.current || {};
             const d = analytics?.deltas || {};
             const live = analytics?.live_profile || {};
+            const limited = analytics?.limited_metrics || [];
 
             const kpis = [
-              { label: "Followers", value: live.followers_count || c.follower_count, delta: d.follower_count, icon: Users, color: "text-indigo-500" },
-              { label: "Impressions", value: c.impressions, delta: d.impressions, icon: Eye, color: "text-blue-500" },
-              { label: "Reach", value: c.reach, delta: d.reach, icon: TrendingUp, color: "text-green-500" },
-              { label: "Profile Views", value: c.profile_views, delta: d.profile_views, icon: MousePointer, color: "text-purple-500" },
-              { label: "Website Clicks", value: c.website_clicks, delta: d.website_clicks, icon: ExternalLink, color: "text-cyan-500" },
-              { label: "Engagement", value: c.engagement, delta: d.engagement, icon: Heart, color: "text-red-500" },
-              { label: "Engagement Rate", value: c.engagement_rate ? `${c.engagement_rate}%` : "—", delta: d.engagement_rate, icon: BarChart3, color: "text-pink-500", isSuffix: "pp" },
-              { label: "Net Followers", value: c.net_followers, delta: null, icon: UserPlus, color: "text-emerald-500" },
+              { label: "Followers", value: live.followers_count || c.follower_count, delta: d.follower_count, icon: Users, color: "text-indigo-500", key: "followers" },
+              { label: "Impressions", value: c.impressions, delta: d.impressions, icon: Eye, color: "text-blue-500", key: "impressions" },
+              { label: "Reach", value: c.reach, delta: d.reach, icon: TrendingUp, color: "text-green-500", key: "reach" },
+              { label: "Profile Views", value: c.profile_views, delta: d.profile_views, icon: MousePointer, color: "text-purple-500", key: "profile_views" },
+              { label: "Website Clicks", value: c.website_clicks, delta: d.website_clicks, icon: ExternalLink, color: "text-cyan-500", key: "website_clicks" },
+              { label: "Engagement", value: c.engagement, delta: d.engagement, icon: Heart, color: "text-red-500", key: "engagement" },
+              { label: "Engagement Rate", value: c.engagement_rate ? `${c.engagement_rate}%` : "—", delta: d.engagement_rate, icon: BarChart3, color: "text-pink-500", isSuffix: "pp", key: "engagement_rate" },
+              { label: "Net Followers", value: c.net_followers, delta: null, icon: UserPlus, color: "text-emerald-500", key: "net_followers" },
             ];
 
             return (
@@ -1325,22 +1333,23 @@ export default function SocialMedia() {
                   const deltaVal = kpi.delta;
                   const isPositive = deltaVal > 0;
                   const isNegative = deltaVal < 0;
-                  const isNeutral = !deltaVal || deltaVal === 0;
+                  const isLimited = limited.includes(kpi.key);
 
                   return (
-                    <Card key={i} className="hover:shadow-sm transition-shadow">
+                    <Card key={i} className={`hover:shadow-sm transition-shadow ${isLimited ? "opacity-50" : ""}`}>
                       <CardContent className="py-3 px-4">
                         <div className="flex items-center justify-between mb-1">
                           <Icon className={`h-4 w-4 ${kpi.color}`} />
-                          {deltaVal !== null && deltaVal !== undefined && (
+                          {!isLimited && deltaVal !== null && deltaVal !== undefined && (
                             <span className={`text-xs font-medium flex items-center gap-0.5 ${isPositive ? "text-green-600" : isNegative ? "text-red-500" : "text-gray-400"}`}>
                               {isPositive ? <ArrowUpRight className="h-3 w-3" /> : isNegative ? <ArrowDownRight className="h-3 w-3" /> : <Minus className="h-3 w-3" />}
                               {Math.abs(deltaVal)}{kpi.isSuffix || "%"}
                             </span>
                           )}
+                          {isLimited && <span className="text-[10px] text-amber-600">N/A</span>}
                         </div>
                         <p className="text-xl font-bold">
-                          {typeof kpi.value === "number" ? kpi.value.toLocaleString() : (kpi.value || "—")}
+                          {isLimited ? "—" : (typeof kpi.value === "number" ? kpi.value.toLocaleString() : (kpi.value || "—"))}
                         </p>
                         <p className="text-xs text-gray-500">{kpi.label}</p>
                       </CardContent>
@@ -1589,6 +1598,32 @@ export default function SocialMedia() {
                 <BarChart3 className="h-12 w-12 mx-auto mb-3 text-gray-300" />
                 <p className="font-medium">No analytics data yet</p>
                 <p className="text-sm mt-1">Click "Sync from Instagram" to pull account metrics, then publish posts and sync again for post-level data</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Recent Posts Engagement (from Instagram API - works with IGAA) */}
+          {analytics?.recent_media && analytics.recent_media.length > 0 && (
+            <Card className="mb-6">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Recent Posts Engagement</CardTitle>
+                <CardDescription className="text-xs">Live data from Instagram</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2">
+                  {analytics.recent_media.slice(0, 5).map((m, i) => (
+                    <div key={i} className="flex items-center justify-between py-2 border-b last:border-0">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm truncate">{m.caption || "(No caption)"}</p>
+                        <p className="text-xs text-gray-400">{m.timestamp?.slice(0, 10)} · {m.media_type}</p>
+                      </div>
+                      <div className="flex gap-4 text-sm ml-4">
+                        <span className="flex items-center gap-1"><Heart className="h-3 w-3 text-red-400" /> {m.likes?.toLocaleString()}</span>
+                        <span className="flex items-center gap-1"><MessageCircle className="h-3 w-3 text-blue-400" /> {m.comments?.toLocaleString()}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </CardContent>
             </Card>
           )}

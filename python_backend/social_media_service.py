@@ -2860,7 +2860,15 @@ Return JSON:
         if not post.media_url:
             raise ValueError("Post must have a media_url to publish")
 
-        publisher = InstagramPublisher()
+        # Use stored connection token from database
+        connection = await self.storage.get_active_connection_async("instagram")
+        if connection and connection.get("access_token"):
+            publisher = InstagramPublisher(
+                access_token=connection["access_token"],
+                ig_account_id=connection.get("ig_account_id"),
+            )
+        else:
+            publisher = InstagramPublisher()
         ig_account_id = await publisher.get_ig_account_id()
 
         post.status = "publishing"
@@ -2872,6 +2880,20 @@ Return JSON:
                 container_id = await publisher.create_story_container(ig_account_id, post.media_url)
             elif post.media_type == "VIDEO" or post.post_type == "reel":
                 container_id = await publisher.create_reel_container(ig_account_id, post.media_url, post.caption)
+            elif post.post_type == "carousel" and post.media_carousel:
+                # For carousels, create child containers first, then parent
+                import asyncio
+                child_ids = []
+                # Create child containers (images only for carousel children)
+                for i, slide in enumerate(post.media_carousel):
+                    # Child containers need a publicly accessible URL
+                    slide_url = slide.get("url") or f"{os.getenv('APP_URL', 'http://localhost:8080')}/api/social-media/media/{post.id}?slide={i}"
+                    child_data = await publisher._request("POST", f"{publisher.base_url}/{ig_account_id}/media",
+                        data={"image_url": slide_url, "is_carousel_item": "true", "access_token": publisher.access_token})
+                    child_ids.append(child_data["id"])
+                    await asyncio.sleep(0.5)  # Rate limit
+                # Create parent carousel container
+                container_id = await publisher.create_carousel_container(ig_account_id, child_ids, post.caption)
             else:
                 container_id = await publisher.create_image_container(ig_account_id, post.media_url, post.caption)
 
@@ -3178,19 +3200,35 @@ Return JSON:
 
         # Also try to get live data from IG API for real-time profile stats
         live_profile = {}
+        token_type = "unknown"
+        recent_media_stats = []
         try:
             connection = await self.storage.get_active_connection_async("instagram")
             if connection and connection.get("access_token"):
+                token_type = "igaa" if connection["access_token"].startswith("IGAA") else "eaa"
                 publisher = InstagramPublisher(
                     access_token=connection["access_token"],
                     ig_account_id=connection.get("ig_account_id"),
                 )
             else:
                 publisher = InstagramPublisher()
+                token_type = "igaa" if publisher.is_ig_token else "eaa"
             ig_account_id = await publisher.get_ig_account_id()
             live_profile = await publisher.get_profile_info(ig_account_id)
-        except Exception:
-            pass
+            # Fetch recent media for additional engagement stats (works with IGAA)
+            recent_media = await publisher.get_recent_media(ig_account_id, limit=10)
+            for m in recent_media:
+                recent_media_stats.append({
+                    "id": m.get("id"),
+                    "timestamp": m.get("timestamp"),
+                    "media_type": m.get("media_type"),
+                    "likes": m.get("like_count", 0),
+                    "comments": m.get("comments_count", 0),
+                    "permalink": m.get("permalink"),
+                    "caption": (m.get("caption") or "")[:80],
+                })
+        except Exception as e:
+            print(f"[SocialMediaAgent] Failed to get live profile/media: {e}")
 
         return {
             "period": {
@@ -3245,6 +3283,9 @@ Return JSON:
                 "media_count": live_profile.get("media_count", 0),
                 "biography": live_profile.get("biography", ""),
             },
+            "token_type": token_type,
+            "recent_media": recent_media_stats,
+            "limited_metrics": ["impressions", "website_clicks"] if token_type == "igaa" else [],
         }
 
 
