@@ -1408,11 +1408,19 @@ class InstagramPublisher:
                                           "media_type": "REELS", "access_token": self.access_token})
         return data["id"]
 
-    async def create_story_container(self, ig_account_id: str, image_url: str) -> str:
-        """Create an Instagram Story container (no caption for stories)"""
-        data = await self._request("POST", f"{self.base_url}/{ig_account_id}/media",
-                                    data={"image_url": image_url, "media_type": "STORIES",
-                                          "access_token": self.access_token})
+    async def create_story_container(self, ig_account_id: str, image_url: str,
+                                       link_url: Optional[str] = None) -> str:
+        """Create an Instagram Story container with optional link sticker.
+        Note: Polls, questions, countdowns can only be added via Instagram app."""
+        payload = {
+            "image_url": image_url,
+            "media_type": "STORIES",
+            "access_token": self.access_token
+        }
+        # Add link sticker if provided (Instagram API supports this)
+        if link_url:
+            payload["link"] = link_url
+        data = await self._request("POST", f"{self.base_url}/{ig_account_id}/media", data=payload)
         return data["id"]
 
     async def create_carousel_container(self, ig_account_id: str, children_ids: List[str], caption: str) -> str:
@@ -2887,7 +2895,17 @@ Return JSON:
         try:
             # Create container based on media type / post type
             if post.post_type == "story":
-                container_id = await publisher.create_story_container(ig_account_id, post.media_url)
+                # Extract link sticker URL from ig_overlays if present
+                story_link_url = None
+                if post.ig_overlays:
+                    for overlay in post.ig_overlays:
+                        if overlay.get("type") == "link_sticker":
+                            story_link_url = overlay.get("url") or post.link_url
+                            break
+                # Fallback to post.link_url if no explicit link sticker
+                if not story_link_url and post.link_url:
+                    story_link_url = post.link_url
+                container_id = await publisher.create_story_container(ig_account_id, post.media_url, link_url=story_link_url)
             elif post.media_type == "VIDEO" or post.post_type == "reel":
                 container_id = await publisher.create_reel_container(ig_account_id, post.media_url, post.caption)
             elif post.post_type == "carousel" and post.media_carousel:
