@@ -2232,6 +2232,52 @@ async def migrate_sent_at(user: dict = Depends(get_current_user)):
         }
 
 
+@app.post("/admin/backfill-shipping-costs")
+async def backfill_shipping_costs(user: dict = Depends(get_current_user)):
+    """
+    Backfill shipping_cost for all orders using the shipping matrix.
+    This recalculates shipping costs based on weight and country.
+    """
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    from database.connection import get_db
+    from database.models import Order
+    from sqlalchemy import select
+    from master_report_mirai import _lookup_matrix_shipping_usd, _canonical_geo
+
+    updated_count = 0
+    errors = []
+
+    async with get_db() as db:
+        # Get all orders
+        result = await db.execute(select(Order))
+        orders = result.scalars().all()
+
+        for order in orders:
+            try:
+                weight_kg = (order.total_weight_g or 0) / 1000.0
+                country_code = order.country_code or ""
+                country_name = order.country or ""
+                geo = _canonical_geo(country_name, country_code)
+                shipping_cost = _lookup_matrix_shipping_usd(geo, weight_kg)
+
+                if shipping_cost != (float(order.shipping_cost) if order.shipping_cost else 0):
+                    order.shipping_cost = round(shipping_cost, 2)
+                    updated_count += 1
+            except Exception as e:
+                errors.append(f"Order {order.order_name}: {str(e)}")
+
+        await db.commit()
+
+    return {
+        "success": True,
+        "message": f"Updated shipping costs for {updated_count} orders",
+        "updated_count": updated_count,
+        "errors": errors[:10] if errors else []
+    }
+
+
 @app.post("/support/emails/{email_id}/reject")
 async def reject_support_email(email_id: int, user: dict = Depends(get_current_user)):
     """Reject/archive email"""

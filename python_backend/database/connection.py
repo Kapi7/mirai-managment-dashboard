@@ -269,6 +269,15 @@ async def init_db():
                     END IF;
                 END $$;
                 """,
+                # Add shipping_cost column to orders (actual cost from shipping matrix)
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'orders' AND column_name = 'shipping_cost') THEN
+                        ALTER TABLE orders ADD COLUMN shipping_cost NUMERIC(10, 2) DEFAULT 0;
+                    END IF;
+                END $$;
+                """,
             ]
 
             for migration in migrations:

@@ -120,6 +120,7 @@ class Order(Base):
     net = Column(Numeric(10, 2), default=0)
     cogs = Column(Numeric(10, 2), default=0)
     shipping_charged = Column(Numeric(10, 2), default=0)
+    shipping_cost = Column(Numeric(10, 2), default=0)  # Actual cost from shipping matrix
 
     # Location
     country = Column(String(100))

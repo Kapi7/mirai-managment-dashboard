@@ -203,6 +203,18 @@ class SyncOrders(BaseSyncJob):
                         first_visit = customer_journey.get("firstVisit") or {}
                         utm_params = first_visit.get("utmParameters") or {}
 
+                        # Calculate shipping cost from matrix lookup
+                        try:
+                            from master_report_mirai import _lookup_matrix_shipping_usd, _canonical_geo
+                            weight_kg = int(order_data.get("totalWeight") or 0) / 1000.0
+                            country_code = shipping.get("countryCodeV2") or ""
+                            country_name = shipping.get("country") or ""
+                            geo = _canonical_geo(country_name, country_code)
+                            calculated_shipping_cost = round(_lookup_matrix_shipping_usd(geo, weight_kg), 2)
+                        except Exception:
+                            # Fallback to 80% of charged if matrix lookup fails
+                            calculated_shipping_cost = round(shipping_charged * 0.8, 2)
+
                         order_values = {
                             "shopify_gid": shopify_gid,
                             "order_name": order_data.get("name", ""),
@@ -219,6 +231,7 @@ class SyncOrders(BaseSyncJob):
                             "country": shipping.get("country"),
                             "country_code": shipping.get("countryCodeV2"),
                             "total_weight_g": int(order_data.get("totalWeight") or 0),
+                            "shipping_cost": calculated_shipping_cost,
                             "utm_source": utm_params.get("source"),
                             "utm_medium": utm_params.get("medium"),
                             "utm_campaign": utm_params.get("campaign"),

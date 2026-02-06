@@ -323,6 +323,7 @@ class DatabaseService:
                         func.sum(Order.net).label('net'),
                         func.sum(Order.cogs).label('cogs'),
                         func.sum(Order.shipping_charged).label('shipping_charged'),
+                        func.sum(Order.shipping_cost).label('shipping_cost'),  # Actual cost from matrix
                         # Channel-based purchase counts (like Shopify attribution)
                         func.sum(case((Order.channel == 'google', 1), else_=0)).label('google_pur'),
                         func.sum(case((Order.channel == 'meta', 1), else_=0)).label('meta_pur'),
@@ -350,6 +351,7 @@ class DatabaseService:
                     net = _decimal_to_float(row.net) or 0
                     cogs = _decimal_to_float(row.cogs) or 0
                     shipping_charged = _decimal_to_float(row.shipping_charged) or 0
+                    shipping_cost_db = _decimal_to_float(row.shipping_cost) or 0
                     google_pur = row.google_pur or 0
                     meta_pur = row.meta_pur or 0
                     returning_customers = row.returning_customers or 0
@@ -361,8 +363,8 @@ class DatabaseService:
                     # Default to estimate: 2.9% + $0.30 per transaction
                     psp_usd = net * 0.029 + 0.30 * orders_count
 
-                    # Shipping cost estimate (use 80% of shipping charged as estimate)
-                    shipping_cost = shipping_charged * 0.8
+                    # Shipping cost from database (calculated from matrix), fallback to 80% estimate
+                    shipping_cost = shipping_cost_db if shipping_cost_db > 0 else shipping_charged * 0.8
 
                     # Revenue base = net + shipping charged (matches original)
                     revenue_base = net + shipping_charged
