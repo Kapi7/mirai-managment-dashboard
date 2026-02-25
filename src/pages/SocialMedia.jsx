@@ -35,6 +35,7 @@ import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid,
   Tooltip, BarChart, Bar, Legend,
 } from "recharts";
+import AgentActivityPanel from '@/components/AgentActivityPanel';
 
 const API_URL = import.meta.env.DEV ? "http://localhost:8080" : "/api";
 
@@ -640,6 +641,11 @@ export default function SocialMedia() {
 
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
+      {/* Agent Activity Panel */}
+      <div className="mb-6">
+        <AgentActivityPanel context="social" />
+      </div>
+
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">

@@ -65,6 +65,7 @@ import {
   ArrowRight,
   Brain
 } from "lucide-react";
+import AgentActivityPanel from '@/components/AgentActivityPanel';
 
 // Blog API - use proxy routes in production, direct in development
 const API_URL = import.meta.env.DEV ? 'http://localhost:8080' : '/api';
@@ -512,6 +513,9 @@ export default function BlogCreator() {
 
   return (
     <div className="p-6 space-y-6">
+      {/* Agent Activity Panel */}
+      <AgentActivityPanel context="blog" />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

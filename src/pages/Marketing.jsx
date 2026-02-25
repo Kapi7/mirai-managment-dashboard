@@ -59,6 +59,7 @@ import {
   Users,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import AgentActivityPanel from '@/components/AgentActivityPanel';
 
 // Meta Ads API - use proxy routes in production, direct in development
 const API_URL = import.meta.env.DEV ? 'http://localhost:8080' : '/api';
@@ -363,6 +364,9 @@ export default function Marketing() {
 
   return (
     <div className="p-6 space-y-6">
+      {/* Agent Activity Panel */}
+      <AgentActivityPanel context="marketing" />
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

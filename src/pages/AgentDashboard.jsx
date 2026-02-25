@@ -52,7 +52,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+const API_URL = import.meta.env.DEV ? 'http://localhost:8080' : '/api';
 
 // --- Badge helpers ---
 
@@ -60,8 +60,11 @@ const statusBadge = (status) => {
   const map = {
     active:      'bg-green-100 text-green-700',
     idle:        'bg-slate-100 text-slate-600',
-    pending:     'bg-yellow-100 text-yellow-700',
-    in_progress: 'bg-blue-100 text-blue-700',
+    pending:             'bg-yellow-100 text-yellow-700',
+    awaiting_approval:   'bg-amber-100 text-amber-700',
+    pending_approval:    'bg-amber-100 text-amber-700',
+    auto_approved:       'bg-slate-100 text-slate-600',
+    in_progress:         'bg-blue-100 text-blue-700',
     completed:   'bg-green-100 text-green-700',
     failed:      'bg-red-100 text-red-700',
     approved:    'bg-green-100 text-green-700',
@@ -223,7 +226,7 @@ export default function AgentDashboard() {
 
   const fetchAgents = useCallback(async () => {
     try {
-      const res = await fetch(`${API_URL}/agents/status`, { headers: headers() });
+      const res = await fetch(`${API_URL}/agents/orchestrator/status`, { headers: headers() });
       if (!res.ok) throw new Error('Failed to fetch agents');
       const data = await res.json();
       setAgents(data.agents || []);
@@ -234,7 +237,7 @@ export default function AgentDashboard() {
 
   const fetchKpis = useCallback(async () => {
     try {
-      const res = await fetch(`${API_URL}/agents/kpis`, { headers: headers() });
+      const res = await fetch(`${API_URL}/agents/cmo/kpis`, { headers: headers() });
       if (!res.ok) throw new Error('Failed to fetch KPIs');
       const data = await res.json();
       setKpis(data);
@@ -262,7 +265,16 @@ export default function AgentDashboard() {
       const res = await fetch(`${API_URL}/agents/decisions`, { headers: headers() });
       if (!res.ok) throw new Error('Failed to fetch decisions');
       const data = await res.json();
-      setDecisions(data.decisions || []);
+      // Derive status from raw fields if backend doesn't include it
+      const deriveStatus = (d) => {
+        if (d.status) return d.status;
+        if (d.rejected_at) return 'rejected';
+        if (d.approved_at) return 'approved';
+        if (d.requires_approval) return 'pending_approval';
+        return 'auto_approved';
+      };
+      const withStatus = (data.decisions || data || []).map(d => ({ ...d, status: deriveStatus(d) }));
+      setDecisions(withStatus);
     } catch (err) {
       console.error('Decisions fetch error:', err);
     }
@@ -357,14 +369,26 @@ export default function AgentDashboard() {
   };
 
   const handleQuickAction = async (action) => {
+    const actionMap = {
+      'plan-week':          `${API_URL}/agents/calendar/plan-week`,
+      'force-orchestrator': `${API_URL}/agents/orchestrator/run`,
+    };
+    const url = actionMap[action];
+    if (!url) {
+      toast({ title: 'Error', description: `Unknown action: ${action}`, variant: 'destructive' });
+      return;
+    }
     try {
-      const res = await fetch(`${API_URL}/agents/actions/${action}`, {
+      const res = await fetch(url, {
         method: 'POST',
         headers: headers(),
       });
       if (!res.ok) throw new Error(`Failed to execute ${action}`);
       const data = await res.json();
       toast({ title: 'Action Triggered', description: data.message || `${action} initiated` });
+      // Refresh overview after action
+      fetchAgents();
+      fetchKpis();
     } catch (err) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
@@ -599,6 +623,7 @@ export default function AgentDashboard() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Statuses</SelectItem>
+                <SelectItem value="awaiting_approval">Awaiting Approval</SelectItem>
                 <SelectItem value="pending">Pending</SelectItem>
                 <SelectItem value="in_progress">In Progress</SelectItem>
                 <SelectItem value="completed">Completed</SelectItem>

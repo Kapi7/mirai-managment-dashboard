@@ -857,10 +857,16 @@ class AgentTask(Base):
     parent_task_id = Column(String(50), index=True)          # CMO planning task that spawned this
 
     # State
-    status = Column(String(20), default="pending", index=True)  # pending, in_progress, completed, failed, cancelled
+    status = Column(String(30), default="pending", index=True)  # awaiting_approval, pending, in_progress, completed, failed, cancelled
     error_message = Column(Text)
     retry_count = Column(Integer, default=0)
     max_retries = Column(Integer, default=3)
+
+    # Approval workflow
+    requires_approval = Column(Boolean, default=False)
+    approved_by = Column(Integer, ForeignKey("users.id"))
+    approved_at = Column(DateTime)
+    decision_uuid = Column(String(50), index=True)              # Link to parent AgentDecision
 
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -868,9 +874,13 @@ class AgentTask(Base):
     completed_at = Column(DateTime)
     scheduled_for = Column(DateTime, index=True)              # For deferred execution
 
+    # Relationships
+    task_approver = relationship("User", foreign_keys=[approved_by])
+
     __table_args__ = (
         Index('idx_agent_task_queue', 'target_agent', 'status', 'scheduled_for'),
         Index('idx_agent_task_parent', 'parent_task_id'),
+        Index('idx_agent_task_decision', 'decision_uuid'),
     )
 
 

@@ -1,5 +1,5 @@
 
-import React from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -53,14 +53,9 @@ const navigationSections = [
     ]
   },
   {
-    label: "AI Agents",
-    items: [
-      { title: "Agent Dashboard", url: createPageUrl("AgentDashboard"), icon: Bot },
-    ]
-  },
-  {
     label: "Marketing",
     items: [
+      { title: "AI Agents", url: createPageUrl("AgentDashboard"), icon: Bot, hasPendingBadge: true },
       { title: "Meta Ads", url: createPageUrl("Marketing"), icon: Target },
       { title: "Blog Creator", url: createPageUrl("BlogCreator"), icon: FileText },
       { title: "Social Media", url: createPageUrl("SocialMedia"), icon: Share2 },
@@ -89,9 +84,34 @@ const navigationSections = [
   }
 ];
 
+const LAYOUT_API_URL = import.meta.env.DEV ? 'http://localhost:8080' : '/api';
+
 export default function Layout({ children }) {
   const location = useLocation();
-  const { user, isAdmin, logout } = useAuth();
+  const { user, isAdmin, logout, getAuthHeader } = useAuth();
+
+  // Pending agent approvals badge
+  const [pendingCount, setPendingCount] = useState(0);
+
+  const fetchPendingCount = useCallback(async () => {
+    try {
+      const res = await fetch(`${LAYOUT_API_URL}/agents/pending-count`, {
+        headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPendingCount(data.total || 0);
+      }
+    } catch {
+      // Silently fail — badge just won't show
+    }
+  }, [getAuthHeader]);
+
+  useEffect(() => {
+    fetchPendingCount();
+    const interval = setInterval(fetchPendingCount, 60000); // Poll every 60s
+    return () => clearInterval(interval);
+  }, [fetchPendingCount]);
 
   return (
     <SidebarProvider>
@@ -128,6 +148,11 @@ export default function Layout({ children }) {
                           <Link to={item.url} className="flex items-center gap-3 px-3 py-2.5">
                             <item.icon className="w-4 h-4" />
                             <span>{item.title}</span>
+                            {item.hasPendingBadge && pendingCount > 0 && (
+                              <Badge variant="secondary" className="ml-auto text-xs bg-amber-100 text-amber-700 border-0">
+                                {pendingCount}
+                              </Badge>
+                            )}
                             {item.badge && (
                               <Badge variant="secondary" className="ml-auto text-xs bg-amber-100 text-amber-700 border-0">
                                 {item.badge}

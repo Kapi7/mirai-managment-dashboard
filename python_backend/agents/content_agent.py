@@ -357,7 +357,7 @@ class ContentAgent(BaseAgent):
         await self.log_decision("create_blog_article",
             {"category": category, "topic": topic},
             {"action": "generate_via_blog_generator"},
-            f"Blog in '{category}' about '{topic}'.", 0.9, False)
+            f"Blog in '{category}' about '{topic}'.", 0.9, True)
 
         draft = _get_blog_generator().generate_article(
             category=category, topic=topic, keywords=keywords,

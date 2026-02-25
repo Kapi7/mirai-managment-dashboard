@@ -209,6 +209,27 @@ class CMOAgent(BaseAgent):
         # ---------- AI strategic planning ----------
         ai_plan = await self._generate_ai_plan(monday, context)
 
+        # Log the planning decision BEFORE creating tasks
+        decision_uuid = await self.log_decision(
+            decision_type="weekly_plan",
+            context={
+                "week_start": monday.isoformat(),
+                "product_catalog_size": context["product_catalog_size"],
+                "bestsellers_count": len(context.get("bestsellers", [])),
+            },
+            decision={
+                "ai_plan_summary": (ai_plan or {}).get("summary", ""),
+                "week_start": monday.isoformat(),
+            },
+            reasoning=(
+                f"Planning {monday.isoformat()} week: IG feed, stories, TikTok daily. "
+                f"Balanced across pillars ({', '.join(CONTENT_PILLARS.keys())}). "
+                f"Brand rotation enforced to avoid repetition."
+            ),
+            confidence=0.85,
+            requires_approval=True,
+        )
+
         # ---------- Fill calendar slots ----------
         created_slots = []
         content_tasks: List[str] = []
@@ -268,6 +289,8 @@ class CMOAgent(BaseAgent):
                     "brand_voice": MIRAI_BRAND_VOICE,
                 },
                 priority="normal",
+                requires_approval=True,
+                decision_uuid=decision_uuid,
             )
             content_tasks.append(content_task_id)
 
@@ -282,6 +305,8 @@ class CMOAgent(BaseAgent):
                 },
                 priority="normal",
                 depends_on=[content_task_id],
+                requires_approval=True,
+                decision_uuid=decision_uuid,
             )
 
             # -- Instagram Stories (1-2 per day) --
@@ -323,6 +348,8 @@ class CMOAgent(BaseAgent):
                         "brand_voice": MIRAI_BRAND_VOICE,
                     },
                     priority="normal",
+                    requires_approval=True,
+                    decision_uuid=decision_uuid,
                 )
                 content_tasks.append(story_content_id)
 
@@ -336,6 +363,8 @@ class CMOAgent(BaseAgent):
                     },
                     priority="normal",
                     depends_on=[story_content_id],
+                    requires_approval=True,
+                    decision_uuid=decision_uuid,
                 )
 
             # -- TikTok (1 per day) --
@@ -375,6 +404,8 @@ class CMOAgent(BaseAgent):
                     "brand_voice": MIRAI_BRAND_VOICE,
                 },
                 priority="normal",
+                requires_approval=True,
+                decision_uuid=decision_uuid,
             )
             content_tasks.append(tiktok_content_id)
 
@@ -388,6 +419,8 @@ class CMOAgent(BaseAgent):
                 },
                 priority="normal",
                 depends_on=[tiktok_content_id],
+                requires_approval=True,
+                decision_uuid=decision_uuid,
             )
 
         # -- Ad creative refresh (runs once after all content is queued) --
@@ -401,29 +434,8 @@ class CMOAgent(BaseAgent):
             },
             priority="normal",
             depends_on=content_tasks[:3],  # wait for first few assets
-        )
-
-        # Log the planning decision
-        await self.log_decision(
-            decision_type="weekly_plan",
-            context={
-                "week_start": monday.isoformat(),
-                "product_catalog_size": context["product_catalog_size"],
-                "bestsellers_count": len(context.get("bestsellers", [])),
-            },
-            decision={
-                "slots_created": len(created_slots),
-                "content_tasks": len(content_tasks),
-                "ad_refresh_task": ad_task_id,
-            },
-            reasoning=(
-                f"Created {len(created_slots)} calendar slots for week of "
-                f"{monday.isoformat()}: IG feed, stories, TikTok daily. "
-                f"Balanced across pillars ({', '.join(CONTENT_PILLARS.keys())}). "
-                f"Brand rotation enforced to avoid repetition."
-            ),
-            confidence=0.85,
             requires_approval=True,
+            decision_uuid=decision_uuid,
         )
 
         return {
@@ -590,7 +602,7 @@ recommendations (list).
             "current_roas": current_roas,
         }
 
-        await self.log_decision(
+        decision_uuid = await self.log_decision(
             decision_type="budget_allocation",
             context={"monthly_budget": monthly_budget, "current_roas": current_roas},
             decision=allocation,
@@ -658,7 +670,7 @@ Respond in JSON with keys:
         except json.JSONDecodeError:
             parsed = {"rationale": ai_strategy}
 
-        await self.log_decision(
+        decision_uuid = await self.log_decision(
             decision_type="strategy_adjustment",
             context={"trigger": trigger, "performance_data": performance_data},
             decision=parsed,

@@ -62,9 +62,17 @@ class BaseAgent(ABC):
         depends_on: Optional[List[str]] = None,
         parent_task_id: Optional[str] = None,
         scheduled_for: Optional[datetime] = None,
+        requires_approval: bool = False,
+        decision_uuid: Optional[str] = None,
     ) -> str:
-        """Queue a task for another agent. Returns the task UUID."""
+        """Queue a task for another agent. Returns the task UUID.
+
+        If requires_approval=True, task starts as 'awaiting_approval' and
+        must be approved (directly or via its linked decision) before the
+        orchestrator will pick it up.
+        """
         task_uuid = str(uuid_lib.uuid4())[:12]
+        initial_status = "awaiting_approval" if requires_approval else "pending"
 
         if DATABASE_AVAILABLE:
             try:
@@ -81,8 +89,10 @@ class BaseAgent(ABC):
                         params=params,
                         depends_on=depends_on or [],
                         parent_task_id=parent_task_id,
-                        status="pending",
+                        status=initial_status,
                         scheduled_for=scheduled_for,
+                        requires_approval=requires_approval,
+                        decision_uuid=decision_uuid,
                     )
                     db.add(task)
                 return task_uuid
@@ -102,7 +112,9 @@ class BaseAgent(ABC):
             "params": params,
             "depends_on": depends_on or [],
             "parent_task_id": parent_task_id,
-            "status": "pending",
+            "status": initial_status,
+            "requires_approval": requires_approval,
+            "decision_uuid": decision_uuid,
             "scheduled_for": scheduled_for.isoformat() if scheduled_for else None,
             "created_at": datetime.utcnow().isoformat(),
         })

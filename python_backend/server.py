@@ -3186,7 +3186,7 @@ async def agents_get_task(uuid: str, user: dict = Depends(require_auth)):
 
 @app.post("/agents/tasks/{uuid}/approve")
 async def agents_approve_task(uuid: str, user: dict = Depends(require_auth)):
-    """Approve a pending task for execution."""
+    """Approve an awaiting_approval task for execution."""
     if DATABASE_AVAILABLE:
         try:
             from database.connection import get_db
@@ -3197,7 +3197,12 @@ async def agents_approve_task(uuid: str, user: dict = Depends(require_auth)):
                 await db.execute(
                     update(AgentTask)
                     .where(AgentTask.uuid == uuid)
-                    .values(status="pending")  # Reset to pending for orchestrator pickup
+                    .where(AgentTask.status == "awaiting_approval")
+                    .values(
+                        status="pending",
+                        approved_by=user.get("user_id"),
+                        approved_at=datetime.utcnow(),
+                    )
                 )
             return {"uuid": uuid, "status": "approved"}
         except Exception as e:
@@ -3227,6 +3232,15 @@ async def agents_list_decisions(
                     query = query.where(AgentDecision.agent == agent)
                 result = await db.execute(query)
                 rows = result.scalars().all()
+                def _decision_status(r):
+                    if r.rejected_at:
+                        return "rejected"
+                    if r.approved_at:
+                        return "approved"
+                    if r.requires_approval:
+                        return "pending_approval"
+                    return "auto_approved"
+
                 return [
                     {
                         "uuid": r.uuid,
@@ -3238,6 +3252,7 @@ async def agents_list_decisions(
                         "approved_at": r.approved_at.isoformat() if r.approved_at else None,
                         "rejected_at": r.rejected_at.isoformat() if r.rejected_at else None,
                         "created_at": r.created_at.isoformat() if r.created_at else None,
+                        "status": _decision_status(r),
                     }
                     for r in rows
                 ]
@@ -3253,19 +3268,33 @@ async def agents_list_decisions(
 
 @app.post("/agents/decisions/{uuid}/approve")
 async def agents_approve_decision(uuid: str, user: dict = Depends(require_auth)):
-    """Approve an agent decision."""
+    """Approve an agent decision and cascade to linked tasks."""
     if DATABASE_AVAILABLE:
         try:
             from database.connection import get_db
-            from database.models import AgentDecision
+            from database.models import AgentDecision, AgentTask
             from sqlalchemy import update
 
             async with get_db() as db:
+                # Approve the decision
                 await db.execute(
                     update(AgentDecision)
                     .where(AgentDecision.uuid == uuid)
                     .values(approved_at=datetime.utcnow(), approved_by=user.get("user_id"))
                 )
+
+                # Cascade: move all linked tasks from awaiting_approval → pending
+                await db.execute(
+                    update(AgentTask)
+                    .where(AgentTask.decision_uuid == uuid)
+                    .where(AgentTask.status == "awaiting_approval")
+                    .values(
+                        status="pending",
+                        approved_by=user.get("user_id"),
+                        approved_at=datetime.utcnow(),
+                    )
+                )
+
             return {"uuid": uuid, "status": "approved"}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
@@ -3275,22 +3304,36 @@ async def agents_approve_decision(uuid: str, user: dict = Depends(require_auth))
 
 @app.post("/agents/decisions/{uuid}/reject")
 async def agents_reject_decision(uuid: str, body: dict = {}, user: dict = Depends(require_auth)):
-    """Reject an agent decision."""
+    """Reject an agent decision and cancel linked tasks."""
     if DATABASE_AVAILABLE:
         try:
             from database.connection import get_db
-            from database.models import AgentDecision
+            from database.models import AgentDecision, AgentTask
             from sqlalchemy import update
 
+            reason = body.get("reason", "")
             async with get_db() as db:
+                # Reject the decision
                 await db.execute(
                     update(AgentDecision)
                     .where(AgentDecision.uuid == uuid)
                     .values(
                         rejected_at=datetime.utcnow(),
-                        rejection_reason=body.get("reason", ""),
+                        rejection_reason=reason,
                     )
                 )
+
+                # Cascade: cancel all linked tasks
+                await db.execute(
+                    update(AgentTask)
+                    .where(AgentTask.decision_uuid == uuid)
+                    .where(AgentTask.status == "awaiting_approval")
+                    .values(
+                        status="cancelled",
+                        error_message=f"Decision rejected: {reason}" if reason else "Decision rejected",
+                    )
+                )
+
             return {"uuid": uuid, "status": "rejected"}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
@@ -3463,6 +3506,41 @@ async def agents_cmo_kpis(days: int = 30, user: dict = Depends(require_auth)):
         return result.get("data", result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---- Pending Count (for sidebar badge) ----
+
+@app.get("/agents/pending-count")
+async def agents_pending_count(user: dict = Depends(require_auth)):
+    """Get count of pending approvals for sidebar badge."""
+    counts = {"pending_decisions": 0, "pending_tasks": 0}
+    if DATABASE_AVAILABLE:
+        try:
+            from database.connection import get_db
+            from database.models import AgentDecision, AgentTask
+            from sqlalchemy import select, func
+
+            async with get_db() as db:
+                # Pending decisions (requires_approval=True, not yet approved or rejected)
+                result = await db.execute(
+                    select(func.count()).select_from(AgentDecision)
+                    .where(AgentDecision.requires_approval == True)
+                    .where(AgentDecision.approved_at.is_(None))
+                    .where(AgentDecision.rejected_at.is_(None))
+                )
+                counts["pending_decisions"] = result.scalar() or 0
+
+                # Tasks awaiting approval
+                result = await db.execute(
+                    select(func.count()).select_from(AgentTask)
+                    .where(AgentTask.status == "awaiting_approval")
+                )
+                counts["pending_tasks"] = result.scalar() or 0
+        except Exception:
+            pass
+
+    counts["total"] = counts["pending_decisions"] + counts["pending_tasks"]
+    return counts
 
 
 # ---------- Local dev entrypoint ----------

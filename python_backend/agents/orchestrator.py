@@ -109,6 +109,14 @@ class AgentOrchestrator:
             await self._mark_task_failed(task, f"No agent registered for '{target}'")
             return
 
+        # Check if linked decision requires and has approval
+        decision_uuid = task.get("decision_uuid")
+        if decision_uuid:
+            approved = await self._is_decision_approved(decision_uuid)
+            if not approved:
+                # Decision not yet approved — skip this task for now
+                return
+
         # Mark as in_progress
         await self._mark_task_in_progress(task)
 
@@ -127,6 +135,42 @@ class AgentOrchestrator:
             else:
                 await self._mark_task_failed(task, str(e))
                 print(f"❌ Task {task['uuid']} failed permanently: {e}")
+
+    # ---- Decision approval check ----
+
+    async def _is_decision_approved(self, decision_uuid: str) -> bool:
+        """Check if a linked decision has been approved."""
+        if DATABASE_AVAILABLE:
+            try:
+                from database.connection import get_db
+                from database.models import AgentDecision
+                from sqlalchemy import select
+
+                async with get_db() as db:
+                    query = select(AgentDecision).where(AgentDecision.uuid == decision_uuid)
+                    result = await db.execute(query)
+                    decision = result.scalar_one_or_none()
+                    if not decision:
+                        return True  # Decision not found — allow execution
+                    if decision.rejected_at:
+                        return False
+                    if decision.requires_approval and not decision.approved_at:
+                        return False  # Still awaiting approval
+                    return True
+            except Exception as e:
+                print(f"⚠️ Decision approval check failed: {e}")
+                return True  # Fail open to avoid blocking all tasks
+
+        # In-memory fallback
+        from .base_agent import BaseAgent
+        for dec in getattr(BaseAgent, '_memory_decisions', []):
+            if dec["uuid"] == decision_uuid:
+                if dec.get("rejected_at"):
+                    return False
+                if dec.get("requires_approval") and not dec.get("approved_at"):
+                    return False
+                return True
+        return True  # Not found — allow
 
     # ---- Database task operations ----
 
@@ -177,6 +221,7 @@ class AgentOrchestrator:
                         "parent_task_id": row.parent_task_id,
                         "retry_count": row.retry_count,
                         "max_retries": row.max_retries,
+                        "decision_uuid": row.decision_uuid,
                     })
 
                 return tasks
