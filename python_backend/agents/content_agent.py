@@ -308,7 +308,7 @@ class ContentAgent(BaseAgent):
             visual_direction=txt.get("visual_direction", concept),
             video_direction=txt.get("video_direction", ""),
             ai_model_text="gemini", generation_params=gp or {},
-            status="draft", created_by_agent=self.agent_name,
+            status="ready", created_by_agent=self.agent_name,
         )
         if img and img[0]:
             a.primary_image_data = img[0]

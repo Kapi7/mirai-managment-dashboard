@@ -288,7 +288,7 @@ export default function AgentDashboard() {
       const res = await fetch(`${API_URL}/agents/content-assets?${params}`, { headers: headers() });
       if (!res.ok) throw new Error('Failed to fetch assets');
       const data = await res.json();
-      setAssets(data.assets || []);
+      setAssets(Array.isArray(data) ? data : (data.assets || []));
     } catch (err) {
       console.error('Assets fetch error:', err);
     }

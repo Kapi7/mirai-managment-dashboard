@@ -204,8 +204,8 @@ class BaseAgent(ABC):
         self, prompt: str, system_prompt: str, api_key: str,
         temperature: float, json_mode: bool
     ) -> str:
-        """Call Gemini 2.5 Flash for text generation."""
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key={api_key}"
+        """Call Gemini 2.0 Flash for text generation."""
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
 
         contents = []
         if system_prompt:

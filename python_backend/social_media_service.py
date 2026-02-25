@@ -2570,33 +2570,41 @@ Return JSON:
         poll_base = "https://generativelanguage.googleapis.com/v1beta"
 
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                # Step 1: Start the long-running operation
-                resp = await client.post(
-                    veo_url,
-                    headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
-                    json={
-                        "instances": [{"prompt": prompt}],
-                        "parameters": {
-                            "aspectRatio": "9:16",
-                            "durationSeconds": 8,
-                            "personGeneration": "allow_adult",
+            # Step 1: Start the long-running operation (with retry on 429)
+            resp = None
+            for _attempt in range(3):
+                async with httpx.AsyncClient(timeout=30) as client:
+                    resp = await client.post(
+                        veo_url,
+                        headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
+                        json={
+                            "instances": [{"prompt": prompt}],
+                            "parameters": {
+                                "aspectRatio": "9:16",
+                                "durationSeconds": 8,
+                                "personGeneration": "allow_adult",
+                            },
                         },
-                    },
-                )
+                    )
+                if resp.status_code == 429:
+                    wait = (_attempt + 1) * 15
+                    print(f"[Veo2] Rate limited (429), retrying in {wait}s... (attempt {_attempt + 1}/3)")
+                    await asyncio.sleep(wait)
+                    continue
+                break
 
-                if resp.status_code != 200:
-                    err_text = resp.text[:300]
-                    print(f"[Veo2] Failed to start operation (status {resp.status_code}): {err_text}")
-                    return None, None, None
+            if not resp or resp.status_code != 200:
+                err_text = resp.text[:300] if resp else "No response"
+                print(f"[Veo2] Failed to start operation (status {resp.status_code if resp else 'N/A'}): {err_text}")
+                return None, None, None
 
-                op_data = resp.json()
-                op_name = op_data.get("name")
-                if not op_name:
-                    print(f"[Veo2] No operation name returned: {op_data}")
-                    return None, None, None
+            op_data = resp.json()
+            op_name = op_data.get("name")
+            if not op_name:
+                print(f"[Veo2] No operation name returned: {op_data}")
+                return None, None, None
 
-                print(f"[Veo2] Operation started: {op_name}")
+            print(f"[Veo2] Operation started: {op_name}")
 
             # Step 2: Poll until done (max ~5 minutes, check every 15 seconds)
             max_polls = 20

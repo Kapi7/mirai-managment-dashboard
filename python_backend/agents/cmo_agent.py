@@ -775,14 +775,8 @@ Respond in JSON with keys:
             "goal_tracking": goal_tracking,
         }
 
-        await self.log_decision(
-            decision_type="kpi_report",
-            context={"period_days": period_days},
-            decision=report,
-            reasoning=f"KPI report for the past {period_days} days.",
-            confidence=0.90,
-            requires_approval=False,
-        )
+        # KPI reports are informational — don't log as decisions to avoid flooding
+        print(f"📊 [CMO] KPI report generated ({period_days} days, {len(assets)} assets)")
 
         return report
 

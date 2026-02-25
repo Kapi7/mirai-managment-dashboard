@@ -6010,7 +6010,7 @@ async def agents_list_content_assets(
         from dataclasses import asdict
         store = ContentAssetStore()
         assets = await store.list_assets(status=status, content_pillar=content_pillar, limit=limit)
-        return [asdict(a) for a in assets]
+        return {"assets": [asdict(a) for a in assets], "total": len(assets)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
