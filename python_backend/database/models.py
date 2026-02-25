@@ -829,3 +829,184 @@ class BlogSuggestion(Base):
     __table_args__ = (
         Index('idx_blog_suggestion_status', 'status', 'created_at'),
     )
+
+
+# ============================================================
+# AGENT SYSTEM
+# ============================================================
+
+class AgentTask(Base):
+    """Task queue for inter-agent communication"""
+    __tablename__ = "agent_tasks"
+
+    id = Column(Integer, primary_key=True)
+    uuid = Column(String(50), unique=True, nullable=False, index=True)
+
+    # Task routing
+    source_agent = Column(String(30), nullable=False)       # cmo, content, social, acquisition
+    target_agent = Column(String(30), nullable=False)       # cmo, content, social, acquisition
+    task_type = Column(String(50), nullable=False)           # create_content, publish_post, etc.
+    priority = Column(String(20), default="normal")          # urgent, high, normal, low
+
+    # Payload
+    params = Column(JSON, nullable=False)                    # Task-specific input parameters
+    result = Column(JSON)                                    # Task output when completed
+
+    # Dependencies
+    depends_on = Column(JSON)                                # List of task UUIDs that must complete first
+    parent_task_id = Column(String(50), index=True)          # CMO planning task that spawned this
+
+    # State
+    status = Column(String(20), default="pending", index=True)  # pending, in_progress, completed, failed, cancelled
+    error_message = Column(Text)
+    retry_count = Column(Integer, default=0)
+    max_retries = Column(Integer, default=3)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime)
+    completed_at = Column(DateTime)
+    scheduled_for = Column(DateTime, index=True)              # For deferred execution
+
+    __table_args__ = (
+        Index('idx_agent_task_queue', 'target_agent', 'status', 'scheduled_for'),
+        Index('idx_agent_task_parent', 'parent_task_id'),
+    )
+
+
+class AgentDecision(Base):
+    """Audit log for agent decisions — transparency and approval workflow"""
+    __tablename__ = "agent_decisions"
+
+    id = Column(Integer, primary_key=True)
+    uuid = Column(String(50), unique=True, nullable=False, index=True)
+    agent = Column(String(30), nullable=False, index=True)   # cmo, content, social, acquisition
+    decision_type = Column(String(50), nullable=False)        # strategy_plan, content_brief, publish_schedule, etc.
+    context = Column(JSON)                                     # Input data that informed the decision
+    decision = Column(JSON)                                    # The actual decision made
+    reasoning = Column(Text)                                   # AI's reasoning (for transparency)
+    confidence = Column(Numeric(3, 2))                         # 0.00 - 1.00
+    requires_approval = Column(Boolean, default=True)
+    approved_by = Column(Integer, ForeignKey("users.id"))
+    approved_at = Column(DateTime)
+    rejected_at = Column(DateTime)
+    rejection_reason = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    approver = relationship("User", foreign_keys=[approved_by])
+
+    __table_args__ = (
+        Index('idx_agent_decision_pending', 'agent', 'requires_approval', 'approved_at'),
+    )
+
+
+class ContentAsset(Base):
+    """Shared content assets — the bridge between organic and paid"""
+    __tablename__ = "content_assets"
+
+    id = Column(Integer, primary_key=True)
+    uuid = Column(String(50), unique=True, nullable=False, index=True)
+
+    # Content metadata
+    title = Column(Text, nullable=False)
+    content_pillar = Column(String(50), index=True)           # education, social_proof, product_showcase, lifestyle, promotion
+    content_category = Column(String(50))                      # how-to, before-after, product-feature, lifestyle, etc.
+    product_ids = Column(JSON)                                 # Linked Shopify product GIDs
+    brand = Column(String(100))                                # Product brand (Abib, COSRX, etc.)
+
+    # Text content variants (reusable across channels)
+    headline = Column(Text)                                    # Short punchy line
+    body_copy = Column(Text)                                   # Longer description
+    cta_text = Column(String(255))                             # Call to action
+    hashtags = Column(JSON)                                    # List of hashtags
+    seo_keywords = Column(JSON)                                # For blog/ad targeting
+
+    # Channel-specific text variants
+    instagram_caption = Column(Text)
+    tiktok_caption = Column(Text)
+    ad_headline = Column(Text)
+    ad_primary_text = Column(Text)
+    blog_intro = Column(Text)
+
+    # Visual content
+    primary_image_data = Column(Text)                          # Base64 main image
+    primary_image_url = Column(Text)                           # CDN URL once uploaded
+    primary_image_thumbnail = Column(Text)                     # Base64 JPEG thumbnail (256px)
+    primary_image_format = Column(String(10))                  # png, jpeg
+    carousel_images = Column(JSON)                             # [{data, thumbnail, format}]
+    video_data = Column(Text)                                  # Base64 video
+    video_url = Column(Text)                                   # CDN URL
+    video_thumbnail = Column(Text)                             # Base64 thumbnail of video
+    video_format = Column(String(10))                          # mp4, webm
+    video_duration_seconds = Column(Integer)
+
+    # Generation metadata
+    visual_direction = Column(Text)                            # The prompt used for image gen
+    video_direction = Column(Text)                             # The prompt used for video gen
+    ai_model_image = Column(String(50))                        # gemini, dalle
+    ai_model_video = Column(String(50))                        # veo2
+    ai_model_text = Column(String(50))                         # gemini, gpt4o
+    generation_params = Column(JSON)                           # Full params for reproducibility
+
+    # Usage tracking
+    used_in_organic = Column(Boolean, default=False)
+    used_in_paid = Column(Boolean, default=False)
+    used_in_blog = Column(Boolean, default=False)
+    organic_post_ids = Column(JSON)                            # Which social posts used this
+    ad_creative_ids = Column(JSON)                             # Which ads used this
+    blog_draft_ids = Column(JSON)                              # Which blogs used this
+
+    # Performance (aggregated from all channels)
+    total_impressions = Column(Integer, default=0)
+    total_engagement = Column(Integer, default=0)
+    total_clicks = Column(Integer, default=0)
+    organic_engagement_rate = Column(Numeric(5, 2))
+    ad_ctr = Column(Numeric(5, 2))
+    ad_roas = Column(Numeric(5, 2))
+
+    # Status
+    status = Column(String(30), default="draft", index=True)  # draft, ready, approved, archived
+    created_by_agent = Column(String(30))                      # Which agent created this
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_content_asset_pillar', 'content_pillar', 'status'),
+        Index('idx_content_asset_usage', 'used_in_organic', 'used_in_paid'),
+    )
+
+
+class ContentCalendarSlot(Base):
+    """Shared content calendar — planned content across all channels"""
+    __tablename__ = "content_calendar_slots"
+
+    id = Column(Integer, primary_key=True)
+    uuid = Column(String(50), unique=True, nullable=False, index=True)
+
+    date = Column(Date, nullable=False, index=True)
+    time_slot = Column(String(5))                              # "09:00", "18:00"
+
+    channel = Column(String(30), nullable=False)               # instagram, facebook, tiktok, meta_ads, blog
+    content_pillar = Column(String(50))                        # education, social_proof, product_showcase, lifestyle, promotion
+    content_category = Column(String(50))                      # how-to, before-after, etc.
+    post_type = Column(String(30))                             # photo, reel, carousel, story, ad, article
+
+    brief = Column(Text)                                       # What should be created
+    product_id = Column(String(100))                           # Target product Shopify GID
+
+    # Links to content asset and resulting post/ad
+    asset_uuid = Column(String(50), index=True)                # FK to content_assets.uuid
+    post_uuid = Column(String(50))                             # Resulting social post UUID
+    ad_id = Column(String(100))                                # Resulting Meta ad ID
+    blog_draft_uuid = Column(String(50))                       # Resulting blog draft UUID
+
+    status = Column(String(30), default="planned", index=True) # planned, asset_ready, published, cancelled
+    created_by_agent = Column(String(30))                      # Which agent created this slot
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_calendar_date_channel', 'date', 'channel'),
+        Index('idx_calendar_status', 'status', 'date'),
+    )

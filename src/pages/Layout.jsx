@@ -16,7 +16,8 @@ import {
   ClipboardList,
   Target,
   FileText,
-  Share2
+  Share2,
+  Bot
 } from "lucide-react";
 import {
   Sidebar,
@@ -49,6 +50,12 @@ const navigationSections = [
     label: "Analytics",
     items: [
       { title: "Reports", url: createPageUrl("Reports"), icon: BarChart3 },
+    ]
+  },
+  {
+    label: "AI Agents",
+    items: [
+      { title: "Agent Dashboard", url: createPageUrl("AgentDashboard"), icon: Bot },
     ]
   },
   {
