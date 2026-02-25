@@ -5870,15 +5870,36 @@ async def agents_approve_task(uuid: str, user: dict = Depends(require_auth)):
 @app.get("/agents/decisions")
 async def agents_list_decisions(
     agent: Optional[str] = None,
+    cleanup: bool = False,
     limit: int = 50,
     user: dict = Depends(require_auth),
 ):
-    """List recent agent decisions."""
+    """List recent agent decisions. Pass cleanup=true to auto-expire stale pending decisions."""
     if DB_SERVICE_AVAILABLE:
         try:
             from database.connection import get_db
             from database.models import AgentDecision
-            from sqlalchemy import select
+            from sqlalchemy import select, update
+            from datetime import timedelta as _td
+
+            # Auto-expire stale pending decisions older than 24h
+            if cleanup:
+                try:
+                    async with get_db() as db:
+                        cutoff = datetime.utcnow() - _td(hours=24)
+                        await db.execute(
+                            update(AgentDecision)
+                            .where(
+                                AgentDecision.requires_approval == True,
+                                AgentDecision.approved_at.is_(None),
+                                AgentDecision.rejected_at.is_(None),
+                                AgentDecision.created_at < cutoff,
+                            )
+                            .values(rejected_at=datetime.utcnow())
+                        )
+                    print(f"🧹 Cleaned up stale pending decisions (older than 24h)")
+                except Exception as cleanup_err:
+                    print(f"⚠️ Decision cleanup failed: {cleanup_err}")
 
             async with get_db() as db:
                 query = select(AgentDecision).order_by(AgentDecision.created_at.desc()).limit(limit)
@@ -6101,6 +6122,28 @@ async def agents_get_calendar(
 async def agents_plan_week(body: dict = {}, user: dict = Depends(require_auth)):
     """Trigger CMO weekly planning."""
     try:
+        # Dedup: prevent duplicate weekly plans within the same week
+        if DB_SERVICE_AVAILABLE:
+            try:
+                from database.connection import get_db
+                from database.models import AgentTask
+                from sqlalchemy import select
+                from datetime import timedelta as _td
+
+                async with get_db() as db:
+                    week_ago = datetime.utcnow() - _td(days=7)
+                    existing = await db.execute(
+                        select(AgentTask).where(
+                            AgentTask.task_type == "weekly_planning",
+                            AgentTask.created_at >= week_ago,
+                            AgentTask.status.in_(["pending", "in_progress", "completed"])
+                        )
+                    )
+                    if existing.scalars().first():
+                        return {"status": "already_planned", "message": "This week already has a plan. Click Force Orchestrator to re-run tasks."}
+            except Exception as dedup_err:
+                print(f"⚠️ Plan dedup check failed: {dedup_err}")
+
         from agents.base_agent import BaseAgent
 
         class _ManualAgent(BaseAgent):

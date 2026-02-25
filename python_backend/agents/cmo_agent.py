@@ -227,7 +227,7 @@ class CMOAgent(BaseAgent):
                 f"Brand rotation enforced to avoid repetition."
             ),
             confidence=0.85,
-            requires_approval=True,
+            requires_approval=False,
         )
 
         # ---------- Fill calendar slots ----------
@@ -290,7 +290,7 @@ class CMOAgent(BaseAgent):
                     "content_intent": "organic",
                 },
                 priority="normal",
-                requires_approval=True,
+                requires_approval=False,
                 decision_uuid=decision_uuid,
             )
             content_tasks.append(content_task_id)
@@ -306,7 +306,7 @@ class CMOAgent(BaseAgent):
                 },
                 priority="normal",
                 depends_on=[content_task_id],
-                requires_approval=True,
+                requires_approval=False,
                 decision_uuid=decision_uuid,
             )
 
@@ -350,7 +350,7 @@ class CMOAgent(BaseAgent):
                         "content_intent": "organic",
                     },
                     priority="normal",
-                    requires_approval=True,
+                    requires_approval=False,
                     decision_uuid=decision_uuid,
                 )
                 content_tasks.append(story_content_id)
@@ -365,7 +365,7 @@ class CMOAgent(BaseAgent):
                     },
                     priority="normal",
                     depends_on=[story_content_id],
-                    requires_approval=True,
+                    requires_approval=False,
                     decision_uuid=decision_uuid,
                 )
 
@@ -407,7 +407,7 @@ class CMOAgent(BaseAgent):
                     "content_intent": "organic",
                 },
                 priority="normal",
-                requires_approval=True,
+                requires_approval=False,
                 decision_uuid=decision_uuid,
             )
             content_tasks.append(tiktok_content_id)
@@ -422,7 +422,7 @@ class CMOAgent(BaseAgent):
                 },
                 priority="normal",
                 depends_on=[tiktok_content_id],
-                requires_approval=True,
+                requires_approval=False,
                 decision_uuid=decision_uuid,
             )
 
@@ -438,7 +438,7 @@ class CMOAgent(BaseAgent):
             },
             priority="normal",
             depends_on=content_tasks[:3],  # wait for first few assets
-            requires_approval=True,
+            requires_approval=False,
             decision_uuid=decision_uuid,
         )
 
@@ -612,7 +612,7 @@ recommendations (list).
             decision=allocation,
             reasoning=reasoning,
             confidence=0.80,
-            requires_approval=True,
+            requires_approval=False,
         )
 
         return allocation
@@ -680,7 +680,7 @@ Respond in JSON with keys:
             decision=parsed,
             reasoning=parsed.get("rationale", "AI-driven strategy pivot."),
             confidence=0.70,
-            requires_approval=True,
+            requires_approval=False,
         )
 
         return {

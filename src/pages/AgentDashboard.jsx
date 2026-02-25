@@ -262,7 +262,7 @@ export default function AgentDashboard() {
 
   const fetchDecisions = useCallback(async () => {
     try {
-      const res = await fetch(`${API_URL}/agents/decisions`, { headers: headers() });
+      const res = await fetch(`${API_URL}/agents/decisions?cleanup=true`, { headers: headers() });
       if (!res.ok) throw new Error('Failed to fetch decisions');
       const data = await res.json();
       // Derive status from raw fields if backend doesn't include it

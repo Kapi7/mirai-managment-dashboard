@@ -392,10 +392,7 @@ class ContentAgent(BaseAgent):
         ref_url  = params.get("product_image_url", "")
         intent   = params.get("content_intent", "organic")
 
-        await self.log_decision("create_social_asset",
-            {"concept": concept, "product": product, "post_type": ptype, "content_intent": intent},
-            {"action": "generate_image_and_caption"},
-            f"Social asset ({intent}) for '{concept}' via {engine}.", 0.85, False)
+        print(f"📝 [ContentAgent] Creating social asset ({intent}) for '{concept}' via {engine}")
 
         txt = await self._caption_variants(concept, product, pillar, ["instagram", "tiktok"],
                                            content_intent=intent)
@@ -432,10 +429,7 @@ class ContentAgent(BaseAgent):
         ref_url   = params.get("product_image_url", "")
         intent    = params.get("content_intent", "acquisition")
 
-        await self.log_decision("create_ad_creative",
-            {"concept": concept, "objective": objective, "content_intent": intent},
-            {"action": "generate_ad_asset"},
-            f"Ad ({intent}) for '{concept}', audience='{audience}', obj='{objective}'.", 0.8, True)
+        print(f"📝 [ContentAgent] Creating ad creative ({intent}) for '{concept}', audience='{audience}'")
 
         voice = ACQUISITION_VOICE if intent == "acquisition" else ORGANIC_VOICE
         prompt = (
@@ -485,10 +479,7 @@ class ContentAgent(BaseAgent):
         if not topic:
             return {"error": "topic is required"}
 
-        await self.log_decision("create_blog_article",
-            {"category": category, "topic": topic},
-            {"action": "generate_via_blog_generator"},
-            f"Blog in '{category}' about '{topic}'.", 0.9, True)
+        print(f"📝 [ContentAgent] Creating blog article: '{topic}' in {category}")
 
         draft = _get_blog_generator().generate_article(
             category=category, topic=topic, keywords=keywords,
@@ -522,10 +513,7 @@ class ContentAgent(BaseAgent):
         no_vid   = params.get("skip_video", False)
         intent   = params.get("content_intent", "organic")
 
-        await self.log_decision("create_multi_format_asset",
-            {"concept": concept, "product": product, "content_intent": intent},
-            {"action": "generate_all_formats"},
-            f"Multi-format ({intent}) for '{concept}'. Video={'no' if no_vid else 'yes'}.", 0.85, True)
+        print(f"📝 [ContentAgent] Creating multi-format asset ({intent}) for '{concept}', video={'no' if no_vid else 'yes'}")
 
         # Generate BOTH organic and acquisition text variants in parallel
         organic_txt_coro = self._caption_variants(concept, product, pillar,
@@ -592,10 +580,7 @@ class ContentAgent(BaseAgent):
         intent   = params.get("content_intent", "organic")
 
         tmpl = self._pick_concept(vkey, product, content_intent=intent)
-        await self.log_decision("create_enhanced_video",
-            {"concept": concept, "template": tmpl["title"], "takes": takes, "content_intent": intent},
-            {"action": "multi_take_video"},
-            f"{takes} takes ({intent}) via '{tmpl['title']}', best by size.", 0.75, False)
+        print(f"📝 [ContentAgent] Creating enhanced video ({intent}): {takes} takes via '{tmpl['title']}'")
 
         base = self._veo2_prompt(tmpl, product, content_intent=intent)
         txt = await self._caption_variants(concept, product, pillar, ["instagram", "tiktok"],
@@ -656,10 +641,7 @@ class ContentAgent(BaseAgent):
         do_sug     = params.get("generate_suggestions", True)
         count      = params.get("suggestion_count", 5)
 
-        await self.log_decision("analyze_content_gaps",
-            {"suggestions": do_sug, "count": count},
-            {"action": "run_gap_analysis"},
-            "Content gap analysis to find underserved topics.", 0.9, False)
+        print(f"📝 [ContentAgent] Running content gap analysis (suggestions={do_sug}, count={count})")
 
         seo = _get_seo_agent()
         gaps = seo.analyze_content_gaps(existing_articles=existing)
