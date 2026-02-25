@@ -1606,6 +1606,43 @@ app.all('/api/social-media/*', async (req, res) => {
   }
 });
 
+// ==================== AGENT SYSTEM ====================
+
+// Generic proxy for all /api/agents/* routes
+app.all('/api/agents/*', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const path = req.path.replace('/api', '');
+    const queryString = req.url.split('?')[1] || '';
+    const url = `${pythonBackendUrl}${path}${queryString ? '?' + queryString : ''}`;
+
+    console.log(`🤖 Proxying ${req.method} agents request: ${path}`);
+
+    const options = {
+      method: req.method,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': req.headers.authorization || ''
+      },
+      signal: AbortSignal.timeout(120000) // 2 min for AI generation
+    };
+
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      options.body = JSON.stringify(req.body);
+    }
+
+    const response = await fetch(url, options);
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('Agents proxy error:', error);
+    if (error.cause?.code === 'ECONNREFUSED') {
+      return res.status(503).json({ error: 'Agent backend unavailable' });
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

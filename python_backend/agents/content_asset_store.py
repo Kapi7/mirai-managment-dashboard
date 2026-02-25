@@ -61,6 +61,9 @@ class ContentAssetData:
     ai_model_text: str = ""
     generation_params: dict = field(default_factory=dict)
 
+    # Content intent
+    content_intent: str = ""  # "organic" or "acquisition"
+
     # Usage tracking
     used_in_organic: bool = False
     used_in_paid: bool = False

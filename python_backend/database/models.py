@@ -959,6 +959,9 @@ class ContentAsset(Base):
     ai_model_text = Column(String(50))                         # gemini, gpt4o
     generation_params = Column(JSON)                           # Full params for reproducibility
 
+    # Content intent
+    content_intent = Column(String(20))                        # "organic" or "acquisition"
+
     # Usage tracking
     used_in_organic = Column(Boolean, default=False)
     used_in_paid = Column(Boolean, default=False)
