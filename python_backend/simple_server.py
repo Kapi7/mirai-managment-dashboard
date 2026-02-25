@@ -5685,6 +5685,508 @@ async def sm_sync_account_analytics(days: int = 30, user: dict = Depends(require
         raise HTTPException(status_code=500, detail=f"Failed to sync analytics: {str(e)}")
 
 
+# ==================== AGENT SYSTEM ENDPOINTS ====================
+
+
+@app.get("/agents/orchestrator/status")
+async def agents_orchestrator_status(user: dict = Depends(require_auth)):
+    """Get orchestrator status."""
+    try:
+        from agents.orchestrator import get_orchestrator
+        orch = get_orchestrator()
+        return orch.get_status()
+    except Exception as e:
+        return {"is_running": False, "error": str(e)}
+
+
+@app.post("/agents/orchestrator/run")
+async def agents_orchestrator_force_run(user: dict = Depends(require_auth)):
+    """Force an immediate processing cycle."""
+    try:
+        from agents.orchestrator import get_orchestrator
+        orch = get_orchestrator()
+        result = await orch.force_run()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/agents/tasks")
+async def agents_list_tasks(
+    status: Optional[str] = None,
+    agent: Optional[str] = None,
+    limit: int = 50,
+    user: dict = Depends(require_auth),
+):
+    """List agent tasks with optional filters."""
+    if DB_SERVICE_AVAILABLE:
+        try:
+            from database.connection import get_db
+            from database.models import AgentTask
+            from sqlalchemy import select
+
+            async with get_db() as db:
+                query = select(AgentTask).order_by(AgentTask.created_at.desc()).limit(limit)
+                if status:
+                    query = query.where(AgentTask.status == status)
+                if agent:
+                    query = query.where(AgentTask.target_agent == agent)
+                result = await db.execute(query)
+                rows = result.scalars().all()
+                return [
+                    {
+                        "uuid": r.uuid,
+                        "source_agent": r.source_agent,
+                        "target_agent": r.target_agent,
+                        "task_type": r.task_type,
+                        "priority": r.priority,
+                        "status": r.status,
+                        "error_message": r.error_message,
+                        "retry_count": r.retry_count,
+                        "created_at": r.created_at.isoformat() if r.created_at else None,
+                        "started_at": r.started_at.isoformat() if r.started_at else None,
+                        "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+                        "has_result": r.result is not None,
+                    }
+                    for r in rows
+                ]
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # In-memory fallback
+    from agents.base_agent import BaseAgent
+    tasks = getattr(BaseAgent, '_memory_tasks', [])
+    filtered = tasks
+    if status:
+        filtered = [t for t in filtered if t.get("status") == status]
+    if agent:
+        filtered = [t for t in filtered if t.get("target_agent") == agent]
+    return filtered[:limit]
+
+
+@app.post("/agents/tasks")
+async def agents_create_task(body: dict, user: dict = Depends(require_auth)):
+    """Create a manual task for an agent."""
+    try:
+        from agents.base_agent import BaseAgent
+
+        class _ManualAgent(BaseAgent):
+            agent_name = "manual"
+            def get_supported_tasks(self):
+                return []
+
+        agent = _ManualAgent()
+        task_uuid = await agent.create_task(
+            target_agent=body.get("target_agent", "content"),
+            task_type=body.get("task_type", ""),
+            params=body.get("params", {}),
+            priority=body.get("priority", "normal"),
+        )
+        return {"uuid": task_uuid, "status": "pending"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/agents/tasks/{uuid}")
+async def agents_get_task(uuid: str, user: dict = Depends(require_auth)):
+    """Get task details by UUID."""
+    if DB_SERVICE_AVAILABLE:
+        try:
+            from database.connection import get_db
+            from database.models import AgentTask
+            from sqlalchemy import select
+
+            async with get_db() as db:
+                result = await db.execute(
+                    select(AgentTask).where(AgentTask.uuid == uuid)
+                )
+                r = result.scalar_one_or_none()
+                if not r:
+                    raise HTTPException(status_code=404, detail="Task not found")
+                return {
+                    "uuid": r.uuid,
+                    "source_agent": r.source_agent,
+                    "target_agent": r.target_agent,
+                    "task_type": r.task_type,
+                    "priority": r.priority,
+                    "params": r.params,
+                    "result": r.result,
+                    "depends_on": r.depends_on,
+                    "parent_task_id": r.parent_task_id,
+                    "status": r.status,
+                    "error_message": r.error_message,
+                    "retry_count": r.retry_count,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                    "started_at": r.started_at.isoformat() if r.started_at else None,
+                    "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+                }
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    raise HTTPException(status_code=404, detail="Task not found")
+
+
+@app.post("/agents/tasks/{uuid}/approve")
+async def agents_approve_task(uuid: str, user: dict = Depends(require_auth)):
+    """Approve an awaiting_approval task for execution."""
+    if DB_SERVICE_AVAILABLE:
+        try:
+            from database.connection import get_db
+            from database.models import AgentTask
+            from sqlalchemy import update
+
+            async with get_db() as db:
+                await db.execute(
+                    update(AgentTask)
+                    .where(AgentTask.uuid == uuid)
+                    .where(AgentTask.status == "awaiting_approval")
+                    .values(
+                        status="pending",
+                        approved_by=user.get("user_id"),
+                        approved_at=datetime.utcnow(),
+                    )
+                )
+            return {"uuid": uuid, "status": "approved"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    raise HTTPException(status_code=500, detail="Database not available")
+
+
+# ---- Agent Decisions ----
+
+@app.get("/agents/decisions")
+async def agents_list_decisions(
+    agent: Optional[str] = None,
+    limit: int = 50,
+    user: dict = Depends(require_auth),
+):
+    """List recent agent decisions."""
+    if DB_SERVICE_AVAILABLE:
+        try:
+            from database.connection import get_db
+            from database.models import AgentDecision
+            from sqlalchemy import select
+
+            async with get_db() as db:
+                query = select(AgentDecision).order_by(AgentDecision.created_at.desc()).limit(limit)
+                if agent:
+                    query = query.where(AgentDecision.agent == agent)
+                result = await db.execute(query)
+                rows = result.scalars().all()
+                def _decision_status(r):
+                    if r.rejected_at:
+                        return "rejected"
+                    if r.approved_at:
+                        return "approved"
+                    if r.requires_approval:
+                        return "pending_approval"
+                    return "auto_approved"
+
+                return [
+                    {
+                        "uuid": r.uuid,
+                        "agent": r.agent,
+                        "decision_type": r.decision_type,
+                        "reasoning": r.reasoning,
+                        "confidence": float(r.confidence) if r.confidence else None,
+                        "requires_approval": r.requires_approval,
+                        "approved_at": r.approved_at.isoformat() if r.approved_at else None,
+                        "rejected_at": r.rejected_at.isoformat() if r.rejected_at else None,
+                        "created_at": r.created_at.isoformat() if r.created_at else None,
+                        "status": _decision_status(r),
+                    }
+                    for r in rows
+                ]
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    from agents.base_agent import BaseAgent
+    decisions = getattr(BaseAgent, '_memory_decisions', [])
+    if agent:
+        decisions = [d for d in decisions if d.get("agent") == agent]
+    return decisions[:limit]
+
+
+@app.post("/agents/decisions/{uuid}/approve")
+async def agents_approve_decision(uuid: str, user: dict = Depends(require_auth)):
+    """Approve an agent decision and cascade to linked tasks."""
+    if DB_SERVICE_AVAILABLE:
+        try:
+            from database.connection import get_db
+            from database.models import AgentDecision, AgentTask
+            from sqlalchemy import update
+
+            async with get_db() as db:
+                # Approve the decision
+                await db.execute(
+                    update(AgentDecision)
+                    .where(AgentDecision.uuid == uuid)
+                    .values(approved_at=datetime.utcnow(), approved_by=user.get("user_id"))
+                )
+
+                # Cascade: move all linked tasks from awaiting_approval → pending
+                await db.execute(
+                    update(AgentTask)
+                    .where(AgentTask.decision_uuid == uuid)
+                    .where(AgentTask.status == "awaiting_approval")
+                    .values(
+                        status="pending",
+                        approved_by=user.get("user_id"),
+                        approved_at=datetime.utcnow(),
+                    )
+                )
+
+            return {"uuid": uuid, "status": "approved"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    raise HTTPException(status_code=500, detail="Database not available")
+
+
+@app.post("/agents/decisions/{uuid}/reject")
+async def agents_reject_decision(uuid: str, body: dict = {}, user: dict = Depends(require_auth)):
+    """Reject an agent decision and cancel linked tasks."""
+    if DB_SERVICE_AVAILABLE:
+        try:
+            from database.connection import get_db
+            from database.models import AgentDecision, AgentTask
+            from sqlalchemy import update
+
+            reason = body.get("reason", "")
+            async with get_db() as db:
+                # Reject the decision
+                await db.execute(
+                    update(AgentDecision)
+                    .where(AgentDecision.uuid == uuid)
+                    .values(
+                        rejected_at=datetime.utcnow(),
+                        rejection_reason=reason,
+                    )
+                )
+
+                # Cascade: cancel all linked tasks
+                await db.execute(
+                    update(AgentTask)
+                    .where(AgentTask.decision_uuid == uuid)
+                    .where(AgentTask.status == "awaiting_approval")
+                    .values(
+                        status="cancelled",
+                        error_message=f"Decision rejected: {reason}" if reason else "Decision rejected",
+                    )
+                )
+
+            return {"uuid": uuid, "status": "rejected"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    raise HTTPException(status_code=500, detail="Database not available")
+
+
+# ---- Content Assets ----
+
+@app.get("/agents/content-assets")
+async def agents_list_content_assets(
+    status: Optional[str] = None,
+    content_pillar: Optional[str] = None,
+    limit: int = 50,
+    user: dict = Depends(require_auth),
+):
+    """List content assets with optional filters."""
+    try:
+        from agents.content_asset_store import ContentAssetStore
+        from dataclasses import asdict
+        store = ContentAssetStore()
+        assets = await store.list_assets(status=status, content_pillar=content_pillar, limit=limit)
+        return [asdict(a) for a in assets]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/agents/content-assets/{uuid}")
+async def agents_get_content_asset(uuid: str, user: dict = Depends(require_auth)):
+    """Get content asset details."""
+    try:
+        from agents.content_asset_store import ContentAssetStore
+        from dataclasses import asdict
+        store = ContentAssetStore()
+        asset = await store.get_asset(uuid)
+        if not asset:
+            raise HTTPException(status_code=404, detail="Asset not found")
+        return asdict(asset)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/agents/content-assets/generate")
+async def agents_generate_content_asset(body: dict, user: dict = Depends(require_auth)):
+    """Manually trigger content asset creation."""
+    try:
+        from agents.base_agent import BaseAgent
+
+        class _ManualAgent(BaseAgent):
+            agent_name = "manual"
+            def get_supported_tasks(self):
+                return []
+
+        agent = _ManualAgent()
+        task_uuid = await agent.create_task(
+            target_agent="content",
+            task_type=body.get("task_type", "create_multi_format_asset"),
+            params=body.get("params", {}),
+            priority="high",
+        )
+        return {"task_uuid": task_uuid, "status": "queued"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---- Content Calendar ----
+
+@app.get("/agents/calendar")
+async def agents_get_calendar(
+    start_date: str = "",
+    end_date: str = "",
+    user: dict = Depends(require_auth),
+):
+    """Get content calendar for a date range."""
+    try:
+        from agents.content_calendar import ContentCalendar
+        from dataclasses import asdict
+        from datetime import date as date_type
+
+        cal = ContentCalendar()
+
+        if not start_date:
+            today = date_type.today()
+            start_date = (today - timedelta(days=today.weekday())).isoformat()
+        if not end_date:
+            end_date = (date_type.fromisoformat(start_date) + timedelta(days=7)).isoformat()
+
+        slots = await cal.get_week_plan(start_date)
+        return {
+            "start_date": start_date,
+            "end_date": end_date,
+            "slots": [asdict(s) for s in slots],
+            "total": len(slots),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/agents/calendar/plan-week")
+async def agents_plan_week(body: dict = {}, user: dict = Depends(require_auth)):
+    """Trigger CMO weekly planning."""
+    try:
+        from agents.base_agent import BaseAgent
+
+        class _ManualAgent(BaseAgent):
+            agent_name = "manual"
+            def get_supported_tasks(self):
+                return []
+
+        agent = _ManualAgent()
+        task_uuid = await agent.create_task(
+            target_agent="cmo",
+            task_type="weekly_planning",
+            params=body.get("params", {}),
+            priority="high",
+        )
+        return {"task_uuid": task_uuid, "status": "queued"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---- CMO Dashboard ----
+
+@app.get("/agents/cmo/status")
+async def agents_cmo_status(user: dict = Depends(require_auth)):
+    """Get CMO agent status and summary."""
+    try:
+        from agents.orchestrator import get_orchestrator
+        orch = get_orchestrator()
+        orch_status = orch.get_status()
+
+        # Count tasks by status
+        task_counts = {"pending": 0, "in_progress": 0, "completed": 0, "failed": 0}
+        if DB_SERVICE_AVAILABLE:
+            try:
+                from database.connection import get_db
+                from database.models import AgentTask
+                from sqlalchemy import select, func
+
+                async with get_db() as db:
+                    for status_val in task_counts:
+                        result = await db.execute(
+                            select(func.count()).select_from(AgentTask).where(AgentTask.status == status_val)
+                        )
+                        task_counts[status_val] = result.scalar() or 0
+            except Exception:
+                pass
+
+        return {
+            "orchestrator": orch_status,
+            "task_counts": task_counts,
+            "agents": ["cmo", "content", "social", "acquisition"],
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/agents/cmo/kpis")
+async def agents_cmo_kpis(days: int = 30, user: dict = Depends(require_auth)):
+    """Get CMO KPI tracking data."""
+    try:
+        from agents.cmo_agent import CMOAgent
+        cmo = CMOAgent()
+        result = await cmo.execute_task({
+            "task_type": "generate_kpi_report",
+            "params": {"period_days": days}
+        })
+        return result.get("data", result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---- Pending Count (for sidebar badge) ----
+
+@app.get("/agents/pending-count")
+async def agents_pending_count(user: dict = Depends(require_auth)):
+    """Get count of pending approvals for sidebar badge."""
+    counts = {"pending_decisions": 0, "pending_tasks": 0}
+    if DB_SERVICE_AVAILABLE:
+        try:
+            from database.connection import get_db
+            from database.models import AgentDecision, AgentTask
+            from sqlalchemy import select, func
+
+            async with get_db() as db:
+                # Pending decisions (requires_approval=True, not yet approved or rejected)
+                result = await db.execute(
+                    select(func.count()).select_from(AgentDecision)
+                    .where(AgentDecision.requires_approval == True)
+                    .where(AgentDecision.approved_at.is_(None))
+                    .where(AgentDecision.rejected_at.is_(None))
+                )
+                counts["pending_decisions"] = result.scalar() or 0
+
+                # Tasks awaiting approval
+                result = await db.execute(
+                    select(func.count()).select_from(AgentTask)
+                    .where(AgentTask.status == "awaiting_approval")
+                )
+                counts["pending_tasks"] = result.scalar() or 0
+        except Exception:
+            pass
+
+    counts["total"] = counts["pending_decisions"] + counts["pending_tasks"]
+    return counts
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8080))
