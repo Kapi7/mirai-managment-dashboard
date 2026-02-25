@@ -6122,28 +6122,6 @@ async def agents_get_calendar(
 async def agents_plan_week(body: dict = {}, user: dict = Depends(require_auth)):
     """Trigger CMO weekly planning."""
     try:
-        # Dedup: prevent duplicate weekly plans within the same week
-        if DB_SERVICE_AVAILABLE:
-            try:
-                from database.connection import get_db
-                from database.models import AgentTask
-                from sqlalchemy import select
-                from datetime import timedelta as _td
-
-                async with get_db() as db:
-                    week_ago = datetime.utcnow() - _td(days=7)
-                    existing = await db.execute(
-                        select(AgentTask).where(
-                            AgentTask.task_type == "weekly_planning",
-                            AgentTask.created_at >= week_ago,
-                            AgentTask.status.in_(["pending", "in_progress", "completed"])
-                        )
-                    )
-                    if existing.scalars().first():
-                        return {"status": "already_planned", "message": "This week already has a plan. Click Force Orchestrator to re-run tasks."}
-            except Exception as dedup_err:
-                print(f"⚠️ Plan dedup check failed: {dedup_err}")
-
         from agents.base_agent import BaseAgent
 
         class _ManualAgent(BaseAgent):

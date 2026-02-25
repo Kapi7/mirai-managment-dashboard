@@ -214,6 +214,9 @@ export default function AgentDashboard() {
   const [showNewAssetDialog, setShowNewAssetDialog] = useState(false);
   const [newAssetType, setNewAssetType] = useState('social_post');
 
+  // Quick action loading state
+  const [quickActionLoading, setQuickActionLoading] = useState(null);
+
   // Calendar
   const [calendarSlots, setCalendarSlots] = useState([]);
 
@@ -378,10 +381,12 @@ export default function AgentDashboard() {
       toast({ title: 'Error', description: `Unknown action: ${action}`, variant: 'destructive' });
       return;
     }
+    setQuickActionLoading(action);
     try {
       const res = await fetch(url, {
         method: 'POST',
         headers: headers(),
+        body: JSON.stringify({}),
       });
       if (!res.ok) throw new Error(`Failed to execute ${action}`);
       const data = await res.json();
@@ -389,16 +394,25 @@ export default function AgentDashboard() {
       // Refresh overview immediately
       fetchAgents();
       fetchKpis();
-      // Refresh again after 5s to catch orchestrator results
+      // Refresh again after 5s and 15s to catch orchestrator results
       setTimeout(() => {
         fetchAgents();
         fetchKpis();
         fetchTasks();
         fetchDecisions();
         fetchCalendar();
+        fetchAssets();
       }, 5000);
+      setTimeout(() => {
+        fetchAgents();
+        fetchKpis();
+        fetchTasks();
+        fetchAssets();
+      }, 15000);
     } catch (err) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
+    } finally {
+      setQuickActionLoading(null);
     }
   };
 
@@ -612,13 +626,22 @@ export default function AgentDashboard() {
             </CardHeader>
             <CardContent>
               <div className="flex items-center gap-3">
-                <Button onClick={() => handleQuickAction('plan-week')} className="gap-2">
-                  <Calendar className="w-4 h-4" />
-                  Plan This Week
+                <Button
+                  onClick={() => handleQuickAction('plan-week')}
+                  disabled={!!quickActionLoading}
+                  className="gap-2"
+                >
+                  {quickActionLoading === 'plan-week' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Calendar className="w-4 h-4" />}
+                  {quickActionLoading === 'plan-week' ? 'Planning...' : 'Plan This Week'}
                 </Button>
-                <Button variant="outline" onClick={() => handleQuickAction('force-orchestrator')} className="gap-2">
-                  <Play className="w-4 h-4" />
-                  Force Orchestrator Run
+                <Button
+                  variant="outline"
+                  onClick={() => handleQuickAction('force-orchestrator')}
+                  disabled={!!quickActionLoading}
+                  className="gap-2"
+                >
+                  {quickActionLoading === 'force-orchestrator' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                  {quickActionLoading === 'force-orchestrator' ? 'Running...' : 'Force Orchestrator Run'}
                 </Button>
               </div>
             </CardContent>
