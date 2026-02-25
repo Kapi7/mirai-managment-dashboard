@@ -386,9 +386,17 @@ export default function AgentDashboard() {
       if (!res.ok) throw new Error(`Failed to execute ${action}`);
       const data = await res.json();
       toast({ title: 'Action Triggered', description: data.message || `${action} initiated` });
-      // Refresh overview after action
+      // Refresh overview immediately
       fetchAgents();
       fetchKpis();
+      // Refresh again after 5s to catch orchestrator results
+      setTimeout(() => {
+        fetchAgents();
+        fetchKpis();
+        fetchTasks();
+        fetchDecisions();
+        fetchCalendar();
+      }, 5000);
     } catch (err) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
@@ -401,10 +409,14 @@ export default function AgentDashboard() {
         headers: headers(),
         body: JSON.stringify({ asset_type: newAssetType }),
       });
-      if (!res.ok) throw new Error('Failed to queue asset creation');
-      toast({ title: 'Queued', description: 'Asset generation task queued successfully' });
+      if (!res.ok) throw new Error('Failed to start asset creation');
+      const data = await res.json();
+      toast({ title: 'Started', description: data.message || 'Content generation started' });
       setShowNewAssetDialog(false);
       fetchAssets();
+      fetchTasks();
+      // Refresh again after 5s to catch results
+      setTimeout(() => { fetchAssets(); fetchTasks(); }, 5000);
     } catch (err) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
     }
@@ -611,6 +623,18 @@ export default function AgentDashboard() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Onboarding guidance - shown when all agents are idle */}
+          {(!agents?.length || agents.every(a => a.status === 'idle' || !a.status)) && (
+            <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+              <h4 className="font-medium text-blue-900 dark:text-blue-100 mb-1">👋 Get Started</h4>
+              <p className="text-sm text-blue-700 dark:text-blue-300">
+                Click <strong>"Plan This Week"</strong> above to have the CMO agent create your weekly content calendar.
+                The agent will analyze your products and generate content tasks for Instagram, TikTok, and ads.
+                After planning, check the <strong>Tasks</strong> and <strong>Calendar</strong> tabs to see the results.
+              </p>
+            </div>
+          )}
         </TabsContent>
 
         {/* ==================== TASKS TAB ==================== */}

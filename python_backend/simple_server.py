@@ -566,6 +566,16 @@ async def startup_event():
     except Exception as e:
         print(f"⚠️ Database init: {e}")
 
+    # Start Agent Orchestrator as background task
+    try:
+        import asyncio as _asyncio
+        from agents.orchestrator import get_orchestrator
+        orch = get_orchestrator()
+        _asyncio.create_task(orch.start())
+        print("✅ Agent Orchestrator started as background task")
+    except Exception as e:
+        print(f"⚠️ Agent Orchestrator failed to start: {e}")
+
     # Check for google-ads.yaml
     config_path = os.getenv("GOOGLE_ADS_CONFIG", "google-ads.yaml")
     config_locations = [
@@ -6040,7 +6050,16 @@ async def agents_generate_content_asset(body: dict, user: dict = Depends(require
             params=body.get("params", {}),
             priority="high",
         )
-        return {"task_uuid": task_uuid, "status": "queued"}
+
+        # Auto-trigger orchestrator to process immediately
+        try:
+            from agents.orchestrator import get_orchestrator
+            orch = get_orchestrator()
+            await orch.force_run()
+        except Exception as orch_err:
+            print(f"⚠️ Orchestrator force_run after generate: {orch_err}")
+
+        return {"task_uuid": task_uuid, "status": "processing", "message": "Content generation started"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -6096,7 +6115,16 @@ async def agents_plan_week(body: dict = {}, user: dict = Depends(require_auth)):
             params=body.get("params", {}),
             priority="high",
         )
-        return {"task_uuid": task_uuid, "status": "queued"}
+
+        # Auto-trigger orchestrator to process immediately
+        try:
+            from agents.orchestrator import get_orchestrator
+            orch = get_orchestrator()
+            await orch.force_run()
+        except Exception as orch_err:
+            print(f"⚠️ Orchestrator force_run after plan-week: {orch_err}")
+
+        return {"task_uuid": task_uuid, "status": "processing", "message": "Weekly plan is being created by CMO agent"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
