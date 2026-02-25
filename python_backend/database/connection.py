@@ -278,6 +278,37 @@ async def init_db():
                     END IF;
                 END $$;
                 """,
+                # Add content_intent column to content_assets (organic vs acquisition)
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'content_assets' AND column_name = 'content_intent'
+                    ) THEN
+                        ALTER TABLE content_assets ADD COLUMN content_intent VARCHAR(20);
+                    END IF;
+                END $$;
+                """,
+                # Add approval workflow columns to agent_tasks
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'agent_tasks' AND column_name = 'requires_approval') THEN
+                        ALTER TABLE agent_tasks ADD COLUMN requires_approval BOOLEAN DEFAULT FALSE;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'agent_tasks' AND column_name = 'approved_by') THEN
+                        ALTER TABLE agent_tasks ADD COLUMN approved_by INTEGER;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'agent_tasks' AND column_name = 'approved_at') THEN
+                        ALTER TABLE agent_tasks ADD COLUMN approved_at TIMESTAMP;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'agent_tasks' AND column_name = 'decision_uuid') THEN
+                        ALTER TABLE agent_tasks ADD COLUMN decision_uuid VARCHAR(50);
+                        CREATE INDEX IF NOT EXISTS idx_agent_task_decision_uuid ON agent_tasks(decision_uuid);
+                    END IF;
+                END $$;
+                """,
             ]
 
             for migration in migrations:
