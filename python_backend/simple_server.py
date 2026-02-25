@@ -5743,7 +5743,7 @@ async def agents_list_tasks(
                     query = query.where(AgentTask.target_agent == agent)
                 result = await db.execute(query)
                 rows = result.scalars().all()
-                return [
+                task_list = [
                     {
                         "uuid": r.uuid,
                         "source_agent": r.source_agent,
@@ -5760,6 +5760,7 @@ async def agents_list_tasks(
                     }
                     for r in rows
                 ]
+                return {"tasks": task_list, "total": len(task_list)}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -5771,7 +5772,7 @@ async def agents_list_tasks(
         filtered = [t for t in filtered if t.get("status") == status]
     if agent:
         filtered = [t for t in filtered if t.get("target_agent") == agent]
-    return filtered[:limit]
+    return {"tasks": filtered[:limit], "total": len(filtered)}
 
 
 @app.post("/agents/tasks")
@@ -6027,6 +6028,21 @@ async def agents_list_content_assets(
 ):
     """List content assets with optional filters."""
     try:
+        # One-time migration: update old "draft" assets to "ready"
+        if DB_SERVICE_AVAILABLE:
+            try:
+                from database.connection import get_db
+                from database.models import ContentAsset
+                from sqlalchemy import update as _sa_update
+                async with get_db() as db:
+                    await db.execute(
+                        _sa_update(ContentAsset)
+                        .where(ContentAsset.status == "draft")
+                        .values(status="ready")
+                    )
+            except Exception:
+                pass  # Non-critical migration
+
         from agents.content_asset_store import ContentAssetStore
         from dataclasses import asdict
         store = ContentAssetStore()

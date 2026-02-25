@@ -257,7 +257,7 @@ export default function AgentDashboard() {
       const res = await fetch(`${API_URL}/agents/tasks?${params}`, { headers: headers() });
       if (!res.ok) throw new Error('Failed to fetch tasks');
       const data = await res.json();
-      setTasks(data.tasks || []);
+      setTasks(Array.isArray(data) ? data : (data.tasks || []));
     } catch (err) {
       console.error('Tasks fetch error:', err);
     }
@@ -1028,9 +1028,9 @@ export default function AgentDashboard() {
                 <Card key={asset.uuid || asset.id} className="overflow-hidden">
                   {/* Thumbnail */}
                   <div className="h-40 bg-slate-100 flex items-center justify-center">
-                    {asset.thumbnail_url ? (
+                    {(asset.primary_image_thumbnail || asset.primary_image_data || asset.thumbnail_url) ? (
                       <img
-                        src={asset.thumbnail_url}
+                        src={asset.primary_image_thumbnail || asset.primary_image_data || asset.thumbnail_url}
                         alt={asset.title || 'Asset thumbnail'}
                         className="w-full h-full object-cover"
                       />
@@ -1047,7 +1047,7 @@ export default function AgentDashboard() {
                     {/* Pillar + usage */}
                     <div className="flex flex-wrap items-center gap-1.5">
                       {pillarBadge(asset.content_pillar)}
-                      {asset.usage?.map((u) => (
+                      {[asset.used_in_organic && 'organic', asset.used_in_paid && 'paid', asset.used_in_blog && 'blog'].filter(Boolean).map((u) => (
                         <Badge key={u} variant="outline" className="text-xs capitalize">{u}</Badge>
                       ))}
                     </div>
@@ -1055,15 +1055,15 @@ export default function AgentDashboard() {
                     <div className="flex items-center gap-4 text-xs text-slate-500 pt-1 border-t">
                       <span className="flex items-center gap-1">
                         <Eye className="w-3 h-3" />
-                        {formatNumber(asset.impressions)}
+                        {formatNumber(asset.total_impressions || asset.impressions || 0)}
                       </span>
                       <span className="flex items-center gap-1">
                         <TrendingUp className="w-3 h-3" />
-                        {formatNumber(asset.engagement)}
+                        {formatNumber(asset.total_engagement || asset.engagement || 0)}
                       </span>
                       <span className="flex items-center gap-1">
                         <MousePointer className="w-3 h-3" />
-                        {formatNumber(asset.clicks)}
+                        {formatNumber(asset.total_clicks || asset.clicks || 0)}
                       </span>
                     </div>
                   </CardContent>
