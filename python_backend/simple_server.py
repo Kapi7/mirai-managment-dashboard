@@ -566,6 +566,23 @@ async def startup_event():
     except Exception as e:
         print(f"⚠️ Database init: {e}")
 
+    # Verify agent tables are queryable
+    try:
+        from database.connection import get_db
+        from sqlalchemy import text as _text
+        async with get_db() as db:
+            r = await db.execute(_text("SELECT count(*) FROM content_assets"))
+            asset_count = r.scalar()
+            r = await db.execute(_text("SELECT count(*) FROM agent_tasks"))
+            task_count = r.scalar()
+            r = await db.execute(_text("SELECT count(*) FROM agent_decisions"))
+            decision_count = r.scalar()
+            print(f"✅ Agent tables OK: {asset_count} assets, {task_count} tasks, {decision_count} decisions")
+    except Exception as e:
+        print(f"❌ Agent table check failed: {e}")
+        import traceback
+        traceback.print_exc()
+
     # Start Agent Orchestrator as background task
     try:
         import asyncio as _asyncio

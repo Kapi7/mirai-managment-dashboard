@@ -315,7 +315,35 @@ async def init_db():
                 try:
                     await conn.execute(text(migration))
                 except Exception as me:
-                    print(f"⚠️ Migration note: {me}")
+                    print(f"❌ Migration FAILED: {me}")
+                    import traceback
+                    traceback.print_exc()
+
+            # ---- Self-healing: verify critical agent columns exist ----
+            # These columns were added after initial table creation and
+            # ALTER TABLE migrations may have silently failed on Render.
+            critical_columns = [
+                ("content_assets", "content_intent", "VARCHAR(20)"),
+                ("agent_tasks", "requires_approval", "BOOLEAN DEFAULT FALSE"),
+                ("agent_tasks", "approved_by", "INTEGER"),
+                ("agent_tasks", "approved_at", "TIMESTAMP"),
+                ("agent_tasks", "decision_uuid", "VARCHAR(50)"),
+            ]
+
+            for table_name, col_name, col_type in critical_columns:
+                try:
+                    check = await conn.execute(text(
+                        f"SELECT 1 FROM information_schema.columns "
+                        f"WHERE table_name='{table_name}' AND column_name='{col_name}'"
+                    ))
+                    if not check.fetchone():
+                        print(f"🔧 Adding missing column {table_name}.{col_name}")
+                        await conn.execute(text(
+                            f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"
+                        ))
+                        print(f"✅ Added {table_name}.{col_name}")
+                except Exception as e:
+                    print(f"❌ Failed to verify/add {table_name}.{col_name}: {e}")
 
         print("✅ Database initialized successfully")
         return True

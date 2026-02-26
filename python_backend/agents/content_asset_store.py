@@ -102,7 +102,8 @@ class ContentAssetStore:
             try:
                 return await self._save_db(asset)
             except Exception as e:
-                print(f"⚠️ DB save failed, falling back to JSON: {e}")
+                import traceback
+                print(f"❌ DB save failed, falling back to JSON: {e}\n{traceback.format_exc()}")
 
         return self._save_json(asset)
 
@@ -112,7 +113,8 @@ class ContentAssetStore:
             try:
                 return await self._get_db(uuid)
             except Exception as e:
-                print(f"⚠️ DB read failed: {e}")
+                import traceback
+                print(f"❌ DB read failed: {e}\n{traceback.format_exc()}")
         return self._get_json(uuid)
 
     async def list_assets(
@@ -128,7 +130,8 @@ class ContentAssetStore:
             try:
                 return await self._list_db(status, content_pillar, used_in_organic, used_in_paid, limit)
             except Exception as e:
-                print(f"⚠️ DB list failed: {e}")
+                import traceback
+                print(f"❌ DB list failed: {e}\n{traceback.format_exc()}")
         return self._list_json(status, content_pillar, limit)
 
     async def mark_used(self, uuid: str, channel: str, reference_id: str):
@@ -173,7 +176,8 @@ class ContentAssetStore:
             try:
                 return await self._delete_db(uuid)
             except Exception as e:
-                print(f"⚠️ DB delete failed: {e}")
+                import traceback
+                print(f"❌ DB delete failed: {e}\n{traceback.format_exc()}")
         return self._delete_json(uuid)
 
     # ---- Database operations ----
