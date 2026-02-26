@@ -278,8 +278,23 @@ class ContentAssetStore:
         from database.models import ContentAsset
         from sqlalchemy import select
 
+        # Select only columns needed for list view — avoids loading
+        # multi-MB blob columns (primary_image_data, video_data, etc.)
+        list_columns = [
+            ContentAsset.uuid, ContentAsset.title, ContentAsset.content_pillar,
+            ContentAsset.content_category, ContentAsset.product_ids, ContentAsset.brand,
+            ContentAsset.headline, ContentAsset.body_copy, ContentAsset.cta_text,
+            ContentAsset.hashtags, ContentAsset.primary_image_thumbnail,
+            ContentAsset.video_thumbnail, ContentAsset.content_intent,
+            ContentAsset.used_in_organic, ContentAsset.used_in_paid,
+            ContentAsset.used_in_blog, ContentAsset.total_impressions,
+            ContentAsset.total_engagement, ContentAsset.total_clicks,
+            ContentAsset.status, ContentAsset.created_by_agent,
+            ContentAsset.created_at, ContentAsset.updated_at,
+        ]
+
         async with get_db() as db:
-            query = select(ContentAsset).order_by(ContentAsset.created_at.desc()).limit(limit)
+            query = select(*list_columns).order_by(ContentAsset.created_at.desc()).limit(limit)
             if status:
                 query = query.where(ContentAsset.status == status)
             if content_pillar:
@@ -290,7 +305,7 @@ class ContentAssetStore:
                 query = query.where(ContentAsset.used_in_paid == used_in_paid)
 
             result = await db.execute(query)
-            rows = result.scalars().all()
+            rows = result.all()  # Returns Row tuples (not ORM objects)
 
             assets = []
             for row in rows:
@@ -305,6 +320,7 @@ class ContentAssetStore:
                     body_copy=row.body_copy or "",
                     cta_text=row.cta_text or "",
                     hashtags=row.hashtags or [],
+                    content_intent=row.content_intent or "",
                     primary_image_thumbnail=row.primary_image_thumbnail,
                     video_thumbnail=row.video_thumbnail,
                     used_in_organic=row.used_in_organic or False,
@@ -312,6 +328,7 @@ class ContentAssetStore:
                     used_in_blog=row.used_in_blog or False,
                     total_impressions=row.total_impressions or 0,
                     total_engagement=row.total_engagement or 0,
+                    total_clicks=row.total_clicks or 0,
                     status=row.status or "draft",
                     created_by_agent=row.created_by_agent or "",
                     created_at=row.created_at.isoformat() if row.created_at else "",

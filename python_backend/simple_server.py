@@ -583,6 +583,21 @@ async def startup_event():
         import traceback
         traceback.print_exc()
 
+    # One-time migration: update old "draft" assets to "ready"
+    try:
+        from database.connection import get_db
+        from database.models import ContentAsset
+        from sqlalchemy import update as _sa_update
+        async with get_db() as db:
+            result = await db.execute(
+                _sa_update(ContentAsset)
+                .where(ContentAsset.status == "draft")
+                .values(status="ready")
+            )
+            print(f"✅ Migrated draft → ready assets (rows affected: {result.rowcount})")
+    except Exception as e:
+        print(f"⚠️ Draft→ready migration: {e}")
+
     # Start Agent Orchestrator as background task
     try:
         import asyncio as _asyncio
@@ -6045,27 +6060,18 @@ async def agents_list_content_assets(
 ):
     """List content assets with optional filters."""
     try:
-        # One-time migration: update old "draft" assets to "ready"
-        if DB_SERVICE_AVAILABLE:
-            try:
-                from database.connection import get_db
-                from database.models import ContentAsset
-                from sqlalchemy import update as _sa_update
-                async with get_db() as db:
-                    await db.execute(
-                        _sa_update(ContentAsset)
-                        .where(ContentAsset.status == "draft")
-                        .values(status="ready")
-                    )
-            except Exception:
-                pass  # Non-critical migration
-
         from agents.content_asset_store import ContentAssetStore
         from dataclasses import asdict
         store = ContentAssetStore()
+        print(f"📦 [content-assets] Querying... status={status}, pillar={content_pillar}, limit={limit}")
         assets = await store.list_assets(status=status, content_pillar=content_pillar, limit=limit)
-        return {"assets": [asdict(a) for a in assets], "total": len(assets)}
+        print(f"📦 [content-assets] Found {len(assets)} assets")
+        result = {"assets": [asdict(a) for a in assets], "total": len(assets)}
+        return result
     except Exception as e:
+        print(f"❌ [content-assets] Error: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -6267,6 +6273,85 @@ async def agents_pending_count(user: dict = Depends(require_auth)):
 
     counts["total"] = counts["pending_decisions"] + counts["pending_tasks"]
     return counts
+
+
+# ---- Debug endpoint (no auth — for troubleshooting) ----
+
+@app.get("/agents/debug")
+async def agents_debug():
+    """Diagnostic endpoint — no auth, shows DB state for debugging."""
+    info = {
+        "DB_SERVICE_AVAILABLE": DB_SERVICE_AVAILABLE,
+        "DATABASE_URL_SET": bool(os.getenv("DATABASE_URL")),
+    }
+
+    try:
+        from database.connection import get_db
+        from sqlalchemy import text as _text
+
+        async with get_db() as db:
+            # Row counts via raw SQL (no ORM columns involved)
+            for table in ["content_assets", "agent_tasks", "agent_decisions"]:
+                try:
+                    r = await db.execute(_text(f"SELECT count(*) FROM {table}"))
+                    info[f"{table}_count"] = r.scalar()
+                except Exception as e:
+                    info[f"{table}_count"] = f"ERROR: {e}"
+
+            # Check critical columns exist
+            for table, col in [
+                ("content_assets", "content_intent"),
+                ("agent_tasks", "requires_approval"),
+                ("agent_tasks", "approved_by"),
+                ("agent_tasks", "decision_uuid"),
+            ]:
+                try:
+                    r = await db.execute(_text(
+                        f"SELECT 1 FROM information_schema.columns "
+                        f"WHERE table_name='{table}' AND column_name='{col}'"
+                    ))
+                    info[f"{table}.{col}_exists"] = r.fetchone() is not None
+                except Exception as e:
+                    info[f"{table}.{col}_exists"] = f"ERROR: {e}"
+
+            # Test ORM SELECT on content_assets (the problematic query)
+            try:
+                from database.models import ContentAsset
+                from sqlalchemy import select, func
+                r = await db.execute(select(func.count()).select_from(ContentAsset))
+                info["orm_select_content_asset"] = "OK"
+                info["orm_asset_count"] = r.scalar()
+            except Exception as e:
+                info["orm_select_content_asset"] = f"FAIL: {e}"
+
+            # Test ORM SELECT on agent_tasks
+            try:
+                from database.models import AgentTask
+                from sqlalchemy import select, func
+                r = await db.execute(select(func.count()).select_from(AgentTask))
+                info["orm_select_agent_task"] = "OK"
+                info["orm_task_count"] = r.scalar()
+            except Exception as e:
+                info["orm_select_agent_task"] = f"FAIL: {e}"
+
+            # Test actual list query (what content-assets endpoint does)
+            try:
+                from agents.content_asset_store import ContentAssetStore
+                store = ContentAssetStore()
+                assets = await store.list_assets(limit=5)
+                info["content_asset_store_list"] = f"OK: {len(assets)} assets"
+                if assets:
+                    info["first_asset_title"] = assets[0].title
+                    info["first_asset_has_thumbnail"] = assets[0].primary_image_thumbnail is not None
+            except Exception as e:
+                import traceback
+                info["content_asset_store_list"] = f"FAIL: {e}"
+                info["content_asset_store_traceback"] = traceback.format_exc()
+
+    except Exception as e:
+        info["db_connection_error"] = str(e)
+
+    return info
 
 
 if __name__ == "__main__":
