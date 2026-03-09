@@ -1421,11 +1421,23 @@ async def get_variant_order_counts(req: VariantOrderCountRequest):
     """
     Get order count for specific variant IDs in the last N days.
     Used to add order count to target prices.
+    Uses database when available (fast), falls back to Shopify API.
     """
+    # Try database first (fast — single SQL query)
+    if DB_SERVICE_AVAILABLE and db_service.is_available():
+        try:
+            db_counts = await db_service.get_variant_order_counts(req.variant_ids, req.days)
+            if db_counts is not None:
+                print(f"✅ Order counts from DB for {len(req.variant_ids)} variants")
+                return {"success": True, "counts": db_counts, "source": "database"}
+        except Exception as db_err:
+            print(f"⚠️ DB order counts failed, falling back to API: {db_err}")
+
+    # Fallback to Shopify API (slow — fetches all orders)
     try:
         from bestsellers_logic import get_variant_order_count
         counts = get_variant_order_count(req.variant_ids, req.days)
-        return {"success": True, "counts": counts}
+        return {"success": True, "counts": counts, "source": "api"}
     except ImportError as e:
         print(f"❌ Import error in get_variant_order_counts: {e}")
         raise HTTPException(status_code=500, detail=f"Module import error: {e}")

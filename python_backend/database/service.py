@@ -624,6 +624,72 @@ class DatabaseService:
             traceback.print_exc()
             return None
 
+    # ==================== VARIANT ORDER COUNTS ====================
+
+    @staticmethod
+    async def get_variant_order_counts(
+        variant_ids: List[str],
+        days: int = 30
+    ) -> Optional[Dict[str, int]]:
+        """
+        Get order count for specific variant IDs in the last N days.
+        Uses DB instead of Shopify API for speed.
+        """
+        if not is_db_configured():
+            return None
+
+        try:
+            async with get_db() as db:
+                end_date = datetime.utcnow()
+                start_date = end_date - timedelta(days=days)
+
+                # Query: count distinct orders per variant_id
+                # Join by SKU (like bestsellers) to catch line items where FK is NULL
+                from sqlalchemy import or_
+                query = (
+                    select(
+                        Variant.variant_id,
+                        func.count(func.distinct(OrderLineItem.order_id)).label('order_count')
+                    )
+                    .select_from(Variant)
+                    .join(
+                        OrderLineItem,
+                        or_(
+                            OrderLineItem.variant_id == Variant.id,
+                            and_(
+                                OrderLineItem.sku == Variant.sku,
+                                Variant.sku.isnot(None),
+                                Variant.sku != ''
+                            )
+                        )
+                    )
+                    .join(Order, OrderLineItem.order_id == Order.id)
+                    .where(
+                        and_(
+                            Variant.variant_id.in_(variant_ids),
+                            Order.created_at >= start_date,
+                            Order.cancelled_at.is_(None)
+                        )
+                    )
+                    .group_by(Variant.variant_id)
+                )
+
+                result = await db.execute(query)
+                rows = result.all()
+
+                # Build dict, defaulting missing variants to 0
+                counts = {vid: 0 for vid in variant_ids}
+                for row in rows:
+                    counts[row.variant_id] = row.order_count
+
+                return counts
+
+        except Exception as e:
+            print(f"❌ Database error in get_variant_order_counts: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
     # ==================== COMPETITOR DATA ====================
 
     @staticmethod

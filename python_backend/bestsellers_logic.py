@@ -243,18 +243,22 @@ def get_variant_order_count(variant_ids: List[str], days: int = 30) -> Dict[str,
     # Convert to set for faster lookup
     target_variants = set(str(v) for v in variant_ids)
 
-    # Fetch orders from all stores
+    # Fetch orders from all stores (skip stores that fail)
     all_orders = []
     for store in SHOPIFY_STORES:
         domain = store["domain"]
         token = store["access_token"]
-        orders = fetch_orders_created_between_for_store(
-            domain, token,
-            start_local.isoformat(),
-            end_local.isoformat(),
-            exclude_cancelled=True
-        )
-        all_orders.extend(orders)
+        try:
+            orders = fetch_orders_created_between_for_store(
+                domain, token,
+                start_local.isoformat(),
+                end_local.isoformat(),
+                exclude_cancelled=True
+            )
+            all_orders.extend(orders)
+        except Exception as e:
+            print(f"⚠️ Skipping store {store.get('label', domain)}: {e}")
+            continue
 
     # Deduplicate by ID
     seen_ids = set()
