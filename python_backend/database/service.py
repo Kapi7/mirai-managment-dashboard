@@ -327,6 +327,8 @@ class DatabaseService:
                         # Channel-based purchase counts (like Shopify attribution)
                         func.sum(case((Order.channel == 'google', 1), else_=0)).label('google_pur'),
                         func.sum(case((Order.channel == 'meta', 1), else_=0)).label('meta_pur'),
+                        func.sum(case((Order.channel == 'shop', 1), else_=0)).label('shop_pur'),
+                        func.sum(case((Order.channel == 'shop', Order.gross), else_=0)).label('shop_gross'),
                     )
                     .where(
                         and_(
@@ -342,6 +344,28 @@ class DatabaseService:
                 result = await db.execute(query)
                 rows = result.all()
 
+                # Shop Campaigns effective rate from real Shopify bills
+                # (billed charges / Shop-order gross over trailing window).
+                shop_rate = None
+                try:
+                    import shop_bills
+                    _lookback = int(os.getenv("SHOP_BILLS_LOOKBACK_DAYS", "30") or 30)
+                    _billed = shop_bills.billed_total(_lookback)
+                    if _billed > 0:
+                        _cutoff = datetime.utcnow() - timedelta(days=_lookback)
+                        _gq = select(func.sum(Order.gross)).where(
+                            and_(
+                                Order.channel == 'shop',
+                                Order.created_at >= _cutoff,
+                                Order.cancelled_at.is_(None),
+                            )
+                        )
+                        _wg = _decimal_to_float((await db.execute(_gq)).scalar()) or 0
+                        if _wg > 0:
+                            shop_rate = _billed / _wg
+                except Exception as _e:
+                    print(f"⚠️ Shop Campaigns rate unavailable: {_e}")
+
                 kpis = []
                 for row in rows:
                     orders_count = row.orders or 0
@@ -354,7 +378,21 @@ class DatabaseService:
                     shipping_cost_db = _decimal_to_float(row.shipping_cost) or 0
                     google_pur = row.google_pur or 0
                     meta_pur = row.meta_pur or 0
+                    shop_pur = row.shop_pur or 0
+                    shop_gross = _decimal_to_float(row.shop_gross) or 0
                     returning_customers = row.returning_customers or 0
+
+                    # Shop Campaigns spend: real billed rate when available,
+                    # else env-configured estimate (same model as master_report_mirai)
+                    if shop_rate is not None:
+                        shop_spend = round(shop_gross * shop_rate, 2)
+                    else:
+                        try:
+                            _shop_per_order = float(os.getenv("SHOP_CAMPAIGN_COST_PER_ORDER", "0") or 0)
+                            _shop_pct = float(os.getenv("SHOP_CAMPAIGN_COST_PCT", "0") or 0)
+                        except Exception:
+                            _shop_per_order, _shop_pct = 0.0, 0.0
+                        shop_spend = round(shop_pur * _shop_per_order + shop_gross * _shop_pct, 2)
 
                     # Calculate metrics matching original formula from master_report_mirai.py
                     aov = gross / orders_count if orders_count > 0 else 0
@@ -410,8 +448,11 @@ class DatabaseService:
                         "general_cpa": None,
                         "google_pur": google_pur,
                         "meta_pur": meta_pur,
+                        "shop_pur": shop_pur,
+                        "shop_spend": shop_spend,
                         "google_cpa": None,  # Will be calculated after ad spend
                         "meta_cpa": None,
+                        "shop_cpa": round(shop_spend / shop_pur, 2) if shop_pur > 0 and shop_spend > 0 else None,
                     })
 
                 # Fetch ad spend and PSP fees for these dates and merge
@@ -457,7 +498,7 @@ class DatabaseService:
                         ad_data = ad_lookup.get(kpi["date"], {"google": 0, "meta": 0})
                         google_spend = ad_data["google"]
                         meta_spend = ad_data["meta"]
-                        total_spend = google_spend + meta_spend
+                        total_spend = google_spend + meta_spend + (kpi.get("shop_spend") or 0)
 
                         kpi["google_spend"] = round(google_spend, 2)
                         kpi["meta_spend"] = round(meta_spend, 2)

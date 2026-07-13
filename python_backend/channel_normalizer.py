@@ -6,6 +6,11 @@ from urllib.parse import urlparse
 # treat self-referrals as direct
 SELF_DOMAINS = ("mirai-skin.com",)
 
+# Shopify "Shop" sales channel (Shop app / Shop Campaigns).
+# Orders from Shop arrive with sourceName = the Shop app's numeric channel id
+# (or "shop_app"), and channelInformation.channelDefinition.handle = "shop".
+SHOP_SOURCE_NAMES = ("3890849", "shop_app", "shop")
+
 # google surfaces to check in referrerUrl
 GOOGLE_HOST_HINTS = (
     "google.", "youtube.", "gmail.", "googleadservices.", "doubleclick.", "googlesyndication."
@@ -25,10 +30,12 @@ def _is_google_host(h: str) -> bool:
     return bool(h) and any(tok in h for tok in GOOGLE_HOST_HINTS)
 
 def normalize_channel(*, source_name: str = "", utm_source: str = "", utm_medium: str = "",
-                      referrer_url: str = "", landing_page_url: str = "") -> str:
+                      referrer_url: str = "", landing_page_url: str = "",
+                      channel_name: str = "") -> str:
     """
-    Output one of: 'Google Paid', 'Klaviyo', 'ChatGPT', 'Direct', 'Other / Organic'
+    Output one of: 'Shop', 'Google Paid', 'Klaviyo', 'ChatGPT', 'Direct', 'Other / Organic'
     Rules:
+      - Shop app orders (sourceName = Shop channel id / channelInformation says "Shop") → Shop
       - If UTMs say google/cpc/product_sync → Google Paid
       - If gclid parameter present → Google Paid
       - Else if referrerUrl host looks like Google/YouTube/Gmail → Google Paid
@@ -39,7 +46,13 @@ def normalize_channel(*, source_name: str = "", utm_source: str = "", utm_medium
     sname = (source_name or "").strip().lower()
     usrc  = (utm_source or "").strip().lower()
     umed  = (utm_medium or "").strip().lower()
+    cname = (channel_name or "").strip().lower()
     ref_h = _host(referrer_url)
+
+    # Shop app (Shop Campaigns / Shop Cash offers) — these orders have no
+    # customer journey / UTMs, so detect by sales channel before anything else.
+    if sname in SHOP_SOURCE_NAMES or cname == "shop":
+        return "Shop"
 
     # Check for gclid in referrer or landing page URLs
     has_gclid = False
@@ -84,6 +97,7 @@ def attach_normalized_channel(df):
             utm_source  = r.get("utm_source") or "",
             utm_medium  = r.get("utm_medium") or "",
             referrer_url= r.get("referrer_url") or "",   # <-- use referrerUrl from GraphQL
+            channel_name= r.get("channel_name") or "",
         )
 
     out = df.copy()

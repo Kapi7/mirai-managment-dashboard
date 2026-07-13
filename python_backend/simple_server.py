@@ -782,6 +782,30 @@ async def daily_report(req: DateRangeRequest):
         return {"error": str(e), "data": []}
 
 
+# ==================== SHOP CAMPAIGNS BILLS (debug/verify) ====================
+
+@app.get("/shop-campaigns/bills")
+async def shop_campaign_bills(days: int = 60, raw: bool = False):
+    """
+    Scan Gmail for Shopify billing emails and show parsed Shop Campaigns
+    charges. Use ?raw=true to include matched text snippets (for verifying
+    the parser against the real email format).
+    """
+    try:
+        import shop_bills
+        state = shop_bills.scan_bills(days=days, keep_raw=raw, force=True)
+        bills = list((state.get("bills") or {}).values())
+        bills.sort(key=lambda b: b.get("date") or "", reverse=True)
+        return {
+            "count": len(bills),
+            "billed_total_30d": shop_bills.billed_total(30, state),
+            "bills": bills,
+        }
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+
 # ==================== PRICING ENDPOINTS ====================
 
 @app.get("/pricing/items")

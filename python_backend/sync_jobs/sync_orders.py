@@ -35,17 +35,25 @@ class SyncOrders(BaseSyncJob):
         utm_medium = ""
         referrer = ""
 
-        # Extract UTM params
-        customer_journey = order.get("customerJourney") or {}
-        first_visit = customer_journey.get("firstVisit") or {}
+        # Shop app (Shop Campaigns / Shop Cash offers): sourceName is the Shop
+        # app's numeric channel id; channelInformation says channelName "Shop"
+        chan_def = ((order.get("channelInformation") or {}).get("channelDefinition")) or {}
+        chan_name = (chan_def.get("channelName") or chan_def.get("handle") or "").lower()
+        if source_name in ("3890849", "shop_app", "shop") or chan_name == "shop":
+            return "shop"
+
+        # Extract UTM params (GraphQL field is customerJourneySummary; also uses
+        # lastVisit first, matching the alerting service)
+        customer_journey = order.get("customerJourneySummary") or order.get("customerJourney") or {}
+        first_visit = (customer_journey.get("lastVisit") or {}) or (customer_journey.get("firstVisit") or {})
         utm_params = first_visit.get("utmParameters") or {}
         utm_source = (utm_params.get("source") or "").lower()
         utm_medium = (utm_params.get("medium") or "").lower()
         referrer = (first_visit.get("referrerUrl") or "").lower()
 
         # Check for gclid
-        landing_page = first_visit.get("landingPage") or ""
-        has_gclid = "gclid=" in landing_page.lower()
+        landing_page = first_visit.get("landingPage") or first_visit.get("landingPageUrl") or ""
+        has_gclid = "gclid=" in landing_page.lower() or "gclid=" in referrer
 
         # Klaviyo
         if source_name == "klaviyo" or utm_source == "klaviyo" or utm_medium == "email":
@@ -112,12 +120,16 @@ class SyncOrders(BaseSyncJob):
             start_date = end_date - timedelta(days=self.days_back)
 
             # Fetch orders from Shopify
-            orders = fetch_orders_created_between_for_store(
-                domain, token,
-                start_date.isoformat() + "Z",
-                end_date.isoformat() + "Z",
-                exclude_cancelled=False
-            )
+            try:
+                orders = fetch_orders_created_between_for_store(
+                    domain, token,
+                    start_date.isoformat() + "Z",
+                    end_date.isoformat() + "Z",
+                    exclude_cancelled=False
+                )
+            except Exception as e:
+                print(f"  ⚠️ Skipping store {store_key}: fetch failed: {e}")
+                continue
 
             print(f"  Found {len(orders)} orders")
 
@@ -198,9 +210,9 @@ class SyncOrders(BaseSyncJob):
 
                         net = gross - discounts - refunds
 
-                        # UTM params
-                        customer_journey = order_data.get("customerJourney") or {}
-                        first_visit = customer_journey.get("firstVisit") or {}
+                        # UTM params (GraphQL field is customerJourneySummary)
+                        customer_journey = order_data.get("customerJourneySummary") or order_data.get("customerJourney") or {}
+                        first_visit = (customer_journey.get("lastVisit") or {}) or (customer_journey.get("firstVisit") or {})
                         utm_params = first_visit.get("utmParameters") or {}
 
                         # Calculate shipping cost from matrix lookup

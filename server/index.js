@@ -165,6 +165,23 @@ app.post('/reports-api/variant-order-counts', async (req, res) => {
 });
 
 // Pricing API endpoints - proxy all /reports-api/pricing/* to Python backend
+// Shop Campaigns bills (debug/verify parser against real Shopify billing emails)
+app.get('/reports-api/shop-campaigns/bills', async (req, res) => {
+  try {
+    const queryString = req.url.split('?')[1] || '';
+    const url = `${process.env.PYTHON_BACKEND_URL || 'http://localhost:8080'}/shop-campaigns/bills${queryString ? '?' + queryString : ''}`;
+    const response = await fetch(url, { signal: AbortSignal.timeout(120000) });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Python backend error: ${response.status} - ${errorText}`);
+    }
+    res.json(await response.json());
+  } catch (error) {
+    console.error('❌ Shop bills API error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/reports-api/pricing/*', async (req, res) => {
   try {
     const path = req.path.replace('/reports-api', '');

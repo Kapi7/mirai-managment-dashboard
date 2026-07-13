@@ -611,6 +611,14 @@ export default function Reports() {
                           <Badge variant="outline">{orderData.analytics.channels?.meta || 0}</Badge>
                         </div>
                         <div className="flex justify-between">
+                          <span>Shop</span>
+                          <Badge variant="outline">{orderData.analytics.channels?.shop || 0}</Badge>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Klaviyo</span>
+                          <Badge variant="outline">{orderData.analytics.channels?.klaviyo || 0}</Badge>
+                        </div>
+                        <div className="flex justify-between">
                           <span>Organic</span>
                           <Badge variant="outline">{orderData.analytics.channels?.organic || 0}</Badge>
                         </div>
@@ -754,11 +762,15 @@ export default function Reports() {
                                   </Badge>
                                 </TableCell>
                                 <TableCell>
-                                  <Badge variant={
-                                    order.channel === 'google' ? 'default' :
-                                    order.channel === 'meta' ? 'secondary' :
-                                    order.channel === 'klaviyo' ? 'outline' : 'outline'
-                                  }>
+                                  <Badge
+                                    variant={
+                                      order.channel === 'google' ? 'default' :
+                                      order.channel === 'meta' ? 'secondary' :
+                                      order.channel === 'shop' ? 'secondary' :
+                                      order.channel === 'klaviyo' ? 'outline' : 'outline'
+                                    }
+                                    className={order.channel === 'shop' ? 'bg-purple-100 text-purple-800' : undefined}
+                                  >
                                     {order.channel}
                                   </Badge>
                                 </TableCell>

@@ -56,6 +56,8 @@ MONTH_HEADERS = [
     "Spend (Google)", "Spend (Meta)", "Total Spend",
     "PSP Fee (USD)", "Operational Profit", "Net Margin", "Margin %",
     "AOV", "Returning Customers", "General CPA",
+    # Appended at the end so existing month tabs keep their column layout
+    "Spend (Shop)",
 ]
 
 # ------------------------------------------------------------------------------
@@ -297,7 +299,19 @@ def _extract_urls_and_source(order: dict) -> str:
                     bits.append(f"utm_{kk}={vv}")
     return " | ".join(bits)
 
+# Shopify "Shop" sales channel (Shop app / Shop Campaigns): sourceName is the
+# Shop app's numeric channel id, and channelInformation says channelName "Shop".
+_SHOP_SOURCE_NAMES = ("3890849", "shop_app", "shop")
+
+def _is_shop_channel(order: dict) -> bool:
+    sname = (order.get("sourceName") or "").strip().lower()
+    chan_def = ((order.get("channelInformation") or {}).get("channelDefinition")) or {}
+    cname = (chan_def.get("channelName") or chan_def.get("handle") or "").strip().lower()
+    return sname in _SHOP_SOURCE_NAMES or cname == "shop"
+
 def _shopify_channel(order: dict) -> str | None:
+    if _is_shop_channel(order):
+        return "shop"
     blob = _extract_urls_and_source(order)
     if not blob:
         return None
@@ -306,6 +320,84 @@ def _shopify_channel(order: dict) -> str | None:
     if _META_PAT.search(blob):
         return "meta"
     return None
+
+# ---------- Shop Campaigns cost model ----------
+# Shopify does not expose Shop Campaigns billing via the Admin API. Primary
+# source: actual charges parsed from Shopify billing emails (shop_bills.py) —
+# an EFFECTIVE RATE (billed charges / Shop-order gross over a trailing window)
+# is applied to each day's Shop gross, so the number self-calibrates even when
+# the campaign offer changes daily. Fallback when no bill data yet:
+#   SHOP_CAMPAIGN_COST_PER_ORDER  flat USD per Shop-channel order (e.g. CAC fee)
+#   SHOP_CAMPAIGN_COST_PCT        fraction of Shop-order gross (e.g. 0.10 = 10%)
+_SHOP_RATE_CACHE: Dict[str, Any] = {"rate": None, "ts": 0.0}
+_SHOP_RATE_TTL_SEC = 6 * 3600
+
+
+def _shop_trailing_gross(tz_name: str, days: int) -> float:
+    """Gross of Shop-channel orders over the trailing `days` (all stores)."""
+    tz = pytz.timezone(tz_name)
+    end = datetime.now(tz)
+    start = end - timedelta(days=days)
+    total = 0.0
+    for store in SHOPIFY_STORES:
+        try:
+            orders = fetch_orders_created_between_for_store(
+                store["domain"], store["access_token"],
+                start.isoformat(), end.isoformat(), exclude_cancelled=True,
+            )
+        except Exception as e:
+            print(f"⚠️ [shop-rate] store {store['domain']} fetch failed: {e}")
+            continue
+        for o in orders:
+            if _is_shop_channel(o):
+                for li in _line_nodes(o):
+                    total += _money_at(li, ["originalTotalSet", "shopMoney", "amount"])
+    return total
+
+
+def _shop_effective_rate(tz_name: str) -> Optional[float]:
+    """Billed Shop Campaigns charges / Shop gross (trailing window), cached 6h."""
+    import time as _time
+    now = _time.time()
+    if now - float(_SHOP_RATE_CACHE.get("ts") or 0) < _SHOP_RATE_TTL_SEC:
+        return _SHOP_RATE_CACHE.get("rate")
+
+    rate: Optional[float] = None
+    try:
+        import shop_bills
+        days = int(os.getenv("SHOP_BILLS_LOOKBACK_DAYS", "30") or 30)
+        billed = shop_bills.billed_total(days)
+        if billed > 0:
+            window_gross = _shop_trailing_gross(tz_name, days)
+            if window_gross > 0:
+                rate = billed / window_gross
+                print(f"[shop-rate] billed ${billed:.2f} / gross ${window_gross:.2f} "
+                      f"({days}d) → effective rate {rate:.4f}")
+    except Exception as e:
+        print(f"⚠️ [shop-rate] effective rate unavailable: {e}")
+
+    _SHOP_RATE_CACHE["rate"] = rate
+    _SHOP_RATE_CACHE["ts"] = now
+    return rate
+
+
+def _shop_spend_usd(shop_orders: int, shop_gross: float, tz_name: Optional[str] = None) -> float:
+    # 1) Real billed rate from Shopify billing emails (self-calibrating)
+    if tz_name and shop_gross > 0:
+        rate = _shop_effective_rate(tz_name)
+        if rate is not None:
+            return round(shop_gross * rate, 2)
+
+    # 2) Fallback estimate from env (used until bill data exists)
+    try:
+        per_order = float(os.getenv("SHOP_CAMPAIGN_COST_PER_ORDER", "0") or 0)
+    except Exception:
+        per_order = 0.0
+    try:
+        pct = float(os.getenv("SHOP_CAMPAIGN_COST_PCT", "0") or 0)
+    except Exception:
+        pct = 0.0
+    return round(shop_orders * per_order + shop_gross * pct, 2)
 
 # ------------------------------------------------------------------------------
 # KPIs
@@ -337,6 +429,9 @@ class KPIs:
     meta_pur: int
     meta_cpa: float | None
     general_cpa: float | None
+    shop_spend: float = 0.0
+    shop_pur: int = 0
+    shop_cpa: float | None = None
 
 # ---------- Google Ads spend ----------
 def _google_spend_usd(day_iso: str, shop_tz: str) -> float:
@@ -480,6 +575,8 @@ def _kpis_from_orders(
     orders_net_count = 0
     g_orders_created = 0
     m_orders_created = 0
+    s_orders_created = 0
+    shop_gross = 0.0
 
     for o in in_window:
         is_cancelled = bool(o.get("cancelledAt"))
@@ -489,6 +586,8 @@ def _kpis_from_orders(
             g_orders_created += 1
         elif ch == "meta":
             m_orders_created += 1
+        elif ch == "shop":
+            s_orders_created += 1
 
         if is_cancelled:
             continue
@@ -514,12 +613,16 @@ def _kpis_from_orders(
         except Exception:
             pass
 
+        order_gross = 0.0
         for li in _line_nodes(o):
             qty = int(li.get("quantity") or 0)
-            gross += _money_at(li, ["originalTotalSet", "shopMoney", "amount"])
+            order_gross += _money_at(li, ["originalTotalSet", "shopMoney", "amount"])
             unit_cost = _money_at(li, ["variant", "inventoryItem", "unitCost", "amount"])
             if qty > 0 and unit_cost:
                 cogs += unit_cost * qty
+        gross += order_gross
+        if ch == "shop":
+            shop_gross += order_gross
 
         geo = _order_geo(o)
         wkg = _order_weight_kg_from_totalWeight(o)
@@ -552,10 +655,13 @@ def _kpis_from_orders(
 
     g_cpa = round(g_spend / g_orders_created, 2) if g_orders_created > 0 else None
 
+    s_spend = _shop_spend_usd(s_orders_created, shop_gross, tz_name)
+    s_cpa = round(s_spend / s_orders_created, 2) if s_orders_created > 0 else None
+
     psp_eur = get_psp_fees_daily(start_local.date(), end_local.date()).get(start_local.date(), 0.0)
     psp_usd = _fx_any_to_usd(psp_eur, "EUR")
 
-    total_spend = g_spend + m_spend
+    total_spend = g_spend + m_spend + s_spend
 
     operational = (net + ship_chg) - matrix_only - cogs - psp_usd
     margin = operational - total_spend
@@ -590,6 +696,9 @@ def _kpis_from_orders(
         meta_pur=m_orders_created,
         meta_cpa=m_cpa,
         general_cpa=general_cpa,
+        shop_spend=round(s_spend, 2),
+        shop_pur=s_orders_created,
+        shop_cpa=s_cpa,
     )
 
 # ------------------------------------------------------------------------------
@@ -606,9 +715,13 @@ def compute_day_kpis(day: date, tz_name: str) -> KPIs:
     for store in SHOPIFY_STORES:
         domain = store["domain"]
         token  = store["access_token"]
-        created = fetch_orders_created_between_for_store(
-            domain, token, start_local.isoformat(), end_local.isoformat(), exclude_cancelled=False
-        )
+        try:
+            created = fetch_orders_created_between_for_store(
+                domain, token, start_local.isoformat(), end_local.isoformat(), exclude_cancelled=False
+            )
+        except Exception as e:
+            print(f"⚠️ Skipping store {domain}: fetch failed: {e}")
+            continue
         nodes.extend(created)
 
     nodes = _uniq_by_id(nodes)
@@ -624,9 +737,9 @@ def compute_mtd_kpis(anchor_day: date, tz_name: str) -> KPIs:
     # Sum all KPIs from first to anchor_day
     total_orders = total_gross = total_discounts = total_refunds = total_net = 0.0
     total_cogs = total_ship_chg = total_ship_est = total_ship_cost = 0.0
-    total_psp = total_g_spend = total_m_spend = total_total_spend = 0.0
+    total_psp = total_g_spend = total_m_spend = total_s_spend = total_total_spend = 0.0
     total_op = total_margin = 0.0
-    total_returning = total_g_pur = total_m_pur = 0
+    total_returning = total_g_pur = total_m_pur = total_s_pur = 0
 
     for d in range(1, anchor_day.day + 1):
         day = date(anchor_day.year, anchor_day.month, d)
@@ -652,6 +765,8 @@ def compute_mtd_kpis(anchor_day: date, tz_name: str) -> KPIs:
         total_returning += k.returning_count
         total_g_pur += k.google_pur
         total_m_pur += k.meta_pur
+        total_s_pur += k.shop_pur
+        total_s_spend += k.shop_spend
 
     # Compute aggregated metrics
     revenue_base = total_net + total_ship_chg
@@ -659,6 +774,7 @@ def compute_mtd_kpis(anchor_day: date, tz_name: str) -> KPIs:
     aov = (total_gross / total_orders) if total_orders else 0.0
     g_cpa = round(total_g_spend / total_g_pur, 2) if total_g_pur > 0 else None
     m_cpa = round(total_m_spend / total_m_pur, 2) if total_m_pur > 0 else None
+    s_cpa = round(total_s_spend / total_s_pur, 2) if total_s_pur > 0 else None
     general_cpa = round(total_total_spend / total_orders, 2) if total_orders else None
 
     return KPIs(
@@ -686,6 +802,9 @@ def compute_mtd_kpis(anchor_day: date, tz_name: str) -> KPIs:
         meta_pur=int(total_m_pur),
         meta_cpa=m_cpa,
         general_cpa=general_cpa,
+        shop_spend=round(total_s_spend, 2),
+        shop_pur=int(total_s_pur),
+        shop_cpa=s_cpa,
     )
 
 # ------------------------------------------------------------------------------
@@ -711,9 +830,13 @@ def build_month_rows(anchor_day: date, tz_name: str) -> Tuple[str, int, int, Dic
     for store in SHOPIFY_STORES:
         domain = store["domain"]
         token  = store["access_token"]
-        created = fetch_orders_created_between_for_store(
-            domain, token, start_local.isoformat(), end_local.isoformat(), exclude_cancelled=False
-        )
+        try:
+            created = fetch_orders_created_between_for_store(
+                domain, token, start_local.isoformat(), end_local.isoformat(), exclude_cancelled=False
+            )
+        except Exception as e:
+            print(f"⚠️ Skipping store {domain}: fetch failed: {e}")
+            continue
         month_orders.extend(created)
 
     month_orders = _uniq_by_id(month_orders)
@@ -755,6 +878,7 @@ def build_month_rows(anchor_day: date, tz_name: str) -> Tuple[str, int, int, Dic
             k.google_spend, k.meta_spend, k.total_spend,
             k.psp_usd, k.operational, k.margin, k.margin_pct,
             k.aov, k.returning_count, k.general_cpa,
+            k.shop_spend,
         ]
 
     return month_name, year, month, rows_by_day, kpi_by_date
@@ -781,7 +905,8 @@ def _upsert_sheet_summary(ws_month, month_name: str, today_kpi: KPIs, yday_kpi: 
         "Ship Charged","Est Ship (Matrix)","Ship Cost (PayPal)",
         "Spend (Google)","Spend (Meta)","Total Spend",
         "PSP Fee (USD)","Operational Profit","Net Margin","Margin %","AOV",
-        "Returning Customers","Google Purchases","Google CPA","Meta Purchases","Meta CPA","General CPA"
+        "Returning Customers","Google Purchases","Google CPA","Meta Purchases","Meta CPA","General CPA",
+        "Spend (Shop)","Shop Purchases","Shop CPA"
     ]
 
     def _row_from_k(k: KPIs, lbl: str):
@@ -791,7 +916,8 @@ def _upsert_sheet_summary(ws_month, month_name: str, today_kpi: KPIs, yday_kpi: 
             k.google_spend, k.meta_spend, k.total_spend,
             k.psp_usd, k.operational, k.margin, ("" if k.margin_pct is None else k.margin_pct),
             k.aov, k.returning_count, k.google_pur, ("" if k.google_cpa is None else k.google_cpa),
-            k.meta_pur, ("" if k.meta_cpa is None else k.meta_cpa), ("" if k.general_cpa is None else k.general_cpa)
+            k.meta_pur, ("" if k.meta_cpa is None else k.meta_cpa), ("" if k.general_cpa is None else k.general_cpa),
+            k.shop_spend, k.shop_pur, ("" if k.shop_cpa is None else k.shop_cpa)
         ]
 
     rows = [

@@ -36,16 +36,37 @@ def _money_at(obj: dict, path: list) -> float:
 
 
 def _shopify_channel(order: dict) -> str:
-    """Determine order source channel"""
-    attrs = order.get("customAttributes") or []
-    for attr in attrs:
-        if attr.get("key") == "_attribution_source":
-            val = (attr.get("value") or "").lower()
-            if "google" in val:
-                return "google"
-            if "meta" in val or "facebook" in val or "instagram" in val:
-                return "meta"
-    return "organic"
+    """Determine order source channel (shop / google / meta / klaviyo / organic)"""
+    from channel_normalizer import normalize_channel
+
+    cj = order.get("customerJourneySummary") or {}
+    v = (cj.get("lastVisit") or {}) or (cj.get("firstVisit") or {})
+    utm = v.get("utmParameters") or {}
+    chan_def = ((order.get("channelInformation") or {}).get("channelDefinition")) or {}
+
+    # Meta first — normalize_channel has no Meta bucket
+    usrc = (utm.get("source") or "").strip().lower()
+    ref = (v.get("referrerUrl") or "").lower()
+    if usrc in ("facebook", "fb", "instagram", "ig", "meta") or \
+       any(h in ref for h in ("facebook.com", "instagram.com", "fb.com")):
+        return "meta"
+
+    norm = normalize_channel(
+        source_name=(order.get("sourceName") or ""),
+        utm_source=usrc,
+        utm_medium=(utm.get("medium") or ""),
+        referrer_url=(v.get("referrerUrl") or ""),
+        landing_page_url=(v.get("landingPageUrl") or order.get("landingPageUrl") or ""),
+        channel_name=(chan_def.get("channelName") or chan_def.get("handle") or ""),
+    )
+    return {
+        "Shop": "shop",
+        "Google Paid": "google",
+        "Klaviyo": "klaviyo",
+        "ChatGPT": "chatgpt",
+        "Direct": "organic",
+        "Other / Organic": "organic",
+    }.get(norm, "organic")
 
 
 def _line_nodes(order: dict) -> list:
@@ -76,12 +97,17 @@ def fetch_order_report(start_date: date, end_date: date) -> Dict[str, Any]:
     for store in SHOPIFY_STORES:
         domain = store["domain"]
         token = store["access_token"]
-        orders = fetch_orders_created_between_for_store(
-            domain, token,
-            start_local.isoformat(),
-            end_local.isoformat(),
-            exclude_cancelled=False
-        )
+        try:
+            orders = fetch_orders_created_between_for_store(
+                domain, token,
+                start_local.isoformat(),
+                end_local.isoformat(),
+                exclude_cancelled=False
+            )
+        except Exception as e:
+            # A dead/uninstalled store must not kill the whole report
+            print(f"⚠️ Skipping store {domain}: fetch failed: {e}")
+            continue
         for o in orders:
             o["_store"] = domain
         all_orders.extend(orders)
@@ -107,7 +133,7 @@ def fetch_order_report(start_date: date, end_date: date) -> Dict[str, Any]:
     total_net = 0.0
     total_cogs = 0.0
     total_shipping = 0.0
-    channel_counts = {"google": 0, "meta": 0, "organic": 0}
+    channel_counts = {"google": 0, "meta": 0, "shop": 0, "organic": 0}
     country_counts = {}
     hourly_counts = {h: 0 for h in range(24)}
 

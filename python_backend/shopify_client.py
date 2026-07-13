@@ -153,6 +153,8 @@ query Orders($cursor: String, $search: String!) {
         test
         displayFinancialStatus
         sourceName
+        tags
+        channelInformation { channelDefinition { channelName handle } }
         customer { id email numberOfOrders }
 
         # GEO + weight
