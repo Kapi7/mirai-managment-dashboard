@@ -2507,7 +2507,7 @@ export default function Pricing() {
             <CardContent>
               {/* Summary Stats */}
               {korealyStats && Object.keys(korealyStats).length > 0 && (
-                <div className="grid grid-cols-6 gap-4 mb-6">
+                <div className="grid grid-cols-4 gap-4 mb-6">
                   <div className="bg-blue-50 p-4 rounded-lg">
                     <div className="text-sm text-blue-600 font-medium">Total</div>
                     <div className="text-2xl font-bold">{korealyStats.total || 0}</div>
@@ -2524,13 +2524,21 @@ export default function Pricing() {
                     <div className="text-sm text-yellow-600 font-medium">No Mapping</div>
                     <div className="text-2xl font-bold">{korealyStats.NO_MAPPING || 0}</div>
                   </div>
-                  <div className="bg-orange-50 p-4 rounded-lg">
-                    <div className="text-sm text-orange-600 font-medium">No Korealy COGS</div>
-                    <div className="text-2xl font-bold">{korealyStats.NO_COGS_IN_KOREALY || 0}</div>
-                  </div>
                   <div className="bg-purple-50 p-4 rounded-lg">
                     <div className="text-sm text-purple-600 font-medium">No Shopify COGS</div>
                     <div className="text-2xl font-bold">{korealyStats.NO_COGS_IN_SHOPIFY || 0}</div>
+                  </div>
+                  <div className="bg-orange-50 p-4 rounded-lg">
+                    <div className="text-sm text-orange-600 font-medium">Missing COGS (not in Korealy)</div>
+                    <div className="text-2xl font-bold">{korealyStats.MISSING_COGS || 0}</div>
+                  </div>
+                  <div className="bg-rose-100 p-4 rounded-lg border-2 border-rose-400">
+                    <div className="text-sm text-rose-700 font-medium">🚨 Zero Margin (price ≤ cost)</div>
+                    <div className="text-2xl font-bold text-rose-700">{korealyStats.ZERO_MARGIN || 0}</div>
+                  </div>
+                  <div className="bg-gray-50 p-4 rounded-lg">
+                    <div className="text-sm text-gray-600 font-medium">No Korealy COGS</div>
+                    <div className="text-2xl font-bold">{korealyStats.NO_COGS_IN_KOREALY || 0}</div>
                   </div>
                 </div>
               )}
@@ -2566,6 +2574,21 @@ export default function Pricing() {
                   No Shopify COGS ({korealyStats.NO_COGS_IN_SHOPIFY || 0})
                 </Button>
                 <Button
+                  variant={korealyStatusFilter === 'MISSING_COGS' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setKorealyStatusFilter('MISSING_COGS')}
+                >
+                  Missing COGS ({korealyStats.MISSING_COGS || 0})
+                </Button>
+                <Button
+                  variant={korealyStatusFilter === 'ZERO_MARGIN' ? 'destructive' : 'outline'}
+                  size="sm"
+                  className={korealyStatusFilter !== 'ZERO_MARGIN' ? 'border-rose-400 text-rose-700' : ''}
+                  onClick={() => setKorealyStatusFilter('ZERO_MARGIN')}
+                >
+                  🚨 Zero Margin ({korealyStats.ZERO_MARGIN || 0})
+                </Button>
+                <Button
                   variant={korealyStatusFilter === 'MATCH' ? 'default' : 'outline'}
                   size="sm"
                   onClick={() => setKorealyStatusFilter('MATCH')}
@@ -2578,7 +2601,9 @@ export default function Pricing() {
               {(() => {
                 const filtered = korealyStatusFilter === 'all'
                   ? korealyReconciliation
-                  : korealyReconciliation.filter(r => r.status === korealyStatusFilter);
+                  : korealyStatusFilter === 'ZERO_MARGIN'
+                    ? korealyReconciliation.filter(r => r.zero_margin)
+                    : korealyReconciliation.filter(r => r.status === korealyStatusFilter);
 
                 return (
                   <div className="border rounded-lg overflow-hidden">
@@ -2608,6 +2633,8 @@ export default function Pricing() {
                           <TableHead>Shopify Item</TableHead>
                           <TableHead className="text-right">Korealy COGS</TableHead>
                           <TableHead className="text-right">Shopify COGS</TableHead>
+                          <TableHead className="text-right">Price</TableHead>
+                          <TableHead className="text-right">Margin</TableHead>
                           <TableHead className="text-right">Delta</TableHead>
                           <TableHead className="text-right">% Diff</TableHead>
                           <TableHead>Variant ID</TableHead>
@@ -2616,7 +2643,7 @@ export default function Pricing() {
                       <TableBody>
                         {filtered.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={9} className="text-center text-slate-500 py-8">
+                            <TableCell colSpan={11} className="text-center text-slate-500 py-8">
                               {korealyReconciliation.length === 0
                                 ? 'No reconciliation data. Click "Re-run Reconciliation" to load data.'
                                 : 'No items match the current filter.'}
@@ -2626,11 +2653,12 @@ export default function Pricing() {
                           filtered.map((record, idx) => {
                             const originalIdx = korealyReconciliation.indexOf(record);
                             const isSelected = korealySelectedRows.has(originalIdx);
-                            // Allow sync for MISMATCH and NO_COGS_IN_SHOPIFY items that have korealy_cogs and variant_id
-                            const canSync = (record.status === 'MISMATCH' || record.status === 'NO_COGS_IN_SHOPIFY') && record.variant_id && record.korealy_cogs;
+                            // Syncable when we have a target variant and a cost to write
+                            // (MISSING_COGS/PRICE_AT_COGS carry a sibling-variant cost in korealy_cogs)
+                            const canSync = ['MISMATCH', 'NO_COGS_IN_SHOPIFY', 'MISSING_COGS', 'PRICE_AT_COGS'].includes(record.status) && record.variant_id && record.korealy_cogs;
 
                             return (
-                              <TableRow key={idx}>
+                              <TableRow key={idx} className={record.zero_margin ? 'bg-rose-50' : ''}>
                                 <TableCell>
                                   <input
                                     type="checkbox"
@@ -2652,10 +2680,15 @@ export default function Pricing() {
                                     record.status === 'MATCH' ? 'bg-green-100 text-green-800' :
                                     record.status === 'MISMATCH' ? 'bg-red-100 text-red-800' :
                                     record.status === 'NO_MAPPING' ? 'bg-yellow-100 text-yellow-800' :
+                                    record.status === 'MISSING_COGS' ? 'bg-orange-100 text-orange-800' :
+                                    record.status === 'PRICE_AT_COGS' ? 'bg-rose-200 text-rose-900' :
                                     'bg-gray-100 text-gray-800'
                                   }`}>
                                     {record.status}
                                   </span>
+                                  {record.zero_margin && record.status !== 'PRICE_AT_COGS' && (
+                                    <span className="ml-1 px-2 py-1 rounded text-xs font-medium bg-rose-200 text-rose-900">🚨 0% margin</span>
+                                  )}
                                 </TableCell>
                                 <TableCell className={expandProductNames ? '' : 'max-w-xs truncate'} title={record.korealy_title}>
                                   {record.korealy_title}
@@ -2668,6 +2701,16 @@ export default function Pricing() {
                                 </TableCell>
                                 <TableCell className="text-right">
                                   {record.shopify_cogs ? `${record.shopify_currency} ${record.shopify_cogs.toFixed(2)}` : '-'}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  {record.shopify_price != null ? `$${record.shopify_price.toFixed(2)}` : '-'}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  {record.margin_pct != null ? (
+                                    <span className={record.margin_pct <= 5 ? 'text-rose-700 font-bold' : record.margin_pct < 30 ? 'text-orange-600' : 'text-green-700'}>
+                                      {record.margin_pct.toFixed(0)}%
+                                    </span>
+                                  ) : '-'}
                                 </TableCell>
                                 <TableCell className="text-right">
                                   {record.delta !== null ? (

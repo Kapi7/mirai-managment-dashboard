@@ -84,7 +84,9 @@ def fetch_shopify_variants_with_cogs() -> Dict[str, Dict[str, Any]]:
             id
             sku
             title
+            price
             product {
+              id
               title
               status
             }
@@ -114,14 +116,16 @@ def fetch_shopify_variants_with_cogs() -> Dict[str, Dict[str, Any]]:
                 variant_title = node["title"]
                 item_name = f"{product_title} — {variant_title}".strip(" — ")
 
-                # Get COGS
+                # Get COGS (has_cogs distinguishes a real 0 from "never set")
                 cogs = 0.0
                 currency = "USD"
+                has_cogs = False
                 inv_item = node.get("inventoryItem") or {}
                 uc = inv_item.get("unitCost")
-                if uc:
+                if uc and uc.get("amount") is not None:
                     cogs = float(uc.get("amount") or 0)
                     currency = uc.get("currencyCode", "USD")
+                    has_cogs = cogs > 0
 
                 # Extract numeric variant ID from GID
                 gid = node["id"]
@@ -132,8 +136,13 @@ def fetch_shopify_variants_with_cogs() -> Dict[str, Dict[str, Any]]:
                     "variant_id": variant_id,
                     "item": item_name,
                     "cogs": cogs,
+                    "has_cogs": has_cogs,
                     "currency": currency,
-                    "sku": node.get("sku", "")
+                    "sku": node.get("sku", ""),
+                    "price": float(node.get("price") or 0),
+                    "product_id": node["product"]["id"],
+                    "product_title": product_title,
+                    "product_status": node["product"].get("status", ""),
                 }
 
             if not variants_data["pageInfo"]["hasNextPage"]:
@@ -494,13 +503,59 @@ def reconcile(
     sku_map: Optional[Dict[str, str]] = None
 ) -> List[Dict[str, Any]]:
     """
-    Reconcile Korealy prices with Shopify COGS
+    Reconcile Korealy prices with Shopify COGS.
+
+    A Korealy match is expanded to ALL variants of the matched product
+    (variants of one product share the same supplier cost), so a 45-shade
+    cushion produces 45 rows — not just the first variant.
+
+    After the Korealy pass, every Shopify variant not covered by a Korealy
+    record is audited:
+      - PRICE_AT_COGS: storefront price ≈ known cost (zero margin!)
+      - MISSING_COGS:  variant has no COGS set (fillable from a sibling
+        variant's cost when one exists)
 
     Returns:
         List of reconciliation records with status, delta, pct_diff
     """
     results = []
-    match_methods = {"pid": 0, "exact": 0, "loose": 0, "partial": 0, "fuzzy": 0, "none": 0}
+    covered_gids = set()
+
+    # Group variants by product for sibling expansion
+    product_variants: Dict[str, List[str]] = {}
+    for gid, info in shopify_variants.items():
+        product_variants.setdefault(info.get("product_id") or gid, []).append(gid)
+
+    def _row(status, k_title, k_cogs, k_currency, record, s_info=None, gid=None,
+             delta=None, pct_diff=None, cogs_source="korealy"):
+        s_info = s_info or {}
+        price = s_info.get("price")
+        known_cost = k_cogs or (s_info.get("cogs") if s_info.get("has_cogs") else None)
+        margin_pct = None
+        if price and known_cost:
+            margin_pct = (price - known_cost) / price * 100
+        # Storefront price at/below supplier cost — selling with no margin
+        zero_margin = bool(price and known_cost and price <= known_cost * 1.05)
+        return {
+            "status": status,
+            "korealy_title": k_title,
+            "korealy_cogs": k_cogs,
+            "korealy_currency": k_currency,
+            "korealy_product_id": (record or {}).get("korealy_product_id", ""),
+            "korealy_shop_pid": (record or {}).get("shop_pid", ""),
+            "variant_gid": gid,
+            "variant_id": s_info.get("variant_id"),
+            "shopify_item": s_info.get("item"),
+            "shopify_cogs": (s_info.get("cogs") if s_info.get("has_cogs") else None) if s_info else None,
+            "shopify_currency": s_info.get("currency"),
+            "shopify_price": price,
+            "product_status": s_info.get("product_status"),
+            "margin_pct": margin_pct,
+            "zero_margin": zero_margin,
+            "cogs_source": cogs_source,
+            "delta": delta,
+            "pct_diff": pct_diff
+        }
 
     for record in korealy_records:
         k_title = record.get("title", "")
@@ -518,68 +573,78 @@ def reconcile(
         )
 
         if not variant_gid:
-            results.append({
-                "status": "NO_MAPPING",
-                "korealy_title": k_title,
-                "korealy_cogs": k_cogs,
-                "korealy_currency": k_currency,
-                "korealy_product_id": record.get("korealy_product_id", ""),
-                "korealy_shop_pid": record.get("shop_pid", ""),
-                "variant_gid": None,
-                "variant_id": None,
-                "shopify_item": None,
-                "shopify_cogs": None,
-                "shopify_currency": None,
-                "delta": None,
-                "pct_diff": None
-            })
+            results.append(_row("NO_MAPPING", k_title, k_cogs, k_currency, record))
             continue
 
-        # Get Shopify data
-        s_info = shopify_variants[variant_gid]
-        s_cogs = s_info.get("cogs", 0)
-        s_currency = s_info.get("currency", "USD")
-        s_item = s_info.get("item", "")
-        s_variant_id = s_info.get("variant_id", "")
+        # Expand to ALL variants of the matched product — they share the
+        # same supplier cost, and historically only the first variant ever
+        # got compared/synced (left e.g. 44 of 45 cushion shades with no COGS)
+        matched_product = shopify_variants[variant_gid].get("product_id")
+        sibling_gids = product_variants.get(matched_product, [variant_gid])
 
-        # Calculate delta and status
-        if k_cogs is not None and s_cogs > 0:
-            delta = k_cogs - s_cogs
-            pct_diff = (delta / s_cogs) * 100 if s_cogs > 0 else 0
+        for gid in sibling_gids:
+            covered_gids.add(gid)
+            s_info = shopify_variants[gid]
+            s_cogs = s_info.get("cogs", 0)
+            s_has_cogs = s_info.get("has_cogs", s_cogs > 0)
 
-            # Check if match (within floating point tolerance)
-            if abs(delta) <= 1e-9:
-                status = "MATCH"
+            if k_cogs is not None and s_has_cogs:
+                delta = k_cogs - s_cogs
+                pct_diff = (delta / s_cogs) * 100 if s_cogs > 0 else 0
+                status = "MATCH" if abs(delta) <= 1e-9 else "MISMATCH"
+            elif k_cogs is None and s_has_cogs:
+                delta, pct_diff, status = None, None, "NO_COGS_IN_KOREALY"
+            elif k_cogs is not None and not s_has_cogs:
+                delta, pct_diff, status = None, None, "NO_COGS_IN_SHOPIFY"
             else:
-                status = "MISMATCH"
-        elif k_cogs is None and s_cogs > 0:
-            delta = None
-            pct_diff = None
-            status = "NO_COGS_IN_KOREALY"
-        elif k_cogs is not None and s_cogs == 0:
-            delta = None
-            pct_diff = None
-            status = "NO_COGS_IN_SHOPIFY"
-        else:
-            delta = None
-            pct_diff = None
-            status = "NO_COGS_BOTH"
+                delta, pct_diff, status = None, None, "NO_COGS_BOTH"
 
-        results.append({
-            "status": status,
-            "korealy_title": k_title,
-            "korealy_cogs": k_cogs,
-            "korealy_currency": k_currency,
-            "korealy_product_id": record.get("korealy_product_id", ""),
-            "korealy_shop_pid": record.get("shop_pid", ""),
-            "variant_gid": variant_gid,
-            "variant_id": s_variant_id,
-            "shopify_item": s_item,
-            "shopify_cogs": s_cogs,
-            "shopify_currency": s_currency,
-            "delta": delta,
-            "pct_diff": pct_diff
-        })
+            results.append(_row(status, k_title, k_cogs, k_currency, record,
+                                s_info=s_info, gid=gid, delta=delta, pct_diff=pct_diff))
+
+    # ---- Shopify-side coverage pass ----
+    # Variants the Korealy CSV never touched (e.g. products added after the
+    # CSV export). Without this, missing COGS never shows in the dashboard.
+    for gid, s_info in shopify_variants.items():
+        if gid in covered_gids:
+            continue
+        if s_info.get("product_status") == "ARCHIVED":
+            continue
+
+        # Best-known cost: own COGS, else the max sibling COGS on the same product
+        own_cost = s_info["cogs"] if s_info.get("has_cogs") else None
+        sibling_cost = None
+        sibling_name = None
+        for sib_gid in product_variants.get(s_info.get("product_id"), []):
+            sib = shopify_variants[sib_gid]
+            if sib_gid != gid and sib.get("has_cogs"):
+                if sibling_cost is None or sib["cogs"] > sibling_cost:
+                    sibling_cost = sib["cogs"]
+                    sibling_name = sib["item"]
+        known_cost = own_cost if own_cost else sibling_cost
+
+        price = s_info.get("price") or 0
+
+        # Zero-margin alert: storefront price is (about) the supplier cost
+        if known_cost and price and price <= known_cost * 1.05:
+            results.append(_row(
+                "PRICE_AT_COGS",
+                f"(cost from sibling: {sibling_name})" if not own_cost and sibling_name else "(own COGS)",
+                known_cost, s_info.get("currency", "USD"), None,
+                s_info=s_info, gid=gid,
+                cogs_source="shopify" if own_cost else "sibling"
+            ))
+            continue
+
+        # Missing COGS: suggest the sibling cost as the fill value when we have one
+        if not s_info.get("has_cogs"):
+            results.append(_row(
+                "MISSING_COGS",
+                f"(cost from sibling: {sibling_name})" if sibling_name else "(not in Korealy CSV)",
+                sibling_cost, s_info.get("currency", "USD") if sibling_cost else None, None,
+                s_info=s_info, gid=gid,
+                cogs_source="sibling" if sibling_cost else "none"
+            ))
 
     return results
 
@@ -630,7 +695,10 @@ def run_reconciliation() -> Dict[str, Any]:
             "NO_MAPPING": sum(1 for r in results if r["status"] == "NO_MAPPING"),
             "NO_COGS_IN_KOREALY": sum(1 for r in results if r["status"] == "NO_COGS_IN_KOREALY"),
             "NO_COGS_IN_SHOPIFY": sum(1 for r in results if r["status"] == "NO_COGS_IN_SHOPIFY"),
-            "NO_COGS_BOTH": sum(1 for r in results if r["status"] == "NO_COGS_BOTH")
+            "NO_COGS_BOTH": sum(1 for r in results if r["status"] == "NO_COGS_BOTH"),
+            "MISSING_COGS": sum(1 for r in results if r["status"] == "MISSING_COGS"),
+            "PRICE_AT_COGS": sum(1 for r in results if r["status"] == "PRICE_AT_COGS"),
+            "ZERO_MARGIN": sum(1 for r in results if r.get("zero_margin")),
         }
 
         print(f"✅ Reconciliation complete: {stats}")
