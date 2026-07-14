@@ -284,7 +284,7 @@ def _render_summary(today_kpi: Dict[str, Any], yday_kpi: Dict[str, Any], mtd_kpi
         f"📊 Operational: *{t['op']}*",
         f"📣 Google: {t['g_spend']} ({t['g_pur']} ord, CPA {t['g_cpa']})",
         f"📣 Meta: {t['m_spend']} ({t['m_pur']} ord, CPA {t['m_cpa']})",
-        f"🛍️ Shop: {t['s_spend']} ({t['s_pur']} ord, CPA {t['s_cpa']})",
+        f"🛒 Shop: {t['s_spend']} ({t['s_pur']} ord, CPA {t['s_cpa']})",
         f"💸 Total Spend: *{t['total_spend']}* | Gen CPA: {t['gen_cpa']}",
         f"💎 *NET MARGIN: {t['margin']}*",
         "",
@@ -296,7 +296,7 @@ def _render_summary(today_kpi: Dict[str, Any], yday_kpi: Dict[str, Any], mtd_kpi
         f"📊 Operational: *{y['op']}*",
         f"📣 Google: {y['g_spend']} ({y['g_pur']} ord, CPA {y['g_cpa']})",
         f"📣 Meta: {y['m_spend']} ({y['m_pur']} ord, CPA {y['m_cpa']})",
-        f"🛍️ Shop: {y['s_spend']} ({y['s_pur']} ord, CPA {y['s_cpa']})",
+        f"🛒 Shop: {y['s_spend']} ({y['s_pur']} ord, CPA {y['s_cpa']})",
         f"💸 Total Spend: *{y['total_spend']}* | Gen CPA: {y['gen_cpa']}",
         f"💎 *NET MARGIN: {y['margin']}*",
         "",
@@ -308,7 +308,7 @@ def _render_summary(today_kpi: Dict[str, Any], yday_kpi: Dict[str, Any], mtd_kpi
         f"📊 Operational: *{m['op']}*",
         f"📣 Google: {m['g_spend']} ({m['g_pur']} ord, CPA {m['g_cpa']})",
         f"📣 Meta: {m['m_spend']} ({m['m_pur']} ord, CPA {m['m_cpa']})",
-        f"🛍️ Shop: {m['s_spend']} ({m['s_pur']} ord, CPA {m['s_cpa']})",
+        f"🛒 Shop: {m['s_spend']} ({m['s_pur']} ord, CPA {m['s_cpa']})",
         f"💸 Total Spend: *{m['total_spend']}* | Gen CPA: {m['gen_cpa']}",
         f"💎 *NET MARGIN: {m['margin']}*",
     ]
@@ -413,6 +413,7 @@ def send_order_alert(
     order: Optional[dict] = None,
     chat_id: Optional[str] = None,
     store_label: Optional[str] = None,
+    shop_cost_order: Optional[float] = None,
 ):
     _, default_chat = _require_env(for_summary=False)
     chat_id = (chat_id or default_chat).strip()
@@ -454,6 +455,9 @@ def send_order_alert(
 
     if psp_usd_order is not None:
         lines.append(f"💳 PSP Fee: *{_fmt_money(psp_usd_order)}*")
+
+    if shop_cost_order:
+        lines.append(f"🛒 Shop Ad Cost: *{_fmt_money(shop_cost_order)}*")
 
     if approx_sale_profit is not None:
         lines.append(f"📈 Approx. Profit: *{_fmt_money(approx_sale_profit)}*")

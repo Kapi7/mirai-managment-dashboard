@@ -52,11 +52,11 @@ query ($q: String!) {
 _CACHE: Dict[str, Dict[str, Any]] = {}
 
 
-def _ql_for_store(domain: str, token: str, since_days: int) -> Optional[Dict[str, float]]:
-    """Return {day_iso: ad_spend_usd} for one store, or None on failure."""
+def _ql_for_store(domain: str, token: str, since_days: int) -> Optional[Dict[str, Dict[str, Optional[float]]]]:
+    """Return {day_iso: {"ad_spend": usd, "cac": usd|None}} for one store, or None on failure."""
     ql = (
         "FROM shop_campaign_insights "
-        "SHOW shop_campaign_ad_spend "
+        "SHOW shop_campaign_ad_spend, shop_campaign_average_customer_acquisition_cost "
         f"TIMESERIES day SINCE startOfDay(-{int(since_days)}d) UNTIL today"
     )
     url = f"https://{domain}/admin/api/{_QL_API_VERSION}/graphql.json"
@@ -86,18 +86,23 @@ def _ql_for_store(domain: str, token: str, since_days: int) -> Optional[Dict[str
 
     td = resp.get("tableData") or {}
     rows = td.get("rows") or []
-    out: Dict[str, float] = {}
+    out: Dict[str, Dict[str, Optional[float]]] = {}
     for row in rows:
         if not isinstance(row, dict):
             continue
         day = row.get("day")
-        val = row.get("shop_campaign_ad_spend")
         if not day:
             continue
         try:
-            out[str(day)[:10]] = float(val or 0)
+            spend = float(row.get("shop_campaign_ad_spend") or 0)
         except (TypeError, ValueError):
-            out[str(day)[:10]] = 0.0
+            spend = 0.0
+        cac_raw = row.get("shop_campaign_average_customer_acquisition_cost")
+        try:
+            cac = float(cac_raw) if cac_raw not in (None, "") else None
+        except (TypeError, ValueError):
+            cac = None
+        out[str(day)[:10]] = {"ad_spend": spend, "cac": cac}
     return out
 
 
@@ -117,21 +122,52 @@ def _store_map(domain: str, token: str) -> Optional[Dict[str, float]]:
     return m
 
 
-def daily_spend_map() -> Optional[Dict[str, float]]:
+def daily_rich_map() -> Optional[Dict[str, Dict[str, Optional[float]]]]:
     """
-    Combined {day_iso: total ad_spend USD} across all stores.
+    Combined {day_iso: {"ad_spend": usd, "cac": usd|None}} across all stores.
     Returns None if NO store produced data (caller should use a fallback).
     """
-    combined: Dict[str, float] = {}
+    combined: Dict[str, Dict[str, Optional[float]]] = {}
     any_ok = False
     for store in SHOPIFY_STORES:
         m = _store_map(store["domain"], store["access_token"])
         if m is None:
             continue
         any_ok = True
-        for day, spend in m.items():
-            combined[day] = round(combined.get(day, 0.0) + spend, 2)
+        for day, vals in m.items():
+            cur = combined.setdefault(day, {"ad_spend": 0.0, "cac": None})
+            cur["ad_spend"] = round((cur["ad_spend"] or 0.0) + (vals.get("ad_spend") or 0.0), 2)
+            # keep any non-null CAC (single active store in practice)
+            if vals.get("cac") is not None:
+                cur["cac"] = vals["cac"]
     return combined if any_ok else None
+
+
+def daily_spend_map() -> Optional[Dict[str, float]]:
+    """
+    Combined {day_iso: total ad_spend USD} across all stores.
+    Returns None if NO store produced data (caller should use a fallback).
+    """
+    rich = daily_rich_map()
+    if rich is None:
+        return None
+    return {day: float(vals.get("ad_spend") or 0.0) for day, vals in rich.items()}
+
+
+def current_cac() -> Optional[float]:
+    """
+    Most recent per-customer acquisition cost Shopify reports for Shop
+    Campaigns (today's if present, else the latest day with data). Used to
+    price a single acquired order in real time. None if no data.
+    """
+    rich = daily_rich_map()
+    if not rich:
+        return None
+    for day in sorted(rich.keys(), reverse=True):
+        cac = rich[day].get("cac")
+        if cac is not None and cac > 0:
+            return round(float(cac), 2)
+    return None
 
 
 def spend_for_day(day_iso: str) -> Optional[float]:
@@ -164,11 +200,14 @@ if __name__ == "__main__":
     ap.add_argument("--days", type=int, default=30)
     args = ap.parse_args()
 
-    m = daily_spend_map()
+    m = daily_rich_map()
     if m is None:
         print("No ShopifyQL data (unavailable). Check API version / access scope.")
     else:
         for day in sorted(m):
-            if m[day]:
-                print(f"  {day}  ${m[day]:>8.2f}")
+            if m[day].get("ad_spend"):
+                cac = m[day].get("cac")
+                cac_txt = f"  CAC ${cac:.2f}" if cac else ""
+                print(f"  {day}  ${m[day]['ad_spend']:>8.2f}{cac_txt}")
         print(f"\nTrailing {args.days}d total: ${total_spend(args.days):.2f}")
+        print(f"Current CAC: {current_cac()}")
