@@ -782,14 +782,38 @@ async def daily_report(req: DateRangeRequest):
         return {"error": str(e), "data": []}
 
 
-# ==================== SHOP CAMPAIGNS BILLS (debug/verify) ====================
+# ==================== SHOP CAMPAIGNS COST (debug/verify) ====================
+
+@app.get("/shop-campaigns/cost")
+async def shop_campaign_cost_debug(days: int = 30):
+    """
+    EXACT Shop Campaigns ad spend per day from Shopify ShopifyQL
+    (shop_campaign_insights) — the primary cost source.
+    """
+    try:
+        import shop_campaign_cost
+        m = shop_campaign_cost.daily_spend_map()
+        if m is None:
+            return {"available": False, "note": "ShopifyQL unavailable (check API version/scope)"}
+        from datetime import date, timedelta
+        cutoff = (date.today() - timedelta(days=days)).isoformat()
+        recent = {d: v for d, v in sorted(m.items()) if d >= cutoff}
+        return {
+            "available": True,
+            "api_version": shop_campaign_cost._QL_API_VERSION,
+            "total": round(sum(recent.values()), 2),
+            "days": recent,
+        }
+    except Exception as e:
+        import traceback
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
 
 @app.get("/shop-campaigns/bills")
 async def shop_campaign_bills(days: int = 60, raw: bool = False):
     """
-    Scan Gmail for Shopify billing emails and show parsed Shop Campaigns
-    charges. Use ?raw=true to include matched text snippets (for verifying
-    the parser against the real email format).
+    FALLBACK. Scan Gmail for Shopify billing emails and show parsed Shop
+    Campaigns charges. ?raw=true includes matched text snippets.
     """
     try:
         import shop_bills

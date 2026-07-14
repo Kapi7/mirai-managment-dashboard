@@ -344,27 +344,37 @@ class DatabaseService:
                 result = await db.execute(query)
                 rows = result.all()
 
-                # Shop Campaigns effective rate from real Shopify bills
-                # (billed charges / Shop-order gross over trailing window).
-                shop_rate = None
+                # Shop Campaigns spend sources:
+                #   shop_spend_map : EXACT per-day ad spend from Shopify ShopifyQL
+                #                    shop_campaign_insights (primary)
+                #   shop_rate      : billed-emails effective rate fallback
+                shop_spend_map = None
                 try:
-                    import shop_bills
-                    _lookback = int(os.getenv("SHOP_BILLS_LOOKBACK_DAYS", "30") or 30)
-                    _billed = shop_bills.billed_total(_lookback)
-                    if _billed > 0:
-                        _cutoff = datetime.utcnow() - timedelta(days=_lookback)
-                        _gq = select(func.sum(Order.gross)).where(
-                            and_(
-                                Order.channel == 'shop',
-                                Order.created_at >= _cutoff,
-                                Order.cancelled_at.is_(None),
-                            )
-                        )
-                        _wg = _decimal_to_float((await db.execute(_gq)).scalar()) or 0
-                        if _wg > 0:
-                            shop_rate = _billed / _wg
+                    import shop_campaign_cost
+                    shop_spend_map = shop_campaign_cost.daily_spend_map()  # {day_iso: usd} or None
                 except Exception as _e:
-                    print(f"⚠️ Shop Campaigns rate unavailable: {_e}")
+                    print(f"⚠️ Shop Campaigns ShopifyQL unavailable: {_e}")
+
+                shop_rate = None
+                if shop_spend_map is None:
+                    try:
+                        import shop_bills
+                        _lookback = int(os.getenv("SHOP_BILLS_LOOKBACK_DAYS", "30") or 30)
+                        _billed = shop_bills.billed_total(_lookback)
+                        if _billed > 0:
+                            _cutoff = datetime.utcnow() - timedelta(days=_lookback)
+                            _gq = select(func.sum(Order.gross)).where(
+                                and_(
+                                    Order.channel == 'shop',
+                                    Order.created_at >= _cutoff,
+                                    Order.cancelled_at.is_(None),
+                                )
+                            )
+                            _wg = _decimal_to_float((await db.execute(_gq)).scalar()) or 0
+                            if _wg > 0:
+                                shop_rate = _billed / _wg
+                    except Exception as _e:
+                        print(f"⚠️ Shop Campaigns rate unavailable: {_e}")
 
                 kpis = []
                 for row in rows:
@@ -382,9 +392,13 @@ class DatabaseService:
                     shop_gross = _decimal_to_float(row.shop_gross) or 0
                     returning_customers = row.returning_customers or 0
 
-                    # Shop Campaigns spend: real billed rate when available,
-                    # else env-configured estimate (same model as master_report_mirai)
-                    if shop_rate is not None:
+                    # Shop Campaigns spend: exact ShopifyQL per-day (primary) →
+                    # billed-emails rate → env estimate
+                    _day_key = (row.order_date.isoformat() if hasattr(row.order_date, "isoformat")
+                                else str(row.order_date))[:10]
+                    if shop_spend_map is not None and _day_key in shop_spend_map:
+                        shop_spend = round(shop_spend_map[_day_key], 2)
+                    elif shop_rate is not None:
                         shop_spend = round(shop_gross * shop_rate, 2)
                     else:
                         try:

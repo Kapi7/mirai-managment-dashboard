@@ -322,13 +322,12 @@ def _shopify_channel(order: dict) -> str | None:
     return None
 
 # ---------- Shop Campaigns cost model ----------
-# Shopify does not expose Shop Campaigns billing via the Admin API. Primary
-# source: actual charges parsed from Shopify billing emails (shop_bills.py) —
-# an EFFECTIVE RATE (billed charges / Shop-order gross over a trailing window)
-# is applied to each day's Shop gross, so the number self-calibrates even when
-# the campaign offer changes daily. Fallback when no bill data yet:
-#   SHOP_CAMPAIGN_COST_PER_ORDER  flat USD per Shop-channel order (e.g. CAC fee)
-#   SHOP_CAMPAIGN_COST_PCT        fraction of Shop-order gross (e.g. 0.10 = 10%)
+# Shopify exposes EXACT Shop Campaigns ad spend per day via the
+# `shop_campaign_insights` ShopifyQL dataset (shop_campaign_cost.py). That is
+# the primary source and needs zero configuration — it's the real billed spend.
+# Fallbacks, in order, if ShopifyQL is unavailable:
+#   2) Effective rate from parsed Shopify billing emails (shop_bills.py)
+#   3) Env estimate: SHOP_CAMPAIGN_COST_PER_ORDER / SHOP_CAMPAIGN_COST_PCT
 _SHOP_RATE_CACHE: Dict[str, Any] = {"rate": None, "ts": 0.0}
 _SHOP_RATE_TTL_SEC = 6 * 3600
 
@@ -381,14 +380,25 @@ def _shop_effective_rate(tz_name: str) -> Optional[float]:
     return rate
 
 
-def _shop_spend_usd(shop_orders: int, shop_gross: float, tz_name: Optional[str] = None) -> float:
-    # 1) Real billed rate from Shopify billing emails (self-calibrating)
+def _shop_spend_usd(shop_orders: int, shop_gross: float,
+                    tz_name: Optional[str] = None, day_iso: Optional[str] = None) -> float:
+    # 1) EXACT per-day spend from Shopify ShopifyQL shop_campaign_insights
+    if day_iso:
+        try:
+            import shop_campaign_cost
+            exact = shop_campaign_cost.spend_for_day(day_iso)
+            if exact is not None:
+                return round(exact, 2)
+        except Exception as e:
+            print(f"⚠️ [shop-cost] ShopifyQL unavailable, falling back: {e}")
+
+    # 2) Effective rate from parsed Shopify billing emails
     if tz_name and shop_gross > 0:
         rate = _shop_effective_rate(tz_name)
         if rate is not None:
             return round(shop_gross * rate, 2)
 
-    # 2) Fallback estimate from env (used until bill data exists)
+    # 3) Env estimate (last resort)
     try:
         per_order = float(os.getenv("SHOP_CAMPAIGN_COST_PER_ORDER", "0") or 0)
     except Exception:
@@ -655,7 +665,7 @@ def _kpis_from_orders(
 
     g_cpa = round(g_spend / g_orders_created, 2) if g_orders_created > 0 else None
 
-    s_spend = _shop_spend_usd(s_orders_created, shop_gross, tz_name)
+    s_spend = _shop_spend_usd(s_orders_created, shop_gross, tz_name, day_iso)
     s_cpa = round(s_spend / s_orders_created, 2) if s_orders_created > 0 else None
 
     psp_eur = get_psp_fees_daily(start_local.date(), end_local.date()).get(start_local.date(), 0.0)
