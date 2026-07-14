@@ -369,23 +369,22 @@ def _run_competitor_scan_background(task_id: str, variant_ids: List[str]):
         task["completed_at"] = datetime.utcnow().isoformat() + "Z"
 
 
-def _run_korealy_sync_background(task_id: str, variant_ids: List[str], korealy_cogs_map: Dict[str, float]):
-    """Run Korealy COGS sync in background thread with progress tracking"""
+def _run_korealy_sync_background(task_id: str, variant_ids: List[str],
+                                korealy_cogs_map: Dict[str, float],
+                                price_map: Dict[str, float] = None):
+    """Run Korealy COGS (+ optional price) sync in a background thread with progress."""
     import time
+    from korealy_reconciliation import apply_cogs_and_price
 
+    price_map = price_map or {}
     task = _BACKGROUND_TASKS[task_id]
     task["status"] = "running"
     task["started_at"] = datetime.utcnow().isoformat() + "Z"
 
     try:
-        from korealy_reconciliation import _shopify_graphql
-        from pricing_logic import log_price_update
-
         results = []
         total = len(variant_ids)
-        updated_count = 0
-        failed_count = 0
-        skipped_count = 0
+        updated_count = failed_count = skipped_count = 0
 
         for idx, variant_id in enumerate(variant_ids):
             task["progress"] = idx
@@ -393,132 +392,33 @@ def _run_korealy_sync_background(task_id: str, variant_ids: List[str], korealy_c
 
             if variant_id not in korealy_cogs_map:
                 failed_count += 1
-                results.append({
-                    "variant_id": variant_id,
-                    "status": "failed",
-                    "message": "No Korealy COGS provided"
-                })
+                results.append({"variant_id": variant_id, "status": "failed",
+                                "message": "No Korealy COGS provided"})
                 continue
 
             try:
-                variant_gid = f"gid://shopify/ProductVariant/{variant_id}"
-                new_cogs = float(korealy_cogs_map[variant_id])
-
-                # Get inventory item ID and current COGS
-                inv_query = """
-                query($id: ID!) {
-                    productVariant(id: $id) {
-                        title
-                        product { title }
-                        inventoryItem {
-                            id
-                            unitCost {
-                                amount
-                                currencyCode
-                            }
-                        }
-                    }
-                }
-                """
-                inv_result = _shopify_graphql(inv_query, {"id": variant_gid})
-
-                if not inv_result.get("data", {}).get("productVariant"):
-                    raise RuntimeError(f"Variant not found")
-
-                variant_data = inv_result["data"]["productVariant"]
-                if not variant_data.get("inventoryItem"):
-                    raise RuntimeError(f"No inventory item found")
-
-                inv_item_id = variant_data["inventoryItem"]["id"]
-
-                # Get current COGS
-                old_cogs = 0.0
-                if variant_data["inventoryItem"].get("unitCost"):
-                    old_cogs = float(variant_data["inventoryItem"]["unitCost"]["amount"] or 0)
-
-                product_title = variant_data["product"]["title"]
-                variant_title = variant_data["title"]
-                item_name = f"{product_title} — {variant_title}".strip(" — ")
-
-                task["current_item"] = item_name
-
-                # Skip if COGS already matches
-                if abs(old_cogs - new_cogs) < 0.01:
+                r = apply_cogs_and_price(variant_id, korealy_cogs_map[variant_id],
+                                         price_map.get(variant_id))
+                results.append(r)
+                task["current_item"] = r.get("item", variant_id)
+                if r["status"] == "success":
+                    updated_count += 1
+                    # Mirror COGS into the local DB cache when available
+                    if DB_SERVICE_AVAILABLE and db_service.is_available():
+                        try:
+                            import asyncio
+                            loop = asyncio.new_event_loop()
+                            loop.run_until_complete(db_service.update_variant_price(
+                                variant_id=variant_id, cogs=r.get("new_cogs")))
+                            loop.close()
+                        except Exception as db_err:
+                            print(f"⚠️ DB update failed for {variant_id}: {db_err}")
+                else:
                     skipped_count += 1
-                    results.append({
-                        "variant_id": variant_id,
-                        "item": item_name,
-                        "status": "skipped",
-                        "message": f"COGS already ${new_cogs:.2f}"
-                    })
-                    continue
-
-                # Update unit cost
-                cost_mutation = """
-                mutation inventoryItemUpdate($id: ID!, $input: InventoryItemInput!) {
-                    inventoryItemUpdate(id: $id, input: $input) {
-                        inventoryItem {
-                            id
-                            unitCost { amount currencyCode }
-                        }
-                        userErrors { field message }
-                    }
-                }
-                """
-                cost_result = _shopify_graphql(cost_mutation, {
-                    "id": inv_item_id,
-                    "input": {"cost": new_cogs}
-                })
-
-                cost_errors = cost_result.get("data", {}).get("inventoryItemUpdate", {}).get("userErrors", [])
-                if cost_errors:
-                    error_msgs = "; ".join([e.get("message", str(e)) for e in cost_errors])
-                    raise RuntimeError(f"Shopify errors: {error_msgs}")
-
-                # Log the update
-                log_price_update(
-                    variant_id=variant_id,
-                    item=item_name,
-                    old_price=old_cogs,
-                    new_price=new_cogs,
-                    old_compare_at=0.0,
-                    new_compare_at=0.0,
-                    status="success",
-                    notes=f"KOREALY_COGS|{old_cogs:.2f}|{new_cogs:.2f}"
-                )
-
-                # Update database immediately
-                if DB_SERVICE_AVAILABLE and db_service.is_available():
-                    try:
-                        import asyncio
-                        loop = asyncio.new_event_loop()
-                        loop.run_until_complete(db_service.update_variant_price(
-                            variant_id=variant_id,
-                            cogs=new_cogs
-                        ))
-                        loop.close()
-                    except Exception as db_err:
-                        print(f"⚠️ DB update failed for {variant_id}: {db_err}")
-
-                updated_count += 1
-                results.append({
-                    "variant_id": variant_id,
-                    "item": item_name,
-                    "status": "success",
-                    "old_cogs": old_cogs,
-                    "new_cogs": new_cogs,
-                    "message": f"Updated ${old_cogs:.2f} → ${new_cogs:.2f}"
-                })
-
-                time.sleep(0.15)  # Rate limiting
-
+                time.sleep(0.15)
             except Exception as e:
                 failed_count += 1
-                results.append({
-                    "variant_id": variant_id,
-                    "status": "failed",
-                    "message": str(e)
-                })
+                results.append({"variant_id": variant_id, "status": "failed", "message": str(e)})
 
         task["status"] = "completed"
         task["progress"] = total
@@ -1244,16 +1144,18 @@ async def sync_korealy_to_shopify_endpoint(req: KorealySyncRequest):
         print(f"🔄 Korealy sync request received with {len(req.updates)} updates")
         print(f"📋 Raw updates: {req.updates[:3]}...")  # Show first 3 for debugging
 
-        # Build variant_ids list and cogs_map from updates
+        # Build variant_ids list, cogs_map and (optional) price_map from updates
         variant_ids = []
         korealy_cogs_map = {}
+        price_map = {}
         skipped = []
 
         for update in req.updates:
             variant_id = update.get("variant_id")
             new_cogs = update.get("new_cogs") or update.get("korealy_cogs")  # Try both field names
+            new_price = update.get("new_price")  # optional — e.g. 2x COGS from the UI
 
-            print(f"  Processing: variant_id={variant_id}, new_cogs={new_cogs}, keys={list(update.keys())}")
+            print(f"  Processing: variant_id={variant_id}, new_cogs={new_cogs}, new_price={new_price}, keys={list(update.keys())}")
 
             # Skip records without valid variant_id or cogs
             if not variant_id or variant_id == "null" or variant_id == "None" or str(variant_id) == "None":
@@ -1274,6 +1176,11 @@ async def sync_korealy_to_shopify_endpoint(req: KorealySyncRequest):
 
             variant_ids.append(str(variant_id))
             korealy_cogs_map[str(variant_id)] = float(new_cogs)
+            if new_price not in (None, "", "null", "None"):
+                try:
+                    price_map[str(variant_id)] = float(new_price)
+                except (TypeError, ValueError):
+                    pass
 
         print(f"✅ Valid updates: {len(variant_ids)}, Skipped: {len(skipped)}")
 
@@ -1298,7 +1205,7 @@ async def sync_korealy_to_shopify_endpoint(req: KorealySyncRequest):
         # For small batches (<=3), run synchronously
         if num_updates <= 3:
             from korealy_reconciliation import sync_korealy_to_shopify as sync_cogs
-            result = sync_cogs(variant_ids, korealy_cogs_map)
+            result = sync_cogs(variant_ids, korealy_cogs_map, price_map)
 
             return {
                 "success": True,
@@ -1326,7 +1233,7 @@ async def sync_korealy_to_shopify_endpoint(req: KorealySyncRequest):
             "message": ""
         }
 
-        thread = threading.Thread(target=_run_korealy_sync_background, args=(task_id, variant_ids, korealy_cogs_map))
+        thread = threading.Thread(target=_run_korealy_sync_background, args=(task_id, variant_ids, korealy_cogs_map, price_map))
         thread.daemon = True
         thread.start()
 

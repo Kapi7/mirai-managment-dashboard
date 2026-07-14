@@ -71,6 +71,8 @@ export default function Pricing() {
   const [korealyStats, setKorealyStats] = useState({});
   const [korealySelectedRows, setKorealySelectedRows] = useState(new Set());
   const [korealyStatusFilter, setKorealyStatusFilter] = useState('all');
+  // When on, sync also sets price = 2x COGS, but only where that RAISES the price
+  const [korealyDoublePrice, setKorealyDoublePrice] = useState(false);
   const [currentScanTask, setCurrentScanTask] = useState(null);
   const [scanProgress, setScanProgress] = useState(null);
 
@@ -2430,10 +2432,18 @@ export default function Pricing() {
                         // Build updates array
                         const updates = Array.from(korealySelectedRows).map(idx => {
                           const record = korealyReconciliation[idx];
-                          return {
+                          const upd = {
                             variant_id: record.variant_id,
                             new_cogs: record.korealy_cogs
                           };
+                          // Optionally set price = 2x COGS, but never LOWER an existing price
+                          if (korealyDoublePrice && record.korealy_cogs) {
+                            const doubled = Math.round(record.korealy_cogs * 2 * 100) / 100;
+                            if (!record.shopify_price || doubled > record.shopify_price) {
+                              upd.new_price = doubled;
+                            }
+                          }
+                          return upd;
                         });
 
                         const response = await fetch(`${API_URL}/pricing/korealy-sync`, {
@@ -2503,6 +2513,15 @@ export default function Pricing() {
                   </Button>
                 </div>
               </div>
+              <label className="flex items-center gap-2 mt-3 text-sm text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={korealyDoublePrice}
+                  onChange={(e) => setKorealyDoublePrice(e.target.checked)}
+                />
+                Also set price = <strong>2× COGS</strong> on sync
+                <span className="text-slate-500">(only where it raises the price — never lowers an existing one)</span>
+              </label>
             </CardHeader>
             <CardContent>
               {/* Summary Stats */}
