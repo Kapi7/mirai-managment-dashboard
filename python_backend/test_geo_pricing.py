@@ -2,8 +2,8 @@
 
 import geo_competitor_scan as gcs
 from geo_pricing_report import (
-    MIN_MARGIN, PSP_FEE_RATE, UNDERCUT, margin_floor_for_rank, propose_price,
-    round_psychological,
+    MIN_MARGIN, PSP_FEE_RATE, UNDERCUT, classify_variant, margin_floor_for_rank,
+    propose_price, round_psychological,
 )
 
 
@@ -62,11 +62,11 @@ def test_no_data_keeps_current():
 
 
 def test_fx_applied_to_floor():
-    # AUD market: floor should be in AUD
+    # AUD market: floor should be in AUD (divisor = 1 - 35% margin - 5% PSP)
     p_usd = propose_price(10.0, 100.0, 1.0, 50.0)
     p_aud = propose_price(10.0, 100.0, 1.52, 50.0)
     assert p_aud["floor"] > p_usd["floor"]
-    assert abs(p_aud["floor"] - round(10.0 * 1.52 / 0.65, 2)) < 0.01
+    assert abs(p_aud["floor"] - round(10.0 * 1.52 / 0.60, 2)) < 0.01
 
 
 def test_undercut_pct():
@@ -74,12 +74,68 @@ def test_undercut_pct():
 
 
 def test_margin_tiers_by_rank():
-    assert margin_floor_for_rank(1) == 0.30    # traffic driver
-    assert margin_floor_for_rank(50) == 0.30
+    assert margin_floor_for_rank(1) == 0.35    # traffic driver (user floor 35%)
+    assert margin_floor_for_rank(50) == 0.35
     assert margin_floor_for_rank(51) == 0.40   # mid catalog
     assert margin_floor_for_rank(300) == 0.40
     assert margin_floor_for_rank(301) == 0.50  # long tail
     assert margin_floor_for_rank(None) == 0.50  # never sold -> long tail
+
+
+# ---------- per-variant playbook ----------
+
+def test_playbook_cut_when_winnable():
+    # cogs 10 -> floor 16.67; comp 40 -> target 38.4 >= floor; current 45
+    r = classify_variant(10.0, 40.0, 1.0, 45.0, min_margin=0.35)
+    assert r["case"] == "cut"
+    assert r["proposed"] == 37.95
+
+
+def test_playbook_raise_capped():
+    # target 38.4 vs current 20 -> +92%, but that's > SUSPECT_DELTA -> quarantine
+    r = classify_variant(10.0, 40.0, 1.0, 20.0, min_margin=0.35)
+    assert r["case"] == "quarantine"
+    # +30% gap -> raise, capped at +25%
+    r2 = classify_variant(10.0, 40.0, 1.0, 29.5, min_margin=0.35)
+    assert r2["case"] == "raise"
+    assert r2["proposed"] <= round(29.5 * 1.25, 2) + 0.95
+
+
+def test_playbook_floor_near():
+    # cogs 20 -> floor 33.33; comp 31 -> target 29.76 < floor,
+    # floor <= comp*1.15 (35.65) -> price at floor
+    r = classify_variant(20.0, 31.0, 1.0, 45.0, min_margin=0.35)
+    assert r["case"] == "floor-near"
+    assert r["proposed"] >= r["floor"] - 0.5
+
+
+def test_playbook_hold_value_machine():
+    # the machine case: cogs 190 -> floor 316.67; comp avg 209 -> target 200.6
+    # floor is 51% above market (> comp*1.15) -> hold price, value strategy
+    r = classify_variant(190.0, 209.0, 1.0, 543.0, min_margin=0.35,
+                         price_usd=543.0)
+    assert r["case"] == "hold-value"
+    assert r["proposed"] == 543.0  # price untouched
+    assert "sourcing" in r["action"]  # high-ticket flag
+
+
+def test_playbook_floor_near_guarded_against_bad_match():
+    # target below floor and floor within 15% of comp, but repricing to floor
+    # would move the price >50% -> verify the match first
+    # cogs 20 -> floor 33.33; comp 31; current 90 -> floor cut is -63%
+    r = classify_variant(20.0, 31.0, 1.0, 90.0, min_margin=0.35)
+    assert r["case"] == "quarantine"
+
+
+def test_playbook_thin_data_quarantine():
+    r = classify_variant(10.0, 40.0, 1.0, 41.0, min_margin=0.35, comp_count=2)
+    assert r["case"] == "quarantine"
+
+
+def test_playbook_no_data_keeps():
+    r = classify_variant(10.0, 0.0, 1.0, 41.0, min_margin=0.35)
+    assert r["case"] == "no-data"
+    assert r["proposed"] == 41.0
 
 
 def test_tiered_floor_changes_proposal():

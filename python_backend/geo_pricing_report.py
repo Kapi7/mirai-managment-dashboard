@@ -29,15 +29,22 @@ SALES_FILE = OUTPUTS_DIR / "variant_sales_2026.json"
 
 # Pricing strategy constants (SEO model)
 UNDERCUT = 0.04          # 4% below competitor average
-MIN_MARGIN = 0.30        # default minimum margin as share of price
+MIN_MARGIN = 0.35        # default minimum margin as share of price (user floor)
 PSP_FEE_RATE = 0.05      # payment processing, share of price
 
 # Tiered margin floors by product role (2026 revenue rank)
 MARGIN_TIERS = [
-    (50, 0.30),    # traffic drivers: compete hard
+    (50, 0.35),    # traffic drivers: compete hard (user minimum: 35%)
     (300, 0.40),   # mid catalog
     (None, 0.50),  # long tail: undercut only when nearly free
 ]
+
+# Per-variant playbook parameters
+RAISE_CAP = 0.25         # max single-step raise (avoid shocking repeat buyers)
+NEAR_FLOOR_BAND = 1.15   # floor within 15% of comp avg -> still worth pricing at floor
+HIGH_TICKET_USD = 150.0  # devices etc: value strategy, never blind cuts
+MIN_COMP_COUNT = 3       # fewer competitor prices than this -> thin data
+SUSPECT_DELTA = 50.0     # |target vs current| beyond this % -> likely bad match
 FX_MAX_AGE_S = 86400     # refresh FX daily
 
 # Offline fallback FX (USD -> currency), updated 2026-07
@@ -120,6 +127,83 @@ def propose_price(cogs_usd: float, comp_avg_local: float, fx: float,
         proposed, note = current_local, "no-data"
 
     return {"proposed": round(proposed, 2), "floor": floor, "note": note}
+
+
+def classify_variant(cogs_usd: float, comp_avg_local: float, fx: float,
+                     current_local: float, min_margin: float,
+                     comp_count: int = 99,
+                     price_usd: Optional[float] = None) -> Dict[str, Any]:
+    """
+    Per-variant playbook: every product lands in exactly one case with one action.
+
+    Cases:
+      no-data     -> keep price (not scanned / nothing found)
+      quarantine  -> manual review (thin data or suspicious match)
+      raise       -> lift to comp_avg-4%, capped at +25% per cycle
+      cut         -> cut to comp_avg-4% (>= floor guaranteed)
+      floor-near  -> price at floor: within 15% of comp avg, still in the fight
+      hold-value  -> floor is far above market: keep price, compete on value
+                     (high-ticket items additionally flagged for sourcing review)
+      keep        -> already within 2% of the target
+    """
+    floor = round(cogs_usd * fx / (1.0 - min_margin - PSP_FEE_RATE), 2) \
+        if cogs_usd > 0 else 0.0
+    high_ticket = (price_usd or 0) >= HIGH_TICKET_USD
+
+    if not comp_avg_local or comp_avg_local <= 0:
+        return {"case": "no-data", "proposed": current_local, "floor": floor,
+                "action": "keep price; scan later"}
+    if comp_count < MIN_COMP_COUNT:
+        return {"case": "quarantine", "proposed": current_local, "floor": floor,
+                "action": f"manual review: only {comp_count} competitor prices"}
+
+    target = comp_avg_local * (1.0 - UNDERCUT)
+    delta_vs_current = (target - current_local) / current_local * 100 \
+        if current_local > 0 else 0.0
+
+    if target >= floor:
+        # market price is reachable at healthy margin
+        if abs(delta_vs_current) > SUSPECT_DELTA:
+            # only quarantine when we'd actually move the price on this match
+            return {"case": "quarantine", "proposed": current_local,
+                    "floor": floor,
+                    "action": "manual review: suspicious match "
+                              "(pack size / wrong product?)"}
+        if delta_vs_current > 2.0:
+            capped = min(target, current_local * (1.0 + RAISE_CAP))
+            return {"case": "raise", "floor": floor,
+                    "proposed": round_psychological(capped, floor),
+                    "action": "lift toward comp_avg-4%"
+                              + (" (capped +25%, continue next cycle)"
+                                 if capped < target else "")}
+        if delta_vs_current < -2.0:
+            return {"case": "cut", "floor": floor,
+                    "proposed": round_psychological(target, floor),
+                    "action": "cut to comp_avg-4%"}
+        return {"case": "keep", "proposed": current_local, "floor": floor,
+                "action": "already competitive"}
+
+    # market price is BELOW our floor
+    if floor <= comp_avg_local * NEAR_FLOOR_BAND:
+        proposed = round_psychological(floor, floor)
+        delta_to_floor = (proposed - current_local) / current_local * 100 \
+            if current_local > 0 else 0.0
+        if abs(delta_to_floor) > SUSPECT_DELTA:
+            return {"case": "quarantine", "proposed": current_local,
+                    "floor": floor,
+                    "action": "manual review: pricing at floor would move "
+                              "price >50% — verify match first"}
+        if proposed >= current_local * 0.98:
+            return {"case": "keep", "proposed": current_local, "floor": floor,
+                    "action": "floor ~= current; not worth changing"}
+        return {"case": "floor-near", "proposed": proposed, "floor": floor,
+                "action": "price at floor (within 15% of market)"}
+    action = "hold price; compete on value (bundle/gift), exclude from Shopping feed"
+    if high_ticket:
+        action = ("hold price; high-ticket value play: bundle + installments, "
+                  "exclude from Shopping feed, review sourcing cost")
+    return {"case": "hold-value", "proposed": current_local, "floor": floor,
+            "action": action}
 
 
 # ================== 2026 sales weights ==================
@@ -226,9 +310,11 @@ def generate_market_report(geo: str, items: List[Dict[str, Any]],
         stats = get_competitor_stats(geo, vid)
         comp_avg_local, comp_source = 0.0, ""
         comp_low = comp_high = 0.0
+        comp_count = 0
         if stats and stats.get("comp_avg"):
             comp_avg_local = stats["comp_avg"]
             comp_low, comp_high = stats.get("comp_low", 0), stats.get("comp_high", 0)
+            comp_count = stats.get("filtered_count", 0)
             comp_source = stats.get("source", "geo_scan")
             # sanity: stats stored in local currency already
         elif geo != "us":
@@ -237,13 +323,15 @@ def generate_market_report(geo: str, items: List[Dict[str, Any]],
                 comp_avg_local = round(us["comp_avg"] * fx, 2)
                 comp_low = round(us.get("comp_low", 0) * fx, 2)
                 comp_high = round(us.get("comp_high", 0) * fx, 2)
+                comp_count = us.get("filtered_count", 0)
                 comp_source = "us_proxy"
 
         rank = rank_by_vid.get(vid)
         min_margin = margin_floor_for_rank(rank)
-        p = propose_price(cogs, comp_avg_local, fx, current_local,
-                          min_margin=min_margin)
-        note = p["note"] if comp_source != "us_proxy" else f"{p['note']}(proxy)"
+        p = classify_variant(cogs, comp_avg_local, fx, current_local,
+                             min_margin=min_margin, comp_count=comp_count,
+                             price_usd=it.get("retail_base"))
+        note = p["case"] if comp_source != "us_proxy" else f"{p['case']}(proxy)"
 
         s = sales.get(vid, {})
         margin_at_proposed = (1 - (cogs * fx) / p["proposed"]) if p["proposed"] > 0 else 0
@@ -269,6 +357,7 @@ def generate_market_report(geo: str, items: List[Dict[str, Any]],
             "margin_pct_current": round(margin_at_current * 100, 1),
             "margin_pct_at_proposed": round(margin_at_proposed * 100, 1),
             "note": note,
+            "action": p.get("action", ""),
         })
 
     rows.sort(key=lambda r: -r["revenue_2026_usd"])
@@ -294,12 +383,16 @@ def generate_market_report(geo: str, items: List[Dict[str, Any]],
         sum(r["margin_pct_at_proposed"] * r["revenue_2026_usd"] for r in weighted) / tot_rev
         if tot_rev > 0 else 0.0
     )
+    cases: Dict[str, int] = {}
+    for r in priced:
+        c = r["note"].replace("(proxy)", "")
+        cases[c] = cases.get(c, 0) + 1
     summary = {
         "geo": geo, "currency": currency, "fx_usd": fx,
         "variants_total": len(rows),
         "with_comp_data": len(priced),
         "via_us_proxy": sum(1 for r in rows if "(proxy)" in r["note"]),
-        "at_floor": sum(1 for r in rows if r["note"].startswith("floor")),
+        "cases": cases,
         "no_data": sum(1 for r in rows if r["note"] == "no-data"),
         "rev_weighted_delta_pct": round(rev_weighted_delta, 1),
         "rev_weighted_margin_current_pct": round(rw_margin_cur, 1),
@@ -307,7 +400,6 @@ def generate_market_report(geo: str, items: List[Dict[str, Any]],
         "csv": str(csv_path),
     }
     print(f"📊 {geo.upper()}: {summary['with_comp_data']}/{summary['variants_total']} "
-          f"priced ({summary['via_us_proxy']} proxy, {summary['at_floor']} at floor, "
-          f"{summary['no_data']} no-data) | rev-weighted Δ "
+          f"priced | cases {cases} | rev-weighted Δ "
           f"{summary['rev_weighted_delta_pct']}% -> {csv_path.name}")
     return summary
