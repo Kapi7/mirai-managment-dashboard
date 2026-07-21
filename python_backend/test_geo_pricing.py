@@ -138,6 +138,51 @@ def test_playbook_no_data_keeps():
     assert r["proposed"] == 41.0
 
 
+# ---------- hybrid master/override ----------
+
+def test_master_override_split(tmp_path, monkeypatch):
+    import geo_pricing_report as gpr
+    monkeypatch.setattr(gpr, "OUTPUTS_DIR", tmp_path)
+    monkeypatch.setattr(gpr, "SALES_FILE", tmp_path / "sales.json")
+    monkeypatch.setattr(gpr, "FX_CACHE_FILE", tmp_path / "fx.json")
+    (tmp_path / "sales.json").write_text(
+        '{"built_at": "x", "variants": {'
+        '"1": {"variant_id": "1", "product_title": "A", "variant_title": "",'
+        ' "sku": "", "units": 5, "revenue": 500.0},'
+        '"2": {"variant_id": "2", "product_title": "B", "variant_title": "",'
+        ' "sku": "", "units": 5, "revenue": 400.0}}}')
+
+    # AU comp data: variant 1 target ~= US master * fx (master mode);
+    # variant 2 target far above (override mode)
+    geo_store = {
+        "au": {
+            "1": {"comp_avg": 31.2, "comp_low": 30, "comp_high": 33,
+                  "currency": "AUD", "filtered_count": 8},
+            "2": {"comp_avg": 60.0, "comp_low": 55, "comp_high": 66,
+                  "currency": "AUD", "filtered_count": 8},
+        }
+    }
+    monkeypatch.setattr(gpr, "get_competitor_stats",
+                        lambda geo, vid: geo_store.get(geo, {}).get(str(vid)))
+
+    items = [
+        {"variant_id": "1", "item": "A", "cogs": 8.0, "retail_base": 25.0},
+        {"variant_id": "2", "item": "B", "cogs": 12.0, "retail_base": 30.0},
+    ]
+    fx = {"USD": 1.0, "AUD": 1.5}
+    # master: US proposed 20.0 for v1 -> AU master price 30.0; AU target
+    # 31.2*0.96=29.95 -> within 10% -> master. v2 master 32 -> AU target
+    # 57.6 -> override (raise)
+    s = gpr.generate_market_report(
+        "au", items, fx, master_prices_usd={"1": 20.0, "2": 32.0})
+    import csv as _csv
+    with open(s["csv"]) as f:
+        by_id = {r["variant_id"]: r for r in _csv.DictReader(f)}
+    assert by_id["1"]["pricing_mode"] == "master"
+    assert by_id["2"]["pricing_mode"] == "override"
+    assert s["pricing_modes"] == {"master": 1, "override": 1}
+
+
 def test_tiered_floor_changes_proposal():
     # long-tail floor (50%) forces a higher price than driver floor (30%)
     driver = propose_price(10.0, 18.0, 1.0, 20.0, min_margin=0.30)

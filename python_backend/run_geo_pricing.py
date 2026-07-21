@@ -56,7 +56,22 @@ def cmd_report(args):
     from pricing_logic import fetch_items
     items = fetch_items(use_cache=not args.refresh_items)
     fx = get_fx_rates()
-    summaries = [generate_market_report(g, items, fx) for g in geos]
+
+    # US first: its proposals define the master (base) price that other
+    # markets ride via FX unless they diverge past MASTER_TOLERANCE.
+    ordered = (["us"] if "us" in geos else []) + [g for g in geos if g != "us"]
+    master: dict = {}
+    summaries = []
+    for g in ordered:
+        s = generate_market_report(g, items, fx,
+                                   master_prices_usd=master or None)
+        summaries.append(s)
+        if g == "us":
+            import csv as _csv
+            with open(s["csv"]) as f:
+                master = {r["variant_id"]: float(r["proposed_USD"])
+                          for r in _csv.DictReader(f)
+                          if float(r["proposed_USD"] or 0) > 0}
     print(json.dumps(summaries, indent=1))
 
 

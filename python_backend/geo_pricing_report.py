@@ -45,6 +45,11 @@ NEAR_FLOOR_BAND = 1.15   # floor within 15% of comp avg -> still worth pricing a
 HIGH_TICKET_USD = 150.0  # devices etc: value strategy, never blind cuts
 MIN_COMP_COUNT = 3       # fewer competitor prices than this -> thin data
 SUSPECT_DELTA = 50.0     # |target vs current| beyond this % -> likely bad match
+
+# Hybrid execution: master (US/base) price flows to all markets via FX;
+# a market gets a fixed price-list override only when its own target diverges
+# more than this from the FX-converted master.
+MASTER_TOLERANCE = 0.10
 FX_MAX_AGE_S = 86400     # refresh FX daily
 
 # Offline fallback FX (USD -> currency), updated 2026-07
@@ -280,7 +285,9 @@ def top_variants_by_revenue(n: int) -> List[Dict[str, Any]]:
 
 def generate_market_report(geo: str, items: List[Dict[str, Any]],
                            fx_rates: Dict[str, float],
-                           date_tag: Optional[str] = None) -> Dict[str, Any]:
+                           date_tag: Optional[str] = None,
+                           master_prices_usd: Optional[Dict[str, float]] = None
+                           ) -> Dict[str, Any]:
     """
     Dry-run proposal for one market.
 
@@ -360,6 +367,24 @@ def generate_market_report(geo: str, items: List[Dict[str, Any]],
             "action": p.get("action", ""),
         })
 
+        # hybrid execution: does this market need a fixed override, or can it
+        # ride the FX-converted master (US/base) price?
+        if master_prices_usd is not None and geo != "us":
+            row = rows[-1]
+            master_usd = master_prices_usd.get(vid)
+            changed = p["case"] in ("raise", "cut", "floor-near")
+            if master_usd and changed:
+                master_local = master_usd * fx
+                divergence = abs(p["proposed"] - master_local) / master_local \
+                    if master_local > 0 else 0.0
+                row["pricing_mode"] = ("master"
+                                       if divergence <= MASTER_TOLERANCE
+                                       else "override")
+            elif changed:
+                row["pricing_mode"] = "override"  # no US master to ride
+            else:
+                row["pricing_mode"] = ""  # unchanged rows follow whatever exists
+
     rows.sort(key=lambda r: -r["revenue_2026_usd"])
 
     with open(csv_path, "w", newline="") as f:
@@ -387,12 +412,18 @@ def generate_market_report(geo: str, items: List[Dict[str, Any]],
     for r in priced:
         c = r["note"].replace("(proxy)", "")
         cases[c] = cases.get(c, 0) + 1
+    modes: Dict[str, int] = {}
+    for r in rows:
+        m = r.get("pricing_mode")
+        if m:
+            modes[m] = modes.get(m, 0) + 1
     summary = {
         "geo": geo, "currency": currency, "fx_usd": fx,
         "variants_total": len(rows),
         "with_comp_data": len(priced),
         "via_us_proxy": sum(1 for r in rows if "(proxy)" in r["note"]),
         "cases": cases,
+        "pricing_modes": modes,
         "no_data": sum(1 for r in rows if r["note"] == "no-data"),
         "rev_weighted_delta_pct": round(rev_weighted_delta, 1),
         "rev_weighted_margin_current_pct": round(rw_margin_cur, 1),
