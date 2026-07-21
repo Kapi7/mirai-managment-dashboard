@@ -29,8 +29,15 @@ SALES_FILE = OUTPUTS_DIR / "variant_sales_2026.json"
 
 # Pricing strategy constants (SEO model)
 UNDERCUT = 0.04          # 4% below competitor average
-MIN_MARGIN = 0.30        # minimum margin as share of price
+MIN_MARGIN = 0.30        # default minimum margin as share of price
 PSP_FEE_RATE = 0.05      # payment processing, share of price
+
+# Tiered margin floors by product role (2026 revenue rank)
+MARGIN_TIERS = [
+    (50, 0.30),    # traffic drivers: compete hard
+    (300, 0.40),   # mid catalog
+    (None, 0.50),  # long tail: undercut only when nearly free
+]
 FX_MAX_AGE_S = 86400     # refresh FX daily
 
 # Offline fallback FX (USD -> currency), updated 2026-07
@@ -81,14 +88,25 @@ def round_psychological(price: float, floor: float) -> float:
     return round(candidate, 2)
 
 
+def margin_floor_for_rank(revenue_rank: Optional[int]) -> float:
+    """Tiered minimum margin by 2026 revenue rank (1 = best seller)."""
+    if revenue_rank is None:
+        return MARGIN_TIERS[-1][1]
+    for cutoff, margin in MARGIN_TIERS:
+        if cutoff is None or revenue_rank <= cutoff:
+            return margin
+    return MARGIN_TIERS[-1][1]
+
+
 def propose_price(cogs_usd: float, comp_avg_local: float, fx: float,
-                  current_local: float) -> Dict[str, Any]:
+                  current_local: float,
+                  min_margin: float = MIN_MARGIN) -> Dict[str, Any]:
     """
     Proposed price for one variant in one market (local currency).
 
     Returns {proposed, floor, note}. note: "undercut" | "floor" | "no-data".
     """
-    floor = round(cogs_usd * fx / (1.0 - MIN_MARGIN - PSP_FEE_RATE), 2) \
+    floor = round(cogs_usd * fx / (1.0 - min_margin - PSP_FEE_RATE), 2) \
         if cogs_usd > 0 else 0.0
 
     if comp_avg_local and comp_avg_local > 0:
@@ -191,6 +209,10 @@ def generate_market_report(geo: str, items: List[Dict[str, Any]],
         raise ValueError(f"No FX rate for {currency}")
 
     sales = load_sales_weights()["variants"]
+    rank_by_vid = {
+        v["variant_id"]: i + 1
+        for i, v in enumerate(sorted(sales.values(), key=lambda v: -v["revenue"]))
+    }
     date_tag = date_tag or datetime.utcnow().strftime("%Y-%m-%d")
     OUTPUTS_DIR.mkdir(exist_ok=True)
     csv_path = OUTPUTS_DIR / f"geo_pricing_proposal_{geo}_{date_tag}.csv"
@@ -217,17 +239,23 @@ def generate_market_report(geo: str, items: List[Dict[str, Any]],
                 comp_high = round(us.get("comp_high", 0) * fx, 2)
                 comp_source = "us_proxy"
 
-        p = propose_price(cogs, comp_avg_local, fx, current_local)
+        rank = rank_by_vid.get(vid)
+        min_margin = margin_floor_for_rank(rank)
+        p = propose_price(cogs, comp_avg_local, fx, current_local,
+                          min_margin=min_margin)
         note = p["note"] if comp_source != "us_proxy" else f"{p['note']}(proxy)"
 
         s = sales.get(vid, {})
         margin_at_proposed = (1 - (cogs * fx) / p["proposed"]) if p["proposed"] > 0 else 0
+        margin_at_current = (1 - (cogs * fx) / current_local) if current_local > 0 else 0
         delta_pct = ((p["proposed"] - current_local) / current_local * 100) \
             if current_local > 0 else 0
 
         rows.append({
             "variant_id": vid,
             "item": it.get("item", ""),
+            "rev_rank_2026": rank if rank is not None else "",
+            "min_margin_tier": f"{int(min_margin * 100)}%",
             "units_2026": s.get("units", 0),
             "revenue_2026_usd": s.get("revenue", 0.0),
             "cogs_usd": cogs,
@@ -238,6 +266,7 @@ def generate_market_report(geo: str, items: List[Dict[str, Any]],
             f"proposed_{currency}": p["proposed"],
             f"floor_{currency}": p["floor"],
             "delta_pct": round(delta_pct, 1),
+            "margin_pct_current": round(margin_at_current * 100, 1),
             "margin_pct_at_proposed": round(margin_at_proposed * 100, 1),
             "note": note,
         })
@@ -257,6 +286,14 @@ def generate_market_report(geo: str, items: List[Dict[str, Any]],
         sum(r["delta_pct"] * r["revenue_2026_usd"] for r in weighted) / tot_rev
         if tot_rev > 0 else 0.0
     )
+    rw_margin_cur = (
+        sum(r["margin_pct_current"] * r["revenue_2026_usd"] for r in weighted) / tot_rev
+        if tot_rev > 0 else 0.0
+    )
+    rw_margin_prop = (
+        sum(r["margin_pct_at_proposed"] * r["revenue_2026_usd"] for r in weighted) / tot_rev
+        if tot_rev > 0 else 0.0
+    )
     summary = {
         "geo": geo, "currency": currency, "fx_usd": fx,
         "variants_total": len(rows),
@@ -265,6 +302,8 @@ def generate_market_report(geo: str, items: List[Dict[str, Any]],
         "at_floor": sum(1 for r in rows if r["note"].startswith("floor")),
         "no_data": sum(1 for r in rows if r["note"] == "no-data"),
         "rev_weighted_delta_pct": round(rev_weighted_delta, 1),
+        "rev_weighted_margin_current_pct": round(rw_margin_cur, 1),
+        "rev_weighted_margin_proposed_pct": round(rw_margin_prop, 1),
         "csv": str(csv_path),
     }
     print(f"📊 {geo.upper()}: {summary['with_comp_data']}/{summary['variants_total']} "

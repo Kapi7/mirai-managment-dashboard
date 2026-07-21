@@ -2,7 +2,8 @@
 
 import geo_competitor_scan as gcs
 from geo_pricing_report import (
-    MIN_MARGIN, PSP_FEE_RATE, UNDERCUT, propose_price, round_psychological,
+    MIN_MARGIN, PSP_FEE_RATE, UNDERCUT, margin_floor_for_rank, propose_price,
+    round_psychological,
 )
 
 
@@ -70,6 +71,23 @@ def test_fx_applied_to_floor():
 
 def test_undercut_pct():
     assert UNDERCUT == 0.04
+
+
+def test_margin_tiers_by_rank():
+    assert margin_floor_for_rank(1) == 0.30    # traffic driver
+    assert margin_floor_for_rank(50) == 0.30
+    assert margin_floor_for_rank(51) == 0.40   # mid catalog
+    assert margin_floor_for_rank(300) == 0.40
+    assert margin_floor_for_rank(301) == 0.50  # long tail
+    assert margin_floor_for_rank(None) == 0.50  # never sold -> long tail
+
+
+def test_tiered_floor_changes_proposal():
+    # long-tail floor (50%) forces a higher price than driver floor (30%)
+    driver = propose_price(10.0, 18.0, 1.0, 20.0, min_margin=0.30)
+    tail = propose_price(10.0, 18.0, 1.0, 20.0, min_margin=0.50)
+    assert tail["floor"] > driver["floor"]
+    assert tail["note"] == "floor"
 
 
 def test_rounding_never_below_floor():
