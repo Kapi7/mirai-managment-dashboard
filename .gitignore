@@ -48,3 +48,6 @@ python_backend/google-ads.yaml
 python_backend/google-ads-2.yaml
 .google_oauth/
 .google_oauth_1/
+
+# Geo pricing generated reports
+python_backend/outputs/
