@@ -15,6 +15,18 @@ SEO/organic-led pricing:
   matrix cost + buffer; free-delivery threshold ~30% above median basket.
   Per user decision 2026-07-21: **delivery/shipping settings are not touched at all
   in Phase 1.**
+- **Free-delivery weight cap** (user-raised risk, 2026-07-21): a price-only
+  threshold lets heavy low-margin baskets ship free at a loss (real 2026 worst
+  case: $63 order, 2.8 kg, $38 ship). Data: 5% of US orders in the $49-80 band
+  are >1 kg; 1% lose money at blended margin, 5% at the 30% floor margin.
+  Phase 2 rule: free delivery requires subtotal >= threshold AND order weight
+  <= 1 kg; heavier orders pay a weight-based rate. With the cap, a $59
+  threshold is safe even at pure floor margin (0.30 x 59 = $17.70 covers any
+  <=1 kg cost). Implementation: stack TOTAL_PRICE + TOTAL_WEIGHT method
+  conditions via the delivery-profile API (verify - the admin UI doesn't allow
+  mixing, but the store's Selfnamed profile already stacks two weight
+  conditions on one rate); fallback: move heavy SKUs to a separate "Heavy
+  items" delivery profile with no free rate.
 
 2026 YTD facts the design rests on (3,188 orders): revenue concentrated in
 US ($142k), AU ($33k), UK ($12k), CA ($10k); blended gross margin 49–54%;
