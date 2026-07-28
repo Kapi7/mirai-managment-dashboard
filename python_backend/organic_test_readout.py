@@ -104,9 +104,29 @@ def main():
     a = ap.parse_args()
 
     day0 = datetime.date.fromisoformat(a.start)
+    today = datetime.date.today()
     span = datetime.timedelta(weeks=a.weeks)
-    pre_start, pre_end = day0 - span, day0 - datetime.timedelta(days=1)
-    post_start, post_end = day0, day0 + span - datetime.timedelta(days=1)
+    post_start = day0
+    post_end = min(day0 + span - datetime.timedelta(days=1),
+                   today - datetime.timedelta(days=1))
+    days_elapsed = (post_end - post_start).days + 1
+
+    if days_elapsed < 1:
+        print(f"⏳ The test started {day0} and no full day has elapsed yet "
+              f"(today is {today}). Nothing to measure — check back tomorrow.")
+        return
+    # compare against an equal-length window immediately before the change, so
+    # a partial post period is never measured against a full pre period
+    pre_end = day0 - datetime.timedelta(days=1)
+    pre_start = pre_end - datetime.timedelta(days=days_elapsed - 1)
+
+    if days_elapsed < a.weeks * 7:
+        print(f"⚠️  PARTIAL READOUT — {days_elapsed} of {a.weeks*7} days elapsed. "
+              f"Windows matched at {days_elapsed} days each; treat as early "
+              f"signal only.\n")
+    if days_elapsed < 14:
+        print("    Too early to judge: under 14 days, normal week-to-week "
+              "swing dwarfs any price effect.\n")
 
     arms = {n: load_cohort(n) for n in ("treated", "control")}
     all_ids = set().union(*[set(v) for v in arms.values()])
