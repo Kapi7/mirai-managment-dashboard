@@ -120,6 +120,25 @@ def live_zones() -> list:
     return zones
 
 
+def variants_without_free_shipping() -> set:
+    """Variants assigned to a non-default delivery profile. Those profiles
+    carry no free-shipping rate, so such variants cannot create a free
+    basket and must be excluded from the leak scan."""
+    sys.path.insert(0, str(BASE_DIR))
+    from organic_test_push import gql
+    Q = """{ deliveryProfiles(first:10){ nodes{ default
+      profileItems(first:100){ edges{ node{ variants(first:50){
+        edges{ node{ legacyResourceId } } } } } } } } }"""
+    out = set()
+    for p in gql(Q)["data"]["deliveryProfiles"]["nodes"]:
+        if p["default"]:
+            continue
+        for item in p["profileItems"]["edges"]:
+            for v in item["node"]["variants"]["edges"]:
+                out.add(str(v["node"]["legacyResourceId"]))
+    return out
+
+
 def repriced(cohort: str) -> list:
     reports = sorted(OUTPUTS_DIR.glob("geo_pricing_proposal_us_*.csv"))
     with open(reports[-1]) as f:
@@ -130,12 +149,16 @@ def repriced(cohort: str) -> list:
         with open(ep) as f:
             exposure = {r["variant_id"]: r for r in csv.DictReader(f)}
 
-    out = []
+    excluded = variants_without_free_shipping()
+    out, skipped = [], []
     with open(OUTPUTS_DIR / f"organic_test_{cohort}.csv") as f:
         for row in csv.DictReader(f):
             for vid in (row.get("changed_variant_ids") or "").split(","):
                 p, e = play.get(vid), exposure.get(vid)
                 if not p or not e:
+                    continue
+                if vid in excluded:
+                    skipped.append(row["title"])
                     continue
                 kg = float(e["unit_kg"] or 0)
                 price = float(e["new_price"] or 0)
@@ -143,6 +166,12 @@ def repriced(cohort: str) -> list:
                     continue
                 out.append({"id": vid, "product": row["title"], "kg": kg,
                             "price": price, "cogs": float(p["cogs_usd"] or 0)})
+    if skipped:
+        print(f"Excluded from the scan ({len(skipped)}) — already moved to a "
+              f"no-free-shipping profile:")
+        for s in sorted(set(skipped)):
+            print(f"  • {s[:64]}")
+        print()
     return out
 
 

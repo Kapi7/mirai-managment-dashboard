@@ -60,6 +60,24 @@ def ship_cost(tiers: dict, country: str, kg: float) -> float:
     return t[-1][1]
 
 
+def variants_without_free_shipping() -> set:
+    """Variants in a non-default delivery profile — those profiles have no
+    free-shipping rate, so they cannot create a free basket."""
+    sys.path.insert(0, str(BASE_DIR))
+    from organic_test_push import gql
+    Q = """{ deliveryProfiles(first:10){ nodes{ default
+      profileItems(first:100){ edges{ node{ variants(first:50){
+        edges{ node{ legacyResourceId } } } } } } } } }"""
+    out = set()
+    for p in gql(Q)["data"]["deliveryProfiles"]["nodes"]:
+        if p["default"]:
+            continue
+        for item in p["profileItems"]["edges"]:
+            for v in item["node"]["variants"]["edges"]:
+                out.add(str(v["node"]["legacyResourceId"]))
+    return out
+
+
 def fetch_weights(variant_ids: list) -> dict:
     sys.path.insert(0, str(BASE_DIR))
     from organic_test_push import gql
@@ -95,12 +113,20 @@ def main():
     with open(reports[-1]) as f:
         play = {r["variant_id"]: r for r in csv.DictReader(f)}
 
-    variants = []
+    excluded = variants_without_free_shipping()
+    variants, skipped = [], set()
     with open(OUTPUTS_DIR / f"organic_test_{a.cohort}.csv") as f:
         for row in csv.DictReader(f):
             for vid in (row.get("changed_variant_ids") or "").split(","):
-                if vid in play:
-                    variants.append((vid, row["title"]))
+                if vid not in play:
+                    continue
+                if vid in excluded:
+                    skipped.add(row["title"])
+                    continue
+                variants.append((vid, row["title"]))
+    if skipped:
+        print(f"Excluded ({len(skipped)}) — in a no-free-shipping profile: "
+              + "; ".join(sorted(s[:44] for s in skipped)) + "\n")
 
     live = fetch_weights([v for v, _ in variants])
     tiers = load_matrix()
