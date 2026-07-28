@@ -80,6 +80,24 @@ dry-run reports for human review.
    `python3 run_geo_pricing.py report --geos us,au,gb,ca`.
    Explicitly no `apply`/write subcommand in Phase 1.
 
+## Execution decision — master price only (user, 2026-07-21)
+
+Prices are set on the **base (US/USD) variant price only**. All markets inherit
+via Shopify Markets FX (price lists sit at 0% adjustment), so AU/UK/CA follow
+automatically and new products inherit with no extra bookkeeping.
+
+The hybrid master/override machinery (`pricing_mode` column, MASTER_TOLERANCE)
+stays in the code but is NOT used for now: per-market fixed overrides are a
+later refinement. Cost of the simplification, measured on the top-300 scan:
+42-54% of products have a local target more than 10% from the FX-converted
+master (AU worst - Australian competitor prices run higher). That is money left
+on the table in AU, not a risk to margin, since the floor is enforced on the
+master price and FX only scales it.
+
+Consequence for scanning: only the **us** geo needs scanning for pricing
+decisions. AU/UK/CA scans remain useful as market intelligence but are not
+required per cycle - a full refresh is 300 searches, not 1,200.
+
 ## Non-goals (Phase 2+)
 
 - Writing prices to Shopify price lists (`priceListFixedPricesAdd`).
