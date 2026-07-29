@@ -85,6 +85,21 @@ tbody tr:hover{background:var(--accent-soft);}
  border-radius:999px;font-size:.66rem;}
 .risk-thin{background:var(--warn-soft);color:var(--warn);padding:2px 7px;border-radius:999px;
  font-size:.66rem;}
+.drow,.prow{cursor:pointer}
+.caret{color:var(--ink3);font-size:.8em;display:inline-block;width:11px}
+.openrow{background:var(--accent-soft)}
+.openrow td{font-weight:600}
+.openrow .caret{color:var(--accent)}
+.detailrow td{padding:0;background:var(--ground);border-top:none}
+.detailrow .inner{padding:13px 15px 16px}
+table.sub{font-size:.79rem;background:var(--card);border:1px solid var(--line);
+ border-radius:8px;overflow:hidden}
+table.sub th{position:static;background:var(--card)}
+table.sub th:first-child,table.sub td:first-child{min-width:190px}
+table.sub tbody tr:hover{background:var(--accent-soft)}
+.grid4{display:grid;grid-template-columns:repeat(auto-fit,minmax(122px,1fr));gap:8px}
+.grid4 .mini{background:var(--card);border:1px solid var(--line)}
+.grid4 .mini .v{font-size:1rem}
 .note{font-size:.78rem;color:var(--ink3);}
 .empty{padding:24px;text-align:center;color:var(--ink3);}
 .dayhead{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;}
@@ -132,7 +147,18 @@ footer{border-top:1px solid var(--line);padding-top:16px;}
   would have earned at the old prices.</p>
 </div>
 
-<div class="card pad" id="daypanel" style="display:none"></div>
+<div class="card pad">
+  <div class="dayhead"><h2>Daily sales</h2>
+    <span class="note">Click a row to see the products sold that day</span>
+    <span class="spacer" id="dailycount"></span></div>
+  <div class="tw" style="border:none"><table>
+    <thead><tr>
+      <th style="cursor:default;min-width:120px">Date</th>
+      <th style="cursor:default">A units</th><th style="cursor:default">B units</th>
+      <th style="cursor:default">A revenue</th><th style="cursor:default">B revenue</th>
+      <th style="cursor:default">vs old prices</th><th style="cursor:default">A margin</th>
+    </tr></thead><tbody id="dailybody"></tbody></table></div>
+</div>
 
 <div class="card pad">
   <div class="dayhead"><h2>Revenue: actual vs old prices</h2>
@@ -163,10 +189,8 @@ footer{border-top:1px solid var(--line);padding-top:16px;}
 <div class="tw"><table>
   <thead><tr>
     <th data-k="product">Product</th><th data-k="cohort">Grp</th><th data-k="case">Action</th>
-    <th data-k="was">Was</th><th data-k="live">Now</th><th data-k="delta">Change</th>
-    <th data-k="comp">Market</th><th data-k="margin">Margin</th>
-    <th data-k="soldUnits">Units in range</th><th data-k="soldRev">Revenue in range</th>
-    <th data-k="lostRev">vs old prices</th><th data-k="imp">Organic 90d</th>
+    <th data-k="live">Price</th><th data-k="delta">Change</th>
+    <th data-k="soldUnits">Units</th><th data-k="soldRev">Revenue</th>
   </tr></thead>
   <tbody id="body"></tbody>
 </table></div>
@@ -182,7 +206,7 @@ const DATA=[{"id": "51788840730996", "product": "Beauty of Joseon Relief Sun: Ri
 const $=s=>document.querySelector(s);
 const money=v=>(v<0?'-$':'$')+Math.abs(v).toFixed(2);
 const money0=v=>(v<0?'-$':'$')+Math.round(Math.abs(v)).toLocaleString();
-let filter='all', sortK='soldRev', sortDir=-1, selDay=null;
+let filter='all', sortK='soldRev', sortDir=-1, selDay=null, selProd=null;
 let from=null, to=null;
 
 const dates=DAILY.map(d=>d.date);
@@ -281,40 +305,42 @@ function showTip(e,date){
   t.style.top=(e.clientY-r.top-10)+'px';
 }
 
-function dayPanel(){
-  const p=$('#daypanel');
-  if(!selDay||!DETAIL[selDay]){p.style.display='none';return}
-  const d=DAILY.find(x=>x.date===selDay), rows=DETAIL[selDay];
-  const revGap=d.t_rev-d.t_rev_old;
-  const cls=v=>v>=0?'pos':'neg';
-  p.style.display='';
-  p.innerHTML=`<div class="dayhead"><h2>${selDay}</h2>
-      <span class="note">${d.after?'after the price change':'before the price change'}</span>
-      <button class="close" id="closeday">clear selection ✕</button></div>
-    <div class="split2" style="margin:12px 0">
-      <div class="mini"><div class="l">Group A</div>
-        <div class="v">${d.t_units} units · ${money(d.t_rev)}</div>
-        <div class="note">${d.after?`at old prices the same units were ${money(d.t_rev_old)} →
-          <span class="${cls(revGap)}">${money(revGap)}</span>.
-          Margin kept: ${money(d.t_margin)}`:'prices unchanged this day'}</div></div>
-      <div class="mini"><div class="l">Group B (control)</div>
-        <div class="v">${d.c_units} units · ${money(d.c_rev)}</div>
-        <div class="note">prices frozen all test</div></div>
-    </div>
-    <div class="tw"><table><thead><tr>
-      <th style="cursor:default">Product</th><th style="cursor:default">Grp</th>
-      <th style="cursor:default">Units</th><th style="cursor:default">Sold at</th>
-      <th style="cursor:default">Old price</th><th style="cursor:default">Revenue</th>
-      <th style="cursor:default">At old price</th><th style="cursor:default">Difference</th>
-    </tr></thead><tbody>${rows.map(r=>{
-      const g=r.revenue-r.revenue_old;
-      return `<tr><td>${r.product}</td>
-        <td>${r.cohort==='treated'?'A':'B'}</td><td>${r.units}</td>
-        <td>${money(r.price)}</td><td>${money(r.old_price)}</td>
-        <td>${money(r.revenue)}</td><td>${money(r.revenue_old)}</td>
-        <td class="${g>=0?'pos':'neg'}">${r.cohort==='treated'&&d.after?money(g):'—'}</td></tr>`
-    }).join('')}</tbody></table></div>`;
-  $('#closeday').onclick=()=>{selDay=null;render()};
+function renderDaily(){
+  const days=visibleDays().slice().reverse();
+  $('#dailycount').textContent=`${days.length} day${days.length===1?'':'s'}`;
+  $('#dailybody').innerHTML=days.length?days.map(d=>{
+    const gap=d.t_rev-d.t_rev_old, open=selDay===d.date;
+    const head=`<tr class="drow ${open?'openrow':''}" data-d="${d.date}">
+      <td><span class="caret">${open?'▾':'▸'}</span> ${d.date}
+        ${d.date===CHANGE?'<span class="tag t-raise">changed</span>':''}</td>
+      <td>${d.t_units||'—'}</td><td>${d.c_units||'—'}</td>
+      <td>${d.t_rev?money(d.t_rev):'—'}</td><td>${d.c_rev?money(d.c_rev):'—'}</td>
+      <td class="${gap<0?'neg':gap>0?'pos':''}">${d.after&&d.t_units?money(gap):'—'}</td>
+      <td>${d.t_margin?money(d.t_margin):'—'}</td></tr>`;
+    if(!open) return head;
+    const rows=DETAIL[d.date]||[];
+    return head+`<tr class="detailrow"><td colspan="7">
+      <div class="inner">
+        <div class="note" style="margin-bottom:8px">${d.after
+          ? `At the old prices these ${d.t_units} units would have brought
+             ${money(d.t_rev_old)} instead of ${money(d.t_rev)}.`
+          : 'This day is before the price change — prices were the old ones.'}</div>
+        <table class="sub"><thead><tr>
+          <th style="cursor:default">Product</th><th style="cursor:default">Grp</th>
+          <th style="cursor:default">Units</th><th style="cursor:default">Sold at</th>
+          <th style="cursor:default">Old price</th><th style="cursor:default">Revenue</th>
+          <th style="cursor:default">At old price</th><th style="cursor:default">Diff</th>
+        </tr></thead><tbody>${rows.map(r=>{
+          const g=r.revenue-r.revenue_old;
+          return `<tr><td>${r.product}</td><td>${r.cohort==='treated'?'A':'B'}</td>
+            <td>${r.units}</td><td>${money(r.price)}</td><td>${money(r.old_price)}</td>
+            <td>${money(r.revenue)}</td><td>${money(r.revenue_old)}</td>
+            <td class="${g<0?'neg':g>0?'pos':''}">${
+              r.cohort==='treated'&&d.after?money(g):'—'}</td></tr>`}).join('')}
+        </tbody></table></div></td></tr>`;
+  }).join(''):'<tr><td colspan="7" class="empty">No sales in this range.</td></tr>';
+  document.querySelectorAll('.drow').forEach(tr=>tr.onclick=()=>{
+    selDay=(selDay===tr.dataset.d)?null:tr.dataset.d; render()});
 }
 
 function soldInRange(){
@@ -350,21 +376,53 @@ function renderTable(){
     }).sort((a,b)=>{const x=a[sortK],y=b[sortK];
       return typeof x==='string'?sortDir*x.localeCompare(y):sortDir*((x??-1e9)-(y??-1e9))});
   $('#count').textContent=`${rows.length} of ${DATA.length} products`;
-  $('#body').innerHTML=rows.length?rows.map(r=>`<tr>
-    <td>${r.product}</td><td>${r.cohort==='treated'?'A':'B'}</td><td>${tagFor(r)}</td>
-    <td>${money(r.was)}</td><td>${money(r.live)}</td>
-    <td class="${r.delta<0?'neg':r.delta>0?'pos':''}">${r.delta?r.delta.toFixed(1)+'%':'—'}</td>
-    <td>${r.comp?money(r.comp):'—'}</td><td>${r.margin?r.margin.toFixed(0)+'%':'—'}</td>
-    <td>${r.soldUnits||'—'}</td><td>${r.soldRev?money(r.soldRev):'—'}</td>
-    <td class="${r.lostRev<0?'neg':r.lostRev>0?'pos':''}">${
-      r.cohort==='treated'&&r.soldUnits?money(r.lostRev):'—'}</td>
-    <td>${r.imp}</td></tr>`).join('')
-    :`<tr><td colspan="12" class="empty">Nothing matches “${q}”.</td></tr>`;
+  $('#body').innerHTML=rows.length?rows.map(r=>{
+    const open=selProd===r.id;
+    const head=`<tr class="prow ${open?'openrow':''}" data-p="${r.id}">
+      <td><span class="caret">${open?'▾':'▸'}</span> ${r.product}</td>
+      <td>${r.cohort==='treated'?'A':'B'}</td><td>${tagFor(r)}</td>
+      <td>${money(r.live)}</td>
+      <td class="${r.delta<0?'neg':r.delta>0?'pos':''}">${
+        r.delta?r.delta.toFixed(1)+'%':'—'}</td>
+      <td>${r.soldUnits||'—'}</td><td>${r.soldRev?money(r.soldRev):'—'}</td></tr>`;
+    if(!open) return head;
+    const cell=(l,v)=>`<div class="mini"><div class="l">${l}</div><div class="v">${v}</div></div>`;
+    const riskTxt=r.ship_net===null?'no weight data'
+      : r.risk==='loss'?`<span class="risk-loss">${money(r.ship_net)}</span>`
+      : r.risk==='thin'?`<span class="risk-thin">${money(r.ship_net)}</span>`
+      : money(r.ship_net);
+    return head+`<tr class="detailrow"><td colspan="7"><div class="inner">
+      <div class="grid4">
+        ${cell('Was',money(r.was))}
+        ${cell('Now',money(r.live))}
+        ${cell('Market avg',r.comp?money(r.comp):'—')}
+        ${cell('Cost',money(r.cogs))}
+        ${cell('Margin now',r.margin?r.margin.toFixed(0)+'%':'—')}
+        ${cell('Weight',r.kg?r.kg.toFixed(2)+' kg':'—')}
+        ${cell('Units 2026',r.units)}
+        ${cell('Revenue 2026',money0(r.revenue))}
+        ${cell('Organic 90d',`${r.imp} imp · ${r.clicks} clicks`)}
+        ${cell('Avg position',r.pos?r.pos.toFixed(1):'—')}
+        ${cell('Free-ship net',riskTxt)}
+        ${cell('vs old prices',r.cohort==='treated'&&r.soldUnits
+          ? `<span class="${r.lostRev<0?'neg':'pos'}">${money(r.lostRev)}</span>` : '—')}
+      </div>
+      <div class="note" style="margin-top:9px">${
+        r.cohort==='control'
+          ? 'Control product — price frozen for the duration of the test.'
+          : `Priced at ${money(r.live)}, which is ${
+              r.comp?(r.live<r.comp?`${((1-r.live/r.comp)*100).toFixed(0)}% under`
+                     :`${((r.live/r.comp-1)*100).toFixed(0)}% over`):'—'} the market average.`}
+      </div></div></td></tr>`;
+  }).join('')
+    :`<tr><td colspan="7" class="empty">Nothing matches “${q}”.</td></tr>`;
+  document.querySelectorAll('.prow').forEach(tr=>tr.onclick=()=>{
+    selProd=(selProd===tr.dataset.p)?null:tr.dataset.p; renderTable()});
 }
 
 function render(){
   $('#rangelabel').textContent=`${from} → ${to}`;
-  kpis();drawCharts();dayPanel();renderTable();
+  kpis();drawCharts();renderDaily();renderTable();
 }
 
 document.querySelectorAll('[data-range]').forEach(b=>b.onclick=()=>{
