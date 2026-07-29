@@ -108,6 +108,34 @@ def build_rows() -> list:
     return rows
 
 
+def daily_units(rows: list, days_back: int = 30) -> list:
+    """Units per day for each arm, from the price-change date minus days_back.
+    Rebuilt from Shopify each run, so a missed run loses nothing."""
+    import collections
+    import datetime
+    import sys
+    sys.path.insert(0, str(BASE_DIR))
+    from organic_test_readout import fetch_orders
+
+    treated = {r["id"] for r in rows if r["cohort"] == "treated"}
+    control = {r["id"] for r in rows if r["cohort"] == "control"}
+    end = datetime.date.today()
+    start = end - datetime.timedelta(days=days_back)
+    counts = collections.defaultdict(lambda: {"t": 0, "c": 0})
+    for o in fetch_orders(start, end):
+        if o.get("cancelled_at") or o.get("financial_status") in ("voided", "refunded"):
+            continue
+        day = o["created_at"][:10]
+        for li in o.get("line_items") or []:
+            vid, qty = str(li.get("variant_id") or ""), li.get("quantity") or 0
+            if vid in treated:
+                counts[day]["t"] += qty
+            elif vid in control:
+                counts[day]["c"] += qty
+    return [{"date": d, "treated": v["t"], "control": v["c"]}
+            for d, v in sorted(counts.items())]
+
+
 def load_history() -> list:
     if HISTORY.exists():
         try:
@@ -219,6 +247,10 @@ footer{border-top:1px solid var(--line);padding-top:15px;}
   leave those prices alone or the comparison breaks.</p>
 </header>
 <div class="cards" id="cards"></div>
+<div class="tw" id="dailywrap"><table>
+  <thead><tr><th style="min-width:110px">Date</th><th>Group A units</th>
+  <th>Group B units</th><th>Note</th></tr></thead>
+  <tbody id="daily"></tbody></table></div>
 <div class="controls">
   <input id="q" type="search" placeholder="Search product, e.g. COSRX, sunscreen, snail…"
          autocomplete="off">
@@ -256,7 +288,7 @@ $80 free-delivery threshold — negative means that basket loses money.
 Data: __STAMP__.</p></footer>
 </div>
 <script>
-const DATA = __DATA__, HIST = __HIST__;
+const DATA = __DATA__, HIST = __HIST__, DAILY = __DAILY__;
 const $ = s => document.querySelector(s);
 const money = v => v ? '$' + v.toFixed(2) : '—';
 let filter = 'all', sortK = 'units', sortDir = -1;
@@ -342,6 +374,14 @@ $('#q').oninput = render;
 $('#foot').textContent = HIST.length > 1
   ? `History: ${HIST.map(h=>h.date).join(' → ')}`
   : 'First snapshot recorded — re-run the builder to add more.';
+
+const CHANGE_DATE = '2026-07-28';
+document.querySelector('#daily').innerHTML = DAILY.length
+  ? DAILY.slice(-21).reverse().map(d => `<tr>
+      <td>${d.date}${d.date===CHANGE_DATE?' <span class="tag t-raise">prices changed</span>':''}</td>
+      <td>${d.treated}</td><td>${d.control}</td>
+      <td class="note">${d.date < CHANGE_DATE ? 'before' : 'after'}</td></tr>`).join('')
+  : '<tr><td colspan="4" class="empty">No daily data yet.</td></tr>';
 stats(); render();
 </script>
 """
@@ -355,8 +395,10 @@ def main():
     rows = build_rows()
     hist = append_snapshot(rows)
     stamp = datetime.now(timezone.utc).strftime("%d %b %Y")
+    daily = daily_units(rows)
     html = (PAGE.replace("__DATA__", json.dumps(rows))
                 .replace("__HIST__", json.dumps(hist))
+                .replace("__DAILY__", json.dumps(daily))
                 .replace("__STAMP__", stamp))
     out = Path(a.out)
     out.write_text(html)
