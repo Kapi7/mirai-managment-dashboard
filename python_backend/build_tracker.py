@@ -338,6 +338,7 @@ input:focus{outline:2px solid var(--accent);outline-offset:1px;}
 svg{display:block;width:100%;height:auto;overflow:visible;}
 .gridline{stroke:var(--grid);stroke-width:1;}
 .axis{fill:var(--ink3);font-size:10px;font-family:inherit;}
+@media(max-width:760px){.axis{font-size:13px}.changetxt{font-size:13px}}
 .barA{fill:var(--a);}
 .barB{fill:var(--b);}
 .barSel{stroke:var(--ink);stroke-width:2;}
@@ -382,7 +383,8 @@ tbody tr:hover{background:var(--accent-soft);}
 .vtab .mi{font-size:15px;line-height:1}
 .vtab.on{background:var(--accent);border-color:var(--accent);color:#fff}
 @media(max-width:760px){
-  body{padding:16px 10px 96px}
+  body{padding:16px 8px 120px}
+  .pad{padding:13px 11px}
   h1{font-size:1.3rem}
   .vtabs{position:fixed;bottom:calc(11px + env(safe-area-inset-bottom));left:50%;
    top:auto;transform:translateX(-50%);width:auto;z-index:996;gap:2px;
@@ -615,11 +617,17 @@ function kpis(){
      <div class="n">${n}</div></div>`).join('');
 }
 
+const isPhone=()=>window.innerWidth<=760;
 function barChart(el,days,series,opts){
-  const W=1000,H=opts.h||210,P={t:14,r:12,b:26,l:38};
+  // The SVG scales to the container width, so a wide viewBox on a 375px screen
+  // collapses the height. Phones get a near-square viewBox instead.
+  const W=isPhone()?440:1000;
+  const H=isPhone()?(opts.hm||330):(opts.h||210);
+  const P=isPhone()?{t:14,r:8,b:30,l:34}:{t:14,r:12,b:26,l:38};
   const iw=W-P.l-P.r, ih=H-P.t-P.b;
   const max=Math.max(1,...days.flatMap(d=>series.map(s=>s.get(d))));
-  const step=iw/Math.max(days.length,1), bw=Math.max(2,Math.min(20,step/series.length-2));
+  const step=iw/Math.max(days.length,1);
+  const bw=Math.max(isPhone()?4:2,Math.min(isPhone()?26:20,step/series.length-2));
   const ticks=[0,.5,1].map(f=>Math.round(max*f));
   let s=`<svg viewBox="0 0 ${W} ${H}" role="img">`;
   ticks.forEach(t=>{const y=P.t+ih-(t/max)*ih;
@@ -636,7 +644,8 @@ function barChart(el,days,series,opts){
       s+=`<line class="changeline" x1="${x0}" y1="${P.t-4}" x2="${x0}" y2="${P.t+ih}"/>
           <text class="changetxt" x="${x0+4}" y="${P.t+4}">prices changed</text>`;
     }
-    if(days.length<=32||i%Math.ceil(days.length/16)===0)
+    const every=isPhone()?Math.ceil(days.length/6):Math.ceil(days.length/16);
+    if((isPhone()?days.length<=8:days.length<=32)||i%every===0)
       s+=`<text class="axis" x="${x0+step/2}" y="${H-8}" text-anchor="middle">${d.date.slice(5)}</text>`;
     s+=`<rect class="hit" data-d="${d.date}" x="${x0}" y="${P.t}" width="${step}" height="${ih}"/>`;
   });
@@ -650,7 +659,7 @@ function drawCharts(){
     {cls:'barA',get:d=>d.t_units},{cls:'barB',get:d=>d.c_units}],{h:210});
   barChart($('#chart2'),days,[
     {cls:'barA',get:d=>d.t_rev},
-    {cls:'barB',get:d=>d.t_rev_old}],{h:170,fmt:v=>'$'+v});
+    {cls:'barB',get:d=>d.t_rev_old}],{h:170,hm:260,fmt:v=>'$'+v});
   // grey out the counterfactual series
   $('#chart2').querySelectorAll('.barB').forEach(r=>r.style.fill='var(--ink3)');
   document.querySelectorAll('.hit').forEach(h=>{
@@ -867,7 +876,14 @@ function renderDelivery(){
 }
 $('#onlyrisk').onchange=renderDelivery;
 
-setRange('30');
+(function(){
+  const def=isPhone()?'14':'30';
+  document.querySelectorAll('[data-range]').forEach(b=>
+    b.setAttribute('aria-pressed', b.dataset.range===def));
+  setRange(def);
+})();
+addEventListener('resize',()=>{clearTimeout(window.__rz);
+  window.__rz=setTimeout(drawCharts,180)});
 </script>
 """
 
