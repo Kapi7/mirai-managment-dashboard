@@ -187,6 +187,71 @@ def daily_detail(rows: list, days_back: int = 45) -> tuple:
     return daily, detail
 
 
+def delivery_data() -> dict:
+    """Live delivery zones + the per-country exposure scan, for the dashboard."""
+    import sys
+    sys.path.insert(0, str(BASE_DIR))
+    from organic_test_push import gql
+
+    Q = """{ deliveryProfiles(first:10){ nodes{ name default
+      profileItems(first:20){ edges{ node{ product{ title } } } }
+      profileLocationGroups{ locationGroupZones(first:30){ nodes{
+        zone{ name countries{ code{ countryCode } } }
+        methodDefinitions(first:10){ nodes{ name active
+          methodConditions{ field conditionCriteria{
+            ... on MoneyV2{ amount currencyCode } ... on Weight{ value unit } } }
+          rateProvider{ ... on DeliveryRateDefinition{
+            price{ amount currencyCode } } } } } } } } } } }"""
+    zones, excluded = [], []
+    for prof in gql(Q)["data"]["deliveryProfiles"]["nodes"]:
+        if not prof["default"]:
+            excluded += [e["node"]["product"]["title"]
+                         for e in prof["profileItems"]["edges"]
+                         if e["node"].get("product")]
+            continue
+        for lg in prof["profileLocationGroups"]:
+            for z in lg["locationGroupZones"]["nodes"]:
+                flat, free = None, None
+                for m in z["methodDefinitions"]["nodes"]:
+                    if not m["active"]:
+                        continue
+                    pr = (m["rateProvider"] or {}).get("price")
+                    if m["methodConditions"]:
+                        c = m["methodConditions"][0]
+                        crit = c["conditionCriteria"]
+                        free = {"field": c["field"],
+                                "value": crit.get("amount") or crit.get("value"),
+                                "unit": crit.get("currencyCode") or crit.get("unit")}
+                    elif pr:
+                        flat = {"amount": float(pr["amount"]),
+                                "currency": pr["currencyCode"]}
+                zones.append({
+                    "zone": z["zone"]["name"].strip(),
+                    "countries": len([c for c in z["zone"]["countries"]
+                                      if c.get("code")]),
+                    "codes": [c["code"]["countryCode"]
+                              for c in z["zone"]["countries"] if c.get("code")],
+                    "flat": flat, "free": free})
+
+    countries = []
+    path = OUTPUTS_DIR / "delivery_exposure_by_country.csv"
+    if path.exists():
+        with open(path) as f:
+            for r in csv.DictReader(f):
+                countries.append({
+                    "country": r["country"], "zone": r["zone"].strip(),
+                    "code": r["code"],
+                    "threshold": float(r["threshold_usd"]) if r.get("threshold_usd") else None,
+                    "kg": float(r["typical_kg"]) if r.get("typical_kg") else None,
+                    "ship": float(r["typical_ship"]) if r.get("typical_ship") else None,
+                    "net": float(r["typical_net"]) if r.get("typical_net") else None,
+                    "worst": float(r["worst_net"]) if r.get("worst_net") else None,
+                    "worst_product": r.get("worst_product", ""),
+                    "note": r.get("note", "")})
+    countries.sort(key=lambda c: (c["net"] is None, c["net"] if c["net"] is not None else 0))
+    return {"zones": zones, "countries": countries, "excluded": excluded}
+
+
 def load_history() -> list:
     if HISTORY.exists():
         try:
@@ -305,6 +370,46 @@ tbody tr:hover{background:var(--accent-soft);}
  border-radius:999px;font-size:.66rem;}
 .risk-thin{background:var(--warn-soft);color:var(--warn);padding:2px 7px;border-radius:999px;
  font-size:.66rem;}
+
+/* view panels + navigation */
+.panel{display:none;flex-direction:column;gap:20px}
+.panel.on{display:flex}
+.vtabs{position:sticky;top:0;z-index:30;display:flex;gap:6px;flex-wrap:wrap;
+ background:var(--ground);padding:6px 0 10px;border-bottom:1px solid var(--line)}
+.vtab{background:var(--card);border:1px solid var(--line);border-radius:999px;
+ padding:7px 15px;font-size:.83rem;font-weight:600;color:var(--ink2);cursor:pointer;
+ font-family:inherit;display:flex;align-items:center;gap:7px}
+.vtab .mi{font-size:15px;line-height:1}
+.vtab.on{background:var(--accent);border-color:var(--accent);color:#fff}
+@media(max-width:760px){
+  body{padding:16px 10px 96px}
+  h1{font-size:1.3rem}
+  .vtabs{position:fixed;bottom:calc(11px + env(safe-area-inset-bottom));left:50%;
+   top:auto;transform:translateX(-50%);width:auto;z-index:996;gap:2px;
+   background:var(--card);border:1px solid var(--line);border-bottom:1px solid var(--line);
+   border-radius:999px;padding:5px 7px;box-shadow:0 10px 30px rgba(0,0,0,.22);
+   flex-wrap:nowrap;transition:transform .25s ease,opacity .25s ease}
+  .vtabs.shrunk{transform:translateX(-50%) scale(.84);opacity:.85}
+  .vtab{padding:9px 14px;font-size:0;border:none;background:none;gap:0}
+  .vtab .vl{display:none}
+  .vtab .mi{font-size:21px}
+  .vtab.on{background:var(--accent-soft);color:var(--accent)}
+  .kpi .v{font-size:1.22rem}
+  .cards{grid-template-columns:repeat(2,minmax(0,1fr))}
+  th,td{padding:7px 7px;font-size:.78rem}
+  th:first-child,td:first-child{min-width:150px}
+  table.sub th:first-child,table.sub td:first-child{min-width:130px}
+  .grid4{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .bar{gap:6px}
+  .chip{padding:5px 11px;font-size:.75rem}
+  input[type=date]{font-size:.78rem;padding:6px 8px}
+  /* compact tables lose the least-important columns on a phone */
+  #dailybody tr td:nth-child(5),#dailytbl th:nth-child(5),
+  .panel#p-daily thead th:nth-child(5),.panel#p-daily tbody td:nth-child(5),
+  .panel#p-daily thead th:nth-child(7),.panel#p-daily tbody td:nth-child(7){display:none}
+  #p-products thead th:nth-child(3),#p-products tbody .prow td:nth-child(3){display:none}
+  #ctrybody tr td:nth-child(4),#p-delivery thead th:nth-child(4){display:none}
+}
 .drow,.prow{cursor:pointer}
 .caret{color:var(--ink3);font-size:.8em;display:inline-block;width:11px}
 .openrow{background:var(--accent-soft)}
@@ -343,6 +448,14 @@ footer{border-top:1px solid var(--line);padding-top:16px;}
   <b>Group B</b> — 100 matched products, prices frozen. Click any bar to open that day.</p>
 </header>
 
+<nav class="vtabs" id="vtabs">
+  <button class="vtab on" data-v="overview"><span class="mi">📈</span><span class="vl">Overview</span></button>
+  <button class="vtab" data-v="daily"><span class="mi">🗓</span><span class="vl">Daily</span></button>
+  <button class="vtab" data-v="products"><span class="mi">🧴</span><span class="vl">Products</span></button>
+  <button class="vtab" data-v="delivery"><span class="mi">🚚</span><span class="vl">Delivery</span></button>
+</nav>
+
+<div class="panel on" id="p-overview">
 <div class="bar">
   <button class="chip" data-range="7">7 days</button>
   <button class="chip" data-range="14">14 days</button>
@@ -367,6 +480,9 @@ footer{border-top:1px solid var(--line);padding-top:16px;}
   would have earned at the old prices.</p>
 </div>
 
+</div><!-- /overview -->
+
+<div class="panel" id="p-daily">
 <div class="card pad">
   <div class="dayhead"><h2>Daily sales</h2>
     <span class="note">Click a row to see the products sold that day</span>
@@ -393,6 +509,9 @@ footer{border-top:1px solid var(--line);padding-top:16px;}
   prices may have won.</p>
 </div>
 
+</div><!-- /daily -->
+
+<div class="panel" id="p-products">
 <div class="bar">
   <input id="q" type="search" placeholder="Search products — COSRX, sunscreen, snail…"
          autocomplete="off">
@@ -415,6 +534,33 @@ footer{border-top:1px solid var(--line);padding-top:16px;}
   <tbody id="body"></tbody>
 </table></div>
 
+</div><!-- /products -->
+
+<div class="panel" id="p-delivery">
+  <div class="cards" id="dkpis"></div>
+  <div class="card pad">
+    <div class="dayhead"><h2>Shipping zones</h2>
+      <span class="note">live from Shopify · free-delivery threshold per zone</span></div>
+    <div class="tw" style="border:none"><table><thead><tr>
+      <th style="cursor:default;min-width:130px">Zone</th>
+      <th style="cursor:default">Countries</th><th style="cursor:default">Paid rate</th>
+      <th style="cursor:default">Free over</th>
+    </tr></thead><tbody id="zonebody"></tbody></table></div>
+  </div>
+  <div class="card pad">
+    <div class="dayhead"><h2>Country exposure</h2>
+      <span class="note">Does a threshold-sized basket still cover its shipping?</span>
+      <span class="spacer"><label class="note"><input type="checkbox" id="onlyrisk">
+        only problems</label></span></div>
+    <div class="tw" style="border:none"><table><thead><tr>
+      <th style="cursor:default;min-width:135px">Country</th><th style="cursor:default">Zone</th>
+      <th style="cursor:default">Free over</th><th style="cursor:default">Basket kg</th>
+      <th style="cursor:default">Ship cost</th><th style="cursor:default">Net</th>
+    </tr></thead><tbody id="ctrybody"></tbody></table></div>
+  </div>
+  <div class="card pad" id="excluded"></div>
+</div><!-- /delivery -->
+
 <footer><p class="note">Margin is after cost of goods, before payment fees.
 “vs old prices” compares revenue on units actually sold against what those same units
 would have earned at the pre-test price — counted only from 28 Jul onward, since any
@@ -423,6 +569,7 @@ lost if a run is missed. Built __STAMP__.</p></footer>
 </div>
 <script>
 const DATA=__DATA__, DAILY=__DAILY__, DETAIL=__DETAIL__, CHANGE='__CHANGE__';
+const DELIV=__DELIV__;
 const $=s=>document.querySelector(s);
 const money=v=>(v<0?'-$':'$')+Math.abs(v).toFixed(2);
 const money0=v=>(v<0?'-$':'$')+Math.round(Math.abs(v)).toLocaleString();
@@ -661,6 +808,65 @@ $('#q').oninput=renderTable;
 $('#from').onchange=e=>{from=e.target.value;render()};
 $('#to').onchange=e=>{to=e.target.value;render()};
 $('#from').min=MIN;$('#from').max=MAX;$('#to').min=MIN;$('#to').max=MAX;
+
+// ---------- views ----------
+function showView(v){
+  document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('on',p.id==='p-'+v));
+  document.querySelectorAll('.vtab').forEach(b=>b.classList.toggle('on',b.dataset.v===v));
+  if(v==='delivery') renderDelivery();
+  window.scrollTo({top:0,behavior:'instant'});
+}
+document.querySelectorAll('.vtab').forEach(b=>b.onclick=()=>showView(b.dataset.v));
+// shrink the floating pill while scrolling (matches the president dashboard)
+let stimer=null;
+addEventListener('scroll',()=>{const n=$('#vtabs');n.classList.add('shrunk');
+  clearTimeout(stimer);stimer=setTimeout(()=>n.classList.remove('shrunk'),650)},{passive:true});
+
+// ---------- delivery ----------
+function renderDelivery(){
+  const z=DELIV.zones, c=DELIV.countries;
+  const scored=c.filter(x=>x.net!==null);
+  const bad=scored.filter(x=>x.net<0), thin=scored.filter(x=>x.net>=0&&x.net<10);
+  const noFree=c.filter(x=>x.net===null);
+  $('#dkpis').innerHTML=[
+    ['Shipping zones',z.length,'in the main profile'],
+    ['Countries served',new Set(z.flatMap(x=>x.codes)).size,'with a rate'],
+    ['Losing money',`<span class="${bad.length?'neg':'pos'}">${bad.length}</span>`,
+      bad.length?'on a typical free basket':'none — all covered'],
+    ['Thin margin',thin.length,'under $10 left after shipping'],
+    ['No free shipping',noFree.length,'countries pay every time'],
+  ].map(([l,v,n])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div>
+    <div class="n">${n}</div></div>`).join('');
+
+  $('#zonebody').innerHTML=z.map(x=>{
+    const free=x.free
+      ? (x.free.field==='TOTAL_PRICE'
+          ? `${x.free.value} ${x.free.unit}`
+          : `<span class="risk-loss">${x.free.value} ${x.free.unit} (weight!)</span>`)
+      : '<span class="note">never free</span>';
+    return `<tr><td>${x.zone}</td><td>${x.countries}</td>
+      <td>${x.flat?x.flat.amount.toFixed(0)+' '+x.flat.currency:'—'}</td>
+      <td>${free}</td></tr>`}).join('');
+
+  const only=$('#onlyrisk').checked;
+  const rows=c.filter(x=>!only||x.net===null||x.net<10);
+  $('#ctrybody').innerHTML=rows.length?rows.map(x=>{
+    const cls=x.net===null?'':x.net<0?'neg':x.net<10?'':'pos';
+    return `<tr><td>${x.country}</td><td class="note">${x.zone}</td>
+      <td>${x.threshold?money(x.threshold):'<span class="note">'+(x.note||'—')+'</span>'}</td>
+      <td>${x.kg?x.kg.toFixed(2):'—'}</td><td>${x.ship?money(x.ship):'—'}</td>
+      <td class="${cls}">${x.net===null?'—':money(x.net)}</td></tr>`}).join('')
+    :'<tr><td colspan="6" class="empty">Nothing to flag.</td></tr>';
+
+  $('#excluded').innerHTML=`<div class="dayhead"><h2>Excluded from free shipping</h2></div>
+    <p class="note" style="margin-top:8px">These heavy products sit in their own delivery
+    profile and always pay shipping, in every country — without that they lose money on a
+    free basket.</p>
+    <ul style="margin:9px 0 0;padding-left:19px;font-size:.86rem">
+      ${DELIV.excluded.map(t=>`<li>${t}</li>`).join('')||'<li class="note">none</li>'}</ul>`;
+}
+$('#onlyrisk').onchange=renderDelivery;
+
 setRange('30');
 </script>
 """
@@ -679,6 +885,7 @@ def main():
                 .replace("__DAILY__", json.dumps(daily))
                 .replace("__DETAIL__", json.dumps(detail))
                 .replace("__CHANGE__", CHANGE_DATE)
+                .replace("__DELIV__", json.dumps(delivery_data()))
                 .replace("__STAMP__", stamp))
     out = Path(a.out)
     out.write_text(html)
