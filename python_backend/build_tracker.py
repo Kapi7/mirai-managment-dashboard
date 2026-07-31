@@ -99,6 +99,15 @@ def build_rows() -> list:
         row["delta"] = round((row["live"] - base) / base * 100, 1) if base else 0.0
         row["applied"] = (row["cohort"] == "treated"
                           and abs(row["live"] - row["target"]) < 0.01)
+        # which of the three bets this product belongs to
+        d = row["delta"]
+        row["bucket"] = ("raise" if d > 2 else "shallow" if d > -15
+                         else "mid" if d > -30 else "deep") \
+            if row["cohort"] == "treated" else "control"
+        # margin dollars at 2026 volume, before and after — the break-even math
+        u = row["units"]
+        row["m_old"] = round((row["was"] - row["cogs"]) * u, 2)
+        row["m_new"] = round((row["live"] - row["cogs"]) * u, 2)
         if row["ship_net"] is not None and row["ship_net"] < 0:
             row["risk"] = "loss"
         elif row["ship_net"] is not None and row["ship_net"] < 10:
@@ -471,6 +480,19 @@ footer{border-top:1px solid var(--line);padding-top:16px;}
 <div class="cards" id="kpis"></div>
 
 <div class="card pad">
+  <div class="dayhead"><h2>The three bets</h2>
+    <span class="note">since the change vs the same number of days before</span></div>
+  <div class="tw" style="border:none;margin-top:9px"><table><thead><tr>
+    <th style="cursor:default;min-width:118px">Bet</th>
+    <th style="cursor:default">Items</th>
+    <th style="cursor:default">Units before</th><th style="cursor:default">Units after</th>
+    <th style="cursor:default">Change</th><th style="cursor:default">Needs</th>
+    <th style="cursor:default">Verdict</th>
+  </tr></thead><tbody id="betbody"></tbody></table></div>
+  <p class="note" id="bethint"></p>
+</div>
+
+<div class="card pad">
   <div class="dayhead"><h2>Daily units</h2>
     <div class="legend" style="margin-left:auto">
       <span><span class="sw" style="background:var(--a)"></span>Group A (repriced)</span>
@@ -520,8 +542,10 @@ footer{border-top:1px solid var(--line);padding-top:16px;}
   <button class="chip" data-f="all" aria-pressed="true">All</button>
   <button class="chip" data-f="treated">Group A</button>
   <button class="chip" data-f="control">Group B</button>
-  <button class="chip" data-f="cut">Cuts</button>
   <button class="chip" data-f="raise">Raises</button>
+  <button class="chip" data-f="shallow">Shallow</button>
+  <button class="chip" data-f="mid">Mid cuts</button>
+  <button class="chip" data-f="deep">Deep cuts</button>
   <button class="chip" data-f="sold">Sold in range</button>
   <button class="chip" data-f="risk">⚠ Delivery risk</button>
   <span class="spacer" id="count"></span>
@@ -744,8 +768,7 @@ function renderTable(){
     .filter(r=>{
       if(filter==='treated'&&r.cohort!=='treated')return false;
       if(filter==='control'&&r.cohort!=='control')return false;
-      if(filter==='cut'&&!(r.cohort==='treated'&&r.delta<-2))return false;
-      if(filter==='raise'&&!(r.cohort==='treated'&&r.delta>2))return false;
+      if(['raise','shallow','mid','deep'].includes(filter)&&r.bucket!==filter)return false;
       if(filter==='sold'&&r.soldUnits===0)return false;
       if(filter==='risk'&&r.risk==='ok')return false;
       return !q||r.product.toLowerCase().includes(q);
@@ -798,7 +821,7 @@ function renderTable(){
 
 function render(){
   $('#rangelabel').textContent=`${from} → ${to}`;
-  kpis();drawCharts();renderDaily();renderTable();
+  kpis();renderBets();drawCharts();renderDaily();renderTable();
 }
 
 document.querySelectorAll('[data-range]').forEach(b=>b.onclick=()=>{
@@ -830,6 +853,47 @@ document.querySelectorAll('.vtab').forEach(b=>b.onclick=()=>showView(b.dataset.v
 let stimer=null;
 addEventListener('scroll',()=>{const n=$('#vtabs');n.classList.add('shrunk');
   clearTimeout(stimer);stimer=setTimeout(()=>n.classList.remove('shrunk'),650)},{passive:true});
+
+
+// ---------- the three bets ----------
+const BETS=[
+  ['raise','Raises','#'],
+  ['shallow','Shallow cuts (0-15%)','#'],
+  ['mid','Mid cuts (15-30%)','#'],
+  ['deep','Deep cuts (30%+)','#'],
+];
+function renderBets(){
+  const post=DAILY.filter(d=>d.after);
+  const pre=DAILY.filter(d=>!d.after).slice(-post.length);
+  const bucketOf={}; DATA.forEach(r=>bucketOf[r.id]=r.bucket);
+  const count=(days)=>{const o={};days.forEach(d=>(DETAIL[d.date]||[]).forEach(r=>{
+    const b=bucketOf[r.id]; if(!b||b==='control')return; o[b]=(o[b]||0)+r.units}));return o};
+  const A=count(post), B=count(pre);
+  // break-even from margin dollars at 2026 volume
+  const need={};
+  DATA.filter(r=>r.cohort==='treated').forEach(r=>{
+    const n=need[r.bucket]||(need[r.bucket]={o:0,n:0});
+    n.o+=r.m_old; n.n+=r.m_new});
+  $('#betbody').innerHTML=BETS.map(([k,label])=>{
+    const items=DATA.filter(r=>r.bucket===k).length;
+    const b=B[k]||0, a=A[k]||0;
+    const chg=b?((a/b-1)*100):null;
+    const nd=need[k], req=nd&&nd.n>0?(nd.o/nd.n-1)*100:0;
+    const reqTxt=k==='raise'?'—':`+${req.toFixed(0)}%`;
+    let verdict='<span class="note">too early</span>';
+    if(k==='raise') verdict='<span class="pos">free margin</span>';
+    else if(chg!==null&&post.length>=14)
+      verdict=chg>=req?'<span class="pos">paying off</span>':'<span class="neg">behind</span>';
+    return `<tr><td>${label}</td><td>${items}</td><td>${b}</td><td>${a}</td>
+      <td class="${chg===null?'':chg<0?'neg':'pos'}">${chg===null?'—':chg.toFixed(0)+'%'}</td>
+      <td>${reqTxt}</td><td>${verdict}</td></tr>`}).join('');
+  $('#bethint').textContent = post.length<14
+    ? `Only ${post.length} day${post.length===1?'':'s'} since the change — these numbers are `
+      +`noise until about two weeks. "Needs" is the unit lift each group must reach just to `
+      +`hold its old margin.`
+    : `"Needs" is the unit lift required to hold the old margin. Groups behind that line after `
+      +`4 weeks are candidates to pull back.`;
+}
 
 // ---------- delivery ----------
 function renderDelivery(){
