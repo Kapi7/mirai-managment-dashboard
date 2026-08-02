@@ -25,6 +25,7 @@ print(max(1, d//7))")
   python3 organic_test_readout.py --start "$START" --weeks "$ELAPSED" 2>&1
   python3 delivery_exposure.py 2>&1 | tail -8
   python3 test_channel_report.py 2>&1 | tail -4
+  python3 google_ads_efficiency.py 2>&1 | tail -5
   python3 build_tracker.py 2>&1 | tail -2
   echo
 } >> "$LOG" 2>&1

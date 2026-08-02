@@ -37,15 +37,26 @@ SEARCH_ENGINES = ("google.", "bing.", "duckduckgo.", "yahoo.", "ecosia.",
 def classify(order) -> str:
     src = (order.get("source_name") or "").lower()
     if src not in ("web", "", "online store"):
-        return "shop_app" if "shop" in src else f"other:{src[:12]}"
+        if "shop" in src:
+            return "shop_app"
+        if "subscription" in src:
+            return "subscription"
+        return f"other:{src[:12]}"
     landing = (order.get("landing_site") or "").lower()
     referrer = (order.get("referring_site") or "").lower()
     if any(m in landing for m in PAID_MARKERS):
         return "paid"
+    # srsltid = Google ORGANIC shopping / free-listing click id (not an ad)
+    if "srsltid=" in landing:
+        return "organic"
     if any(e in referrer for e in SEARCH_ENGINES):
         return "organic"
     if referrer:
         return "referral"
+    # no referrer but landed deep on a product page: Google's apps strip the
+    # referrer, and nobody types a product URL — near-certainly search traffic
+    if landing.startswith("/products/"):
+        return "organic_likely"
     return "direct"
 
 
@@ -136,6 +147,7 @@ def main():
             test_items.append({
                 "order": o["id"], "date": o["created_at"][:10],
                 "channel": classify(o), "arm": arm, "vid": vid,
+                "country": (o.get("shipping_address") or {}).get("country_code") or "?",
                 "product": (li.get("title") or "")[:60],
                 "case": p.get("note", "").replace("(proxy)", ""),
                 "units": qty, "revenue": round(rev, 2),
@@ -158,8 +170,20 @@ def main():
             "ship_net": round(charged - cost, 2) if cost is not None else None,
         })
 
+    # store-wide view: every order, test products or not — this is the lens
+    # that catches organic sales landing on non-test pages (e.g. NL/IL)
+    store = []
+    for o in orders:
+        if o.get("cancelled_at") or o.get("financial_status") in ("voided", "refunded"):
+            continue
+        rev = sum(float(li.get("price") or 0) * (li.get("quantity") or 0)
+                  for li in o.get("line_items") or [])
+        store.append({"date": o["created_at"][:10], "channel": classify(o),
+                      "country": (o.get("shipping_address") or {}).get("country_code") or "?",
+                      "revenue": round(rev, 2)})
+
     out = {"generated": str(datetime.date.today()), "start": a.start,
-           "lines": lines, "orders": order_ship}
+           "lines": lines, "orders": order_ship, "store": store}
     (OUTPUTS_DIR / "test_channel_report.json").write_text(json.dumps(out, indent=1))
 
     # ---- console summary

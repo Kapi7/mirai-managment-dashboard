@@ -272,6 +272,16 @@ def read_channel() -> dict:
     return {"generated": None, "lines": [], "orders": []}
 
 
+def read_ads() -> dict:
+    path = OUTPUTS_DIR / "ads_efficiency.json"
+    if path.exists():
+        try:
+            return json.loads(path.read_text())
+        except json.JSONDecodeError:
+            pass
+    return {"generated": None, "daily": [], "campaigns": []}
+
+
 def load_history() -> list:
     if HISTORY.exists():
         try:
@@ -577,6 +587,17 @@ footer{border-top:1px solid var(--line);padding-top:16px;}
 <div class="panel" id="p-report">
   <div class="card pad" id="flash"></div>
   <div class="card pad">
+    <div class="dayhead"><h2>Google Ads efficiency</h2>
+      <span class="note">the paid side of the bet: cheaper prices should convert better and pull CPA down</span></div>
+    <div class="tw" style="border:none;margin-top:8px"><table><thead><tr>
+      <th style="cursor:default;min-width:120px">Window</th><th style="cursor:default">Spend</th>
+      <th style="cursor:default">Clicks</th><th style="cursor:default">Conversions</th>
+      <th style="cursor:default">Conv. rate</th><th style="cursor:default">CPA</th>
+      <th style="cursor:default">ROAS</th>
+    </tr></thead><tbody id="adsbody"></tbody></table></div>
+    <p class="note" id="adsnote"></p>
+  </div>
+  <div class="card pad">
     <div class="dayhead"><h2>Sales by channel</h2>
       <span class="note">since the price change · organic = search engine referrer, no ad tags</span></div>
     <div class="tw" style="border:none"><table><thead><tr>
@@ -587,6 +608,15 @@ footer{border-top:1px solid var(--line);padding-top:16px;}
     </tr></thead><tbody id="chanbody"></tbody></table></div>
   </div>
   <div class="cards" id="shipcards"></div>
+  <div class="card pad">
+    <div class="dayhead"><h2>Store orders by country</h2>
+      <span class="note">every order since the change, test products or not — organic shows up here first</span></div>
+    <div class="tw" style="border:none"><table><thead><tr>
+      <th style="cursor:default;min-width:95px">Country</th><th style="cursor:default">Orders</th>
+      <th style="cursor:default">Revenue</th><th style="cursor:default">Organic</th>
+      <th style="cursor:default">Paid</th><th style="cursor:default">Other</th>
+    </tr></thead><tbody id="ctrystore"></tbody></table></div>
+  </div>
   <div class="card pad">
     <div class="dayhead"><h2>Items sold since the change</h2>
       <span class="note">Group A · product margin = revenue − cost of goods</span></div>
@@ -633,6 +663,7 @@ lost if a run is missed. Built __STAMP__.</p></footer>
 const DATA=__DATA__, DAILY=__DAILY__, DETAIL=__DETAIL__, CHANGE='__CHANGE__';
 const DELIV=__DELIV__;
 const CHAN=__CHAN__;
+const ADS=__ADS__;
 const $=s=>document.querySelector(s);
 const money=v=>(v<0?'-$':'$')+Math.abs(v).toFixed(2);
 const money0=v=>(v<0?'-$':'$')+Math.round(Math.abs(v)).toLocaleString();
@@ -935,7 +966,7 @@ function renderBets(){
 
 
 // ---------- report (channels + profitability + flash) ----------
-const CHLABEL={organic:'Organic search',paid:'Paid ads',direct:'Direct',
+const CHLABEL={organic:'Organic search',organic_likely:'Organic (likely)',subscription:'Subscription',paid:'Paid ads',direct:'Direct',
   referral:'Referral','other:3890849':'Shop app','other:subscription':'Subscription'};
 function chName(c){return CHLABEL[c]||c.replace('other:','')}
 function renderReport(){
@@ -985,12 +1016,50 @@ function renderReport(){
         <td>${x.u}</td><td>${money(x.rev)}</td><td>${money(x.pm)}</td>
         <td>${x.rev?Math.round(100*x.pm/x.rev)+'%':'—'}</td></tr>`}).join('');
 
+  // google ads efficiency
+  if(ADS.daily.length){
+    const post=ADS.daily.filter(d=>d.date>=CHANGE);
+    const pre=ADS.daily.filter(d=>d.date<CHANGE).slice(-post.length);
+    const row=(label,rows)=>{
+      const cost=rows.reduce((s,r)=>s+r.cost,0), clk=rows.reduce((s,r)=>s+r.clicks,0);
+      const conv=rows.reduce((s,r)=>s+r.conversions,0), val=rows.reduce((s,r)=>s+r.conv_value,0);
+      return {label,cost,clk,conv,cr:clk?100*conv/clk:0,cpa:conv?cost/conv:0,roas:cost?val/cost:0}};
+    const A=row(`Before (${pre.length}d)`,pre), B=row(`After (${post.length}d)`,post);
+    $('#adsbody').innerHTML=[A,B].map(r=>`<tr><td>${r.label}</td>
+      <td>${money0(r.cost)}</td><td>${r.clk}</td><td>${r.conv.toFixed(1)}</td>
+      <td>${r.cr.toFixed(1)}%</td><td>${money(r.cpa)}</td><td>${r.roas.toFixed(2)}</td></tr>`).join('')
+      +`<tr><td><b>Change</b></td><td class="${B.cost<A.cost?'neg':''}">${A.cost?Math.round(100*(B.cost/A.cost-1)):0}%</td>
+        <td>${A.clk?Math.round(100*(B.clk/A.clk-1)):0}%</td>
+        <td>${A.conv?Math.round(100*(B.conv/A.conv-1)):0}%</td>
+        <td class="${B.cr>A.cr?'pos':'neg'}">${A.cr?(B.cr-A.cr).toFixed(1):0} pts</td>
+        <td class="${B.cpa<A.cpa?'pos':'neg'}"><b>${A.cpa?Math.round(100*(B.cpa/A.cpa-1)):0}%</b></td>
+        <td class="${B.roas>A.roas?'pos':'neg'}">${A.roas?Math.round(100*(B.roas/A.roas-1)):0}%</b></td></tr>`;
+    const spendDrop=A.cost&&B.cost/A.cost<0.75;
+    $('#adsnote').textContent=(spendDrop
+      ? `⚠ Spend fell ${Math.round(100*(1-B.cost/A.cost))}% in the after-window — CPA moves partly reflect budget changes, not only the prices. `
+      : '')+`CPA is the cleanest paid-efficiency signal: conversions per dollar with cheaper products in the cart.`;
+  }
+
+  // store orders by country
+  const st=CHAN.store||[];
+  const byC={};
+  st.forEach(o=>{const x=byC[o.country]||(byC[o.country]={n:0,rev:0,org:0,paid:0,oth:0});
+    x.n++;x.rev+=o.revenue;
+    if(o.channel==='organic'||o.channel==='organic_likely')x.org++;
+    else if(o.channel==='paid')x.paid++;else x.oth++});
+  $('#ctrystore').innerHTML=Object.entries(byC).sort((a,b)=>b[1].rev-a[1].rev)
+    .map(([c,x])=>`<tr><td>${c}</td><td>${x.n}</td><td>${money0(x.rev)}</td>
+      <td class="${x.org?'pos':''}">${x.org||'—'}</td><td>${x.paid||'—'}</td>
+      <td>${x.oth||'—'}</td></tr>`).join('');
+
   // flash summary — bizdev style, computed fresh from the data
   const post=DAILY.filter(d=>d.after), pre=DAILY.filter(d=>!d.after).slice(-post.length);
   const au=post.reduce((s,d)=>s+d.t_units,0), auPre=pre.reduce((s,d)=>s+d.t_units,0);
   const bu=post.reduce((s,d)=>s+d.c_units,0), buPre=pre.reduce((s,d)=>s+d.c_units,0);
   const gap=post.reduce((s,d)=>s+d.t_rev-d.t_rev_old,0);
-  const orgU=(agg.organic?agg.organic.au+agg.organic.bu:0);
+  const orgU=(agg.organic?agg.organic.au+agg.organic.bu:0)
+    +((agg.organic_likely&&agg.organic_likely.au+agg.organic_likely.bu)||0);
+  const orgStore=(CHAN.store||[]).filter(o=>o.channel==='organic'||o.channel==='organic_likely');
   const paidShare=agg.paid&&au?Math.round(100*agg.paid.au/au):0;
   const early=post.length<14;
   const line=(e,t,b)=>`<div style="margin:7px 0"><b>${e} ${t}</b><br>
@@ -1001,13 +1070,26 @@ function renderReport(){
       `Group A ${au}u vs ${auPre}u in the ${pre.length} days before (${auPre?Math.round(100*(au/auPre-1)):0}%). `
       +`Control ${bu}u vs ${buPre}u. Given up vs old prices: ${money(gap)}. `
       +(early?'Too few units for a verdict before day 14.':'Compare against each bet\u2019s break-even in Overview.'))
-    +line(orgU===0?'🔴':'🟢','Organic',
-      orgU===0?'Zero organic-search sales in either group so far. Expected early — Google '
-        +'takes weeks to recrawl prices; the leading indicator is GSC impressions, not orders.'
-        :`${orgU} organic units — the SEO channel is starting to move.`)
+    +line(orgU>0?'🟢':orgStore.length?'🟡':'🔴','Organic',
+      orgU>0?`${orgU} organic units on test products — the SEO channel is starting to move.`
+      :orgStore.length?`No organic sales on TEST products yet, but ${orgStore.length} organic `
+        +`order${orgStore.length===1?'':'s'} store-wide (${[...new Set(orgStore.map(o=>o.country))].join(', ')}) `
+        +`— search traffic is buying, just not the test items so far.`
+      :'Zero organic-search sales anywhere yet. Google takes weeks to recrawl prices; '
+        +'watch GSC impressions, not orders.')
     +line(paidShare>50?'🟡':'🔵','Channel mix',
       `${paidShare}% of Group A units came from paid ads — while that holds, the cuts are `
       +`mostly discounting traffic that was already converting.`)
+    +(ADS.daily.length?(()=>{const post=ADS.daily.filter(d=>d.date>=CHANGE);
+      const pre=ADS.daily.filter(d=>d.date<CHANGE).slice(-post.length);
+      const cpa=r=>{const c=r.reduce((s,x)=>s+x.cost,0),v=r.reduce((s,x)=>s+x.conversions,0);
+        return v?c/v:0};
+      const a=cpa(pre),b=cpa(post),ch=a?100*(b/a-1):0;
+      return line(Math.abs(ch)<5?'🔵':ch<0?'🟢':'🔴','Google CPA',
+        `${money(a)} before → ${money(b)} after (${ch>0?'+':''}${ch.toFixed(1)}%). `
+        +(Math.abs(ch)<5?'Flat so far — the conversion-rate gain from cheaper prices hasn\u2019t shown up yet.'
+          :ch<0?'Falling — cheaper prices are converting paid clicks more efficiently.'
+          :'Rising — watch it; may be budget shifts rather than price effect.'))})():'')
     +line(shipNet<0?'🔴':'🟢','Shipping',
       `Charged ${money(charged)} vs real cost ${money(cost)} on test orders → ${money(shipNet)}. `
       +(shipNet<0?'Mostly the old US/AU free-shipping thresholds, frozen during the test.':'Covered.'));
@@ -1085,6 +1167,7 @@ def main():
                 .replace("__CHANGE__", CHANGE_DATE)
                 .replace("__DELIV__", json.dumps(delivery_data()))
                 .replace("__CHAN__", json.dumps(read_channel()))
+                .replace("__ADS__", json.dumps(read_ads()))
                 .replace("__STAMP__", stamp))
     out = Path(a.out)
     out.write_text(html)
