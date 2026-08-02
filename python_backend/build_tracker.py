@@ -261,6 +261,17 @@ def delivery_data() -> dict:
     return {"zones": zones, "countries": countries, "excluded": excluded}
 
 
+def read_channel() -> dict:
+    """Latest channel/profitability report (built by test_channel_report.py)."""
+    path = OUTPUTS_DIR / "test_channel_report.json"
+    if path.exists():
+        try:
+            return json.loads(path.read_text())
+        except json.JSONDecodeError:
+            pass
+    return {"generated": None, "lines": [], "orders": []}
+
+
 def load_history() -> list:
     if HISTORY.exists():
         try:
@@ -463,6 +474,7 @@ footer{border-top:1px solid var(--line);padding-top:16px;}
   <button class="vtab on" data-v="overview"><span class="mi">📈</span><span class="vl">Overview</span></button>
   <button class="vtab" data-v="daily"><span class="mi">🗓</span><span class="vl">Daily</span></button>
   <button class="vtab" data-v="products"><span class="mi">🧴</span><span class="vl">Products</span></button>
+  <button class="vtab" data-v="report"><span class="mi">📊</span><span class="vl">Report</span></button>
   <button class="vtab" data-v="delivery"><span class="mi">🚚</span><span class="vl">Delivery</span></button>
 </nav>
 
@@ -562,6 +574,30 @@ footer{border-top:1px solid var(--line);padding-top:16px;}
 
 </div><!-- /products -->
 
+<div class="panel" id="p-report">
+  <div class="card pad" id="flash"></div>
+  <div class="card pad">
+    <div class="dayhead"><h2>Sales by channel</h2>
+      <span class="note">since the price change · organic = search engine referrer, no ad tags</span></div>
+    <div class="tw" style="border:none"><table><thead><tr>
+      <th style="cursor:default;min-width:110px">Channel</th>
+      <th style="cursor:default">A units</th><th style="cursor:default">A revenue</th>
+      <th style="cursor:default">A margin</th>
+      <th style="cursor:default">B units</th><th style="cursor:default">B revenue</th>
+    </tr></thead><tbody id="chanbody"></tbody></table></div>
+  </div>
+  <div class="cards" id="shipcards"></div>
+  <div class="card pad">
+    <div class="dayhead"><h2>Items sold since the change</h2>
+      <span class="note">Group A · product margin = revenue − cost of goods</span></div>
+    <div class="tw" style="border:none"><table><thead><tr>
+      <th style="cursor:default;min-width:210px">Product</th><th style="cursor:default">Action</th>
+      <th style="cursor:default">Units</th><th style="cursor:default">Revenue</th>
+      <th style="cursor:default">Margin</th><th style="cursor:default">Margin %</th>
+    </tr></thead><tbody id="itembody"></tbody></table></div>
+  </div>
+</div><!-- /report -->
+
 <div class="panel" id="p-delivery">
   <div class="cards" id="dkpis"></div>
   <div class="card pad">
@@ -596,6 +632,7 @@ lost if a run is missed. Built __STAMP__.</p></footer>
 <script>
 const DATA=__DATA__, DAILY=__DAILY__, DETAIL=__DETAIL__, CHANGE='__CHANGE__';
 const DELIV=__DELIV__;
+const CHAN=__CHAN__;
 const $=s=>document.querySelector(s);
 const money=v=>(v<0?'-$':'$')+Math.abs(v).toFixed(2);
 const money0=v=>(v<0?'-$':'$')+Math.round(Math.abs(v)).toLocaleString();
@@ -846,6 +883,7 @@ function showView(v){
   document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('on',p.id==='p-'+v));
   document.querySelectorAll('.vtab').forEach(b=>b.classList.toggle('on',b.dataset.v===v));
   if(v==='delivery') renderDelivery();
+  if(v==='report') renderReport();
   window.scrollTo({top:0,behavior:'instant'});
 }
 document.querySelectorAll('.vtab').forEach(b=>b.onclick=()=>showView(b.dataset.v));
@@ -893,6 +931,86 @@ function renderBets(){
       +`hold its old margin.`
     : `"Needs" is the unit lift required to hold the old margin. Groups behind that line after `
       +`4 weeks are candidates to pull back.`;
+}
+
+
+// ---------- report (channels + profitability + flash) ----------
+const CHLABEL={organic:'Organic search',paid:'Paid ads',direct:'Direct',
+  referral:'Referral','other:3890849':'Shop app','other:subscription':'Subscription'};
+function chName(c){return CHLABEL[c]||c.replace('other:','')}
+function renderReport(){
+  if(!CHAN.lines.length){
+    $('#flash').innerHTML='<p class="note">No channel data yet — it refreshes with the daily job.</p>';
+    return;
+  }
+  // channel table
+  const agg={};
+  CHAN.lines.forEach(r=>{
+    const a=agg[r.channel]||(agg[r.channel]={au:0,ar:0,am:0,bu:0,br:0});
+    if(r.arm==='treated'){a.au+=r.units;a.ar+=r.revenue;a.am+=r.product_margin}
+    else{a.bu+=r.units;a.br+=r.revenue}});
+  const rows=Object.entries(agg).sort((x,y)=>(y[1].ar+y[1].br)-(x[1].ar+x[1].br));
+  $('#chanbody').innerHTML=rows.map(([c,a])=>`<tr>
+    <td>${chName(c)}${c==='organic'?' 🌱':''}</td>
+    <td>${a.au||'—'}</td><td>${a.ar?money(a.ar):'—'}</td><td>${a.am?money(a.am):'—'}</td>
+    <td>${a.bu||'—'}</td><td>${a.br?money(a.br):'—'}</td></tr>`).join('');
+
+  // shipping cards
+  const ship=CHAN.orders.filter(o=>o.ship_net!==null);
+  const charged=ship.reduce((s,o)=>s+o.charged,0), cost=ship.reduce((s,o)=>s+o.ship_cost,0);
+  const freeN=ship.filter(o=>o.charged===0).length;
+  const pmA=CHAN.lines.filter(r=>r.arm==='treated').reduce((s,r)=>s+r.product_margin,0);
+  const pmB=CHAN.lines.filter(r=>r.arm==='control').reduce((s,r)=>s+r.product_margin,0);
+  const shipNet=charged-cost;
+  $('#shipcards').innerHTML=[
+    ['Product margin A',money0(pmA),'revenue − cost of goods'],
+    ['Product margin B',money0(pmB),'control'],
+    ['Shipping charged',money0(charged),`across ${ship.length} test orders`],
+    ['Real shipping cost',money0(cost),`${freeN} free-shipping orders`],
+    ['Shipping net',`<span class="${shipNet<0?'neg':'pos'}">${money0(shipNet)}</span>`,'charged − real cost'],
+    ['Net incl. shipping',`<span class="${pmA+pmB+shipNet<0?'neg':'pos'}">${money0(pmA+pmB+shipNet)}</span>`,'both groups'],
+  ].map(([l,v,n])=>`<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div>
+    <div class="n">${n}</div></div>`).join('');
+
+  // item table (treated)
+  const items={};
+  CHAN.lines.filter(r=>r.arm==='treated').forEach(r=>{
+    const k=r.product; const x=items[k]||(items[k]={case:r.case,u:0,rev:0,pm:0});
+    x.u+=r.units;x.rev+=r.revenue;x.pm+=r.product_margin});
+  $('#itembody').innerHTML=Object.entries(items).sort((a,b)=>b[1].rev-a[1].rev)
+    .map(([prod,x])=>{
+      const tag=x.case==='raise'?'t-raise':x.case==='cut'?'t-cut':'t-floor';
+      return `<tr><td>${prod}</td>
+        <td><span class="tag ${tag}">${x.case==='floor-near'?'floor':x.case||'—'}</span></td>
+        <td>${x.u}</td><td>${money(x.rev)}</td><td>${money(x.pm)}</td>
+        <td>${x.rev?Math.round(100*x.pm/x.rev)+'%':'—'}</td></tr>`}).join('');
+
+  // flash summary — bizdev style, computed fresh from the data
+  const post=DAILY.filter(d=>d.after), pre=DAILY.filter(d=>!d.after).slice(-post.length);
+  const au=post.reduce((s,d)=>s+d.t_units,0), auPre=pre.reduce((s,d)=>s+d.t_units,0);
+  const bu=post.reduce((s,d)=>s+d.c_units,0), buPre=pre.reduce((s,d)=>s+d.c_units,0);
+  const gap=post.reduce((s,d)=>s+d.t_rev-d.t_rev_old,0);
+  const orgU=(agg.organic?agg.organic.au+agg.organic.bu:0);
+  const paidShare=agg.paid&&au?Math.round(100*agg.paid.au/au):0;
+  const early=post.length<14;
+  const line=(e,t,b)=>`<div style="margin:7px 0"><b>${e} ${t}</b><br>
+    <span style="font-size:.88rem;color:var(--ink2)">${b}</span></div>`;
+  $('#flash').innerHTML=`<div class="dayhead"><h2>Flash summary</h2>
+    <span class="note">auto-generated from the data below · day ${post.length} of 84</span></div>`
+    +line(early?'🟡':'🔵','Overall',
+      `Group A ${au}u vs ${auPre}u in the ${pre.length} days before (${auPre?Math.round(100*(au/auPre-1)):0}%). `
+      +`Control ${bu}u vs ${buPre}u. Given up vs old prices: ${money(gap)}. `
+      +(early?'Too few units for a verdict before day 14.':'Compare against each bet\u2019s break-even in Overview.'))
+    +line(orgU===0?'🔴':'🟢','Organic',
+      orgU===0?'Zero organic-search sales in either group so far. Expected early — Google '
+        +'takes weeks to recrawl prices; the leading indicator is GSC impressions, not orders.'
+        :`${orgU} organic units — the SEO channel is starting to move.`)
+    +line(paidShare>50?'🟡':'🔵','Channel mix',
+      `${paidShare}% of Group A units came from paid ads — while that holds, the cuts are `
+      +`mostly discounting traffic that was already converting.`)
+    +line(shipNet<0?'🔴':'🟢','Shipping',
+      `Charged ${money(charged)} vs real cost ${money(cost)} on test orders → ${money(shipNet)}. `
+      +(shipNet<0?'Mostly the old US/AU free-shipping thresholds, frozen during the test.':'Covered.'));
 }
 
 // ---------- delivery ----------
@@ -966,6 +1084,7 @@ def main():
                 .replace("__DETAIL__", json.dumps(detail))
                 .replace("__CHANGE__", CHANGE_DATE)
                 .replace("__DELIV__", json.dumps(delivery_data()))
+                .replace("__CHAN__", json.dumps(read_channel()))
                 .replace("__STAMP__", stamp))
     out = Path(a.out)
     out.write_text(html)
