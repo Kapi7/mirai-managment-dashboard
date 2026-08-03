@@ -1028,6 +1028,16 @@ function renderReport(){
     $('#adsbody').innerHTML=[A,B].map(r=>`<tr><td>${r.label}</td>
       <td>${money0(r.cost)}</td><td>${r.clk}</td><td>${r.conv.toFixed(1)}</td>
       <td>${r.cr.toFixed(1)}%</td><td>${money(r.cpa)}</td><td>${r.roas.toFixed(2)}</td></tr>`).join('')
+      +(()=>{const paidByDay={};(CHAN.store||[]).forEach(o=>{
+          if(o.channel==='paid')paidByDay[o.date]=(paidByDay[o.date]||0)+1});
+        const cnt=rows=>rows.reduce((s,r)=>s+(paidByDay[r.date]||0),0);
+        const pa=cnt(pre), pb=cnt(post);
+        const ta=pa?A.cost/pa:0, tb=pb?B.cost/pb:0;
+        return `<tr><td><b>True CPA (Shopify)</b></td><td class="note" colspan="3">
+          spend ÷ paid-attributed orders — no attribution lag</td>
+          <td>${pa}→${pb} orders</td>
+          <td class="${tb<ta?'pos':'neg'}"><b>${money(ta)}→${money(tb)}</b></td>
+          <td class="${tb<ta?'pos':'neg'}">${ta?Math.round(100*(tb/ta-1)):0}%</td></tr>`})()
       +`<tr><td><b>Change</b></td><td class="${B.cost<A.cost?'neg':''}">${A.cost?Math.round(100*(B.cost/A.cost-1)):0}%</td>
         <td>${A.clk?Math.round(100*(B.clk/A.clk-1)):0}%</td>
         <td>${A.conv?Math.round(100*(B.conv/A.conv-1)):0}%</td>
