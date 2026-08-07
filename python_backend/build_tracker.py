@@ -1087,6 +1087,17 @@ function renderReport(){
         +`— search traffic is buying, just not the test items so far.`
       :'Zero organic-search sales anywhere yet. Google takes weeks to recrawl prices; '
         +'watch GSC impressions, not orders.')
+    +(()=>{ // budget confound: the arms differ in paid dependence
+       if(!ADS.daily.length) return '';
+       const po=ADS.daily.filter(d=>d.date>=CHANGE), pr=ADS.daily.filter(d=>d.date<CHANGE).slice(-po.length);
+       const ca=pr.reduce((s,x)=>s+x.cost,0), cb=po.reduce((s,x)=>s+x.cost,0);
+       if(!ca||cb/ca>0.8) return '';
+       const aPaid=agg.paid?agg.paid.au:0, aTot=au||1, bPaid=agg.paid?agg.paid.bu:0, bTot=bu||1;
+       return line('⚠️','Budget confound',
+         `Ad spend fell ${Math.round(100*(1-cb/ca))}% in this window. Group A takes `
+         +`${Math.round(100*aPaid/aTot)}% of its units from paid vs Group B's ${Math.round(100*bPaid/bTot)}% — `
+         +`so the spend cut penalises A more than B. The A-vs-B unit gap is NOT a clean `
+         +`price read until spend is stable.`)})()
     +line(paidShare>50?'🟡':'🔵','Channel mix',
       `${paidShare}% of Group A units came from paid ads — while that holds, the cuts are `
       +`mostly discounting traffic that was already converting.`)
