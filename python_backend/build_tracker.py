@@ -272,6 +272,16 @@ def read_channel() -> dict:
     return {"generated": None, "lines": [], "orders": []}
 
 
+def read_unit_econ() -> dict:
+    path = OUTPUTS_DIR / "unit_economics.json"
+    if path.exists():
+        try:
+            return json.loads(path.read_text())
+        except json.JSONDecodeError:
+            pass
+    return {}
+
+
 def read_ads() -> dict:
     path = OUTPUTS_DIR / "ads_efficiency.json"
     if path.exists():
@@ -598,6 +608,21 @@ footer{border-top:1px solid var(--line);padding-top:16px;}
     <p class="note" id="adsnote"></p>
   </div>
   <div class="card pad">
+    <div class="dayhead"><h2>Is the cut worth it? — unit economics</h2>
+      <span class="note" id="uewin"></span></div>
+    <p class="note" style="margin:6px 0 10px">Margin per unit fell by design. The cut
+    only pays off if ad cost per unit fell by <b>more</b>. Ad cost is Google Shopping
+    spend on each product, grossed up to full account spend.</p>
+    <div class="tw" style="border:none"><table><thead><tr>
+      <th style="cursor:default;min-width:105px">Bucket</th>
+      <th style="cursor:default">Units</th>
+      <th style="cursor:default">Margin/unit</th><th style="cursor:default">Δ margin</th>
+      <th style="cursor:default">Ad/unit</th><th style="cursor:default">Δ ad</th>
+      <th style="cursor:default">NET/unit</th><th style="cursor:default">Verdict</th>
+    </tr></thead><tbody id="uebody"></tbody></table></div>
+    <p class="note" id="uenote"></p>
+  </div>
+  <div class="card pad">
     <div class="dayhead"><h2>Sales by channel</h2>
       <span class="note">since the price change · organic = search engine referrer, no ad tags</span></div>
     <div class="tw" style="border:none"><table><thead><tr>
@@ -664,6 +689,7 @@ const DATA=__DATA__, DAILY=__DAILY__, DETAIL=__DETAIL__, CHANGE='__CHANGE__';
 const DELIV=__DELIV__;
 const CHAN=__CHAN__;
 const ADS=__ADS__;
+const UE=__UE__;
 const $=s=>document.querySelector(s);
 const money=v=>(v<0?'-$':'$')+Math.abs(v).toFixed(2);
 const money0=v=>(v<0?'-$':'$')+Math.round(Math.abs(v)).toLocaleString();
@@ -1016,6 +1042,43 @@ function renderReport(){
         <td>${x.u}</td><td>${money(x.rev)}</td><td>${money(x.pm)}</td>
         <td>${x.rev?Math.round(100*x.pm/x.rev)+'%':'—'}</td></tr>`}).join('');
 
+
+  // ---- unit economics: did the CPA saving beat the margin loss?
+  if(UE.buckets){
+    const LBL={raise:'Raises',shallow:'Shallow cuts',mid:'Mid cuts',deep:'Deep cuts',control:'Control'};
+    const per=(x,f)=>x&&x.units?x[f]/x.units:0;
+    const rows=['raise','shallow','mid','deep','control'].map(k=>{
+      const b=UE.buckets[k]||{}; const p=b.pre, q=b.post;
+      if(!p&&!q) return '';
+      const mp=per(p,'margin'), mq=per(q,'margin');
+      const ap=per(p,'ad'),     aq=per(q,'ad');
+      const np=mp-ap,           nq=mq-aq;
+      const dm=mq-mp, da=aq-ap;
+      // the cut pays off when the ad saving (-da) exceeds the margin loss (-dm)
+      const win=nq>np;
+      const verdict=k==='control'
+        ? '<span class="note">baseline</span>'
+        : win?'<span class="pos">pays off</span>':'<span class="neg">costs more</span>';
+      return `<tr><td>${LBL[k]}</td>
+        <td>${p?p.units:0}→${q?q.units:0}</td>
+        <td>${money(mp)}→${money(mq)}</td>
+        <td class="${dm>=0?'pos':'neg'}">${money(dm)}</td>
+        <td>${money(ap)}→${money(aq)}</td>
+        <td class="${da<=0?'pos':'neg'}">${money(da)}</td>
+        <td class="${win?'pos':'neg'}"><b>${money(np)}→${money(nq)}</b></td>
+        <td>${verdict}</td></tr>`}).join('');
+    $('#uebody').innerHTML=rows;
+    const sh=UE.shopping_share||{};
+    $('#uewin').textContent=`${UE.pre?UE.pre.join(' → '):''}  vs  ${UE.post?UE.post.join(' → '):''}`;
+    const ctl=UE.buckets.control||{};
+    const cAdP=per(ctl.pre,'ad'), cAdQ=per(ctl.post,'ad');
+    $('#uenote').innerHTML=`Shopping was ${Math.round((sh.pre||0)*100)}% of ad spend before and `
+      +`${Math.round((sh.post||0)*100)}% after, so per-product costs are scaled to match. `
+      +`<b>Read the control row first:</b> its ad cost/unit also fell (${money(cAdP)}→${money(cAdQ)}) `
+      +`with no price change — so most of the ad-efficiency gain is the budget cut and campaign `
+      +`mix, not the prices. Small samples: judge direction, not decimals.`;
+  }
+
   // google ads efficiency
   if(ADS.daily.length){
     const post=ADS.daily.filter(d=>d.date>=CHANGE);
@@ -1189,6 +1252,7 @@ def main():
                 .replace("__DELIV__", json.dumps(delivery_data()))
                 .replace("__CHAN__", json.dumps(read_channel()))
                 .replace("__ADS__", json.dumps(read_ads()))
+                .replace("__UE__", json.dumps(read_unit_econ(), default=float))
                 .replace("__STAMP__", stamp))
     out = Path(a.out)
     out.write_text(html)

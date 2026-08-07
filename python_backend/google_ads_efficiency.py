@@ -13,6 +13,7 @@ import argparse
 import datetime
 import json
 import re
+import urllib.error
 import urllib.request
 import urllib.parse
 from pathlib import Path
@@ -39,7 +40,20 @@ def access_token(c: dict) -> str:
     return r["access_token"]
 
 
-def search(c: dict, token: str, query: str) -> list:
+def search(c: dict, token: str, query: str, tries: int = 4) -> list:
+    import time as _t
+    for attempt in range(tries):
+        try:
+            return _search_once(c, token, query)
+        except urllib.error.HTTPError as e:
+            # 400s here are usually transient throttling on searchStream
+            if attempt == tries - 1:
+                raise
+            _t.sleep(2 ** attempt)
+    return []
+
+
+def _search_once(c: dict, token: str, query: str) -> list:
     req = urllib.request.Request(
         f"https://googleads.googleapis.com/{API}/customers/{CUSTOMER_ID}"
         f"/googleAds:searchStream",
