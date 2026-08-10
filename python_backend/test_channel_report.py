@@ -26,6 +26,9 @@ OUTPUTS_DIR = BASE_DIR / "outputs"
 MATRIX = Path("/Users/kapi7/mirai_report/shipping_matrix_all.csv")
 sys.path.insert(0, str(BASE_DIR))
 
+# every label that counts as organic for reporting
+ORGANIC_SET = ("organic", "organic_likely", "organic_direct")
+
 PAID_MARKERS = ("gclid=", "fbclid=", "ttclid=", "msclkid=",
                 "utm_medium=cpc", "utm_medium=paid", "utm_medium=ppc",
                 "utm_source=facebook", "utm_source=instagram",
@@ -53,11 +56,13 @@ def classify(order) -> str:
         return "organic"
     if referrer:
         return "referral"
-    # no referrer but landed deep on a product page: Google's apps strip the
-    # referrer, and nobody types a product URL — near-certainly search traffic
+    # No referrer. At this store's size almost nobody types the URL from
+    # memory — this is dark search traffic: referrers stripped by Google's
+    # apps, privacy browsers, iOS Mail, etc. Per Kapi 2026-08-10 it counts as
+    # organic. Kept as a separate label so the split stays visible.
     if landing.startswith("/products/"):
-        return "organic_likely"
-    return "direct"
+        return "organic_likely"      # deep product landing
+    return "organic_direct"          # homepage / other landing
 
 
 def load_matrix():

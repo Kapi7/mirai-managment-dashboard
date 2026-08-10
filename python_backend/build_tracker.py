@@ -624,7 +624,8 @@ footer{border-top:1px solid var(--line);padding-top:16px;}
   </div>
   <div class="card pad">
     <div class="dayhead"><h2>Sales by channel</h2>
-      <span class="note">since the price change · organic = search engine referrer, no ad tags</span></div>
+      <span class="note">organic = search referrer, Google free-listing (srsltid), or no
+      referrer at all (dark search) — per Kapi, direct counts as organic</span></div>
     <div class="tw" style="border:none"><table><thead><tr>
       <th style="cursor:default;min-width:110px">Channel</th>
       <th style="cursor:default">A units</th><th style="cursor:default">A revenue</th>
@@ -992,7 +993,8 @@ function renderBets(){
 
 
 // ---------- report (channels + profitability + flash) ----------
-const CHLABEL={organic:'Organic search',organic_likely:'Organic (likely)',subscription:'Subscription',paid:'Paid ads',direct:'Direct',
+const ORGANIC_SET=['organic','organic_likely','organic_direct'];
+const CHLABEL={organic:'Organic — search referrer',organic_likely:'Organic — product landing',organic_direct:'Organic — dark/direct',subscription:'Subscription',paid:'Paid ads',direct:'Direct',
   referral:'Referral','other:3890849':'Shop app','other:subscription':'Subscription'};
 function chName(c){return CHLABEL[c]||c.replace('other:','')}
 function renderReport(){
@@ -1118,7 +1120,7 @@ function renderReport(){
   const byC={};
   st.forEach(o=>{const x=byC[o.country]||(byC[o.country]={n:0,rev:0,org:0,paid:0,oth:0});
     x.n++;x.rev+=o.revenue;
-    if(o.channel==='organic'||o.channel==='organic_likely')x.org++;
+    if(ORGANIC_SET.includes(o.channel))x.org++;
     else if(o.channel==='paid')x.paid++;else x.oth++});
   $('#ctrystore').innerHTML=Object.entries(byC).sort((a,b)=>b[1].rev-a[1].rev)
     .map(([c,x])=>`<tr><td>${c}</td><td>${x.n}</td><td>${money0(x.rev)}</td>
@@ -1130,9 +1132,8 @@ function renderReport(){
   const au=post.reduce((s,d)=>s+d.t_units,0), auPre=pre.reduce((s,d)=>s+d.t_units,0);
   const bu=post.reduce((s,d)=>s+d.c_units,0), buPre=pre.reduce((s,d)=>s+d.c_units,0);
   const gap=post.reduce((s,d)=>s+d.t_rev-d.t_rev_old,0);
-  const orgU=(agg.organic?agg.organic.au+agg.organic.bu:0)
-    +((agg.organic_likely&&agg.organic_likely.au+agg.organic_likely.bu)||0);
-  const orgStore=(CHAN.store||[]).filter(o=>o.channel==='organic'||o.channel==='organic_likely');
+  const orgU=ORGANIC_SET.reduce((s,k)=>s+(agg[k]?agg[k].au+agg[k].bu:0),0);
+  const orgStore=(CHAN.store||[]).filter(o=>ORGANIC_SET.includes(o.channel));
   const paidShare=agg.paid&&au?Math.round(100*agg.paid.au/au):0;
   const early=post.length<14;
   const line=(e,t,b)=>`<div style="margin:7px 0"><b>${e} ${t}</b><br>
