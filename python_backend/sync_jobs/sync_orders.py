@@ -333,10 +333,14 @@ class SyncOrders(BaseSyncJob):
             sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             from psp_fee import get_psp_fees_daily
 
-            end_date = date.today()
-            start_date = end_date - timedelta(days=self.days_back)
+            # get_psp_fees_daily takes an EXCLUSIVE end date — passing today
+            # meant TODAY was never synced, so the dashboard showed the
+            # 2.9%+$0.30 estimate all day while the Telegram bot showed the
+            # real Shopify Payments fee (the last report-vs-bot gap).
+            end_date = date.today() + timedelta(days=1)
+            start_date = date.today() - timedelta(days=self.days_back)
 
-            print(f"💳 Syncing PSP fees: {start_date} to {end_date}")
+            print(f"💳 Syncing PSP fees: {start_date} to {end_date} (exclusive)")
 
             psp_fees = get_psp_fees_daily(start_date, end_date)
 
