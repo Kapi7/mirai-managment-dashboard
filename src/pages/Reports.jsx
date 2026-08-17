@@ -44,8 +44,9 @@ const pnl = (v) => (
   <span className={(v || 0) >= 0 ? 'm-pos' : 'm-neg'}>{fmtUSD(v)}</span>
 );
 
-/* tiny per-day bar sparkline for KPI cards */
-const Spark = ({ series, color, signed = false }) => {
+/* tiny per-day bar sparkline for KPI cards — bars are clickable and jump the
+   report to that specific day */
+const Spark = ({ series, color, signed = false, dates, labels, onPick, fmt }) => {
   if (!series || series.length < 2) return <div className="m-spark" />;
   const mx = Math.max(...series.map((v) => Math.abs(v || 0)), 1);
   return (
@@ -53,6 +54,9 @@ const Spark = ({ series, color, signed = false }) => {
       {series.map((v, i) => (
         <i
           key={i}
+          className={dates && onPick ? 'clk' : undefined}
+          title={dates ? `${labels?.[i] || dates[i]} · ${fmt ? fmt(v) : v}` : undefined}
+          onClick={dates && onPick ? (e) => { e.stopPropagation(); onPick(dates[i]); } : undefined}
           style={{
             height: `${Math.max(8, (Math.abs(v || 0) / mx) * 100)}%`,
             background: signed ? ((v || 0) >= 0 ? 'rgba(52,211,153,.75)' : 'rgba(248,113,113,.75)') : color,
@@ -89,11 +93,12 @@ export default function Reports() {
   const [orderSearch, setOrderSearch] = useState('');
   const [bestsellersData, setBestsellersData] = useState(null);
   const [bestsellersDay, setBestsellersDay] = useState(30); // 7, 30, or 60
-  const [dateRange, setDateRange] = useState({ from: subDays(new Date(), 7), to: new Date() });
+  // Default period: month-to-date
+  const [dateRange, setDateRange] = useState({ from: startOfMonth(new Date()), to: new Date() });
   const [expandedOrders, setExpandedOrders] = useState({});
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [dailySort, setDailySort] = useState({ key: 'date', dir: -1 });
-  const [preset, setPreset] = useState('7d');
+  const [preset, setPreset] = useState('mtd');
   const isMobile = useIsMobile();
 
   const getCacheKey = () =>
@@ -246,12 +251,23 @@ export default function Reports() {
   const series = useMemo(() => {
     const asc = [...reportData].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
     return {
+      dates: asc.map((d) => d.date),
+      labels: asc.map((d) => d.label || d.date),
       orders: asc.map((d) => d.orders || 0),
       net: asc.map((d) => d.net || 0),
       spend: asc.map((d) => d.total_spend || 0),
       profit: asc.map((d) => d.margin ?? d.operational ?? 0),
     };
   }, [reportData]);
+
+  /* clicking a sparkline bar focuses the report on that single day
+     (local-time construction — never toISOString on date keys) */
+  const pickDay = useCallback((iso) => {
+    if (!iso) return;
+    const d = new Date(`${iso}T00:00:00`);
+    setPreset(null);
+    setDateRange({ from: startOfDay(d), to: endOfDay(d) });
+  }, []);
 
   const sortedDaily = useMemo(() => {
     const rows = [...reportData];
@@ -280,7 +296,7 @@ export default function Reports() {
     { id: '3d', label: '3D', range: () => ({ from: subDays(new Date(), 3), to: new Date() }) },
     { id: '7d', label: '7D', range: () => ({ from: subDays(new Date(), 7), to: new Date() }) },
     { id: '30d', label: '30D', range: () => ({ from: subDays(new Date(), 30), to: new Date() }) },
-    { id: 'month', label: 'This Month', range: () => ({ from: startOfMonth(new Date()), to: endOfMonth(new Date()) }) },
+    { id: 'mtd', label: 'MTD', range: () => ({ from: startOfMonth(new Date()), to: new Date() }) },
     { id: 'lastm', label: 'Last Month', range: () => ({ from: startOfMonth(subMonths(new Date(), 1)), to: endOfMonth(subMonths(new Date(), 1)) }) },
   ];
 
@@ -293,14 +309,14 @@ export default function Reports() {
         <div className="k-label">Total Orders</div>
         <div className="k-value">{summary.totalOrders}</div>
         <div className="k-sub">AOV <b>{fmtUSD(summary.avgAOV)}</b></div>
-        <Spark series={series.orders} color="rgba(129,140,248,.7)" />
+        <Spark series={series.orders} color="rgba(129,140,248,.7)" dates={series.dates} labels={series.labels} onPick={pickDay} />
       </div>
 
       <div className="m-glow-card m-kpi" style={{ '--kpi-c1': '#22d3ee', '--kpi-c2': '#67e8f9', '--kpi-glow': 'rgba(34,211,238,.09)' }}>
         <div className="k-label">Revenue (Net)</div>
         <div className="k-value m-rev">{fmtUSD0(summary.totalNet)}</div>
         <div className="k-sub">Gross <b>{fmtUSD0(summary.totalGross)}</b></div>
-        <Spark series={series.net} color="rgba(34,211,238,.65)" />
+        <Spark series={series.net} color="rgba(34,211,238,.65)" dates={series.dates} labels={series.labels} onPick={pickDay} fmt={fmtUSD0} />
       </div>
 
       <div className="m-glow-card m-kpi" style={{ '--kpi-c1': '#f59e0b', '--kpi-c2': '#fbbf24', '--kpi-glow': 'rgba(245,158,11,.10)' }} title={spendTooltip}>
@@ -309,7 +325,7 @@ export default function Reports() {
         <div className="k-sub">
           G <b>{fmtUSD0(summary.totalGoogle)}</b> · M <b>{fmtUSD0(summary.totalMeta)}</b> · Shop <b>{fmtUSD0(summary.totalShop)}</b>
         </div>
-        <Spark series={series.spend} color="rgba(251,191,36,.65)" />
+        <Spark series={series.spend} color="rgba(251,191,36,.65)" dates={series.dates} labels={series.labels} onPick={pickDay} fmt={fmtUSD0} />
       </div>
 
       <div
@@ -323,7 +339,7 @@ export default function Reports() {
         <div className="k-label">Net Profit</div>
         <div className={`k-value ${summary.totalProfit >= 0 ? 'm-pos' : 'm-neg'}`}>{fmtUSD0(summary.totalProfit)}</div>
         <div className="k-sub">Margin <b>{fmtPct(summary.weightedMargin)}</b> of revenue</div>
-        <Spark series={series.profit} signed />
+        <Spark series={series.profit} signed dates={series.dates} labels={series.labels} onPick={pickDay} fmt={fmtUSD0} />
       </div>
     </div>
   );
@@ -389,7 +405,7 @@ export default function Reports() {
   );
 
   const dailyCards = (
-    <div className="space-y-2.5 p-3">
+    <div className="space-y-2.5 p-3 max-lg:px-0 max-lg:pt-1">
       {sortedDaily.map((day) => (
         <div key={day.date} className="m-mcard">
           <div className="mc-head">
@@ -405,10 +421,10 @@ export default function Reports() {
             <div className="mc-cell"><i>Spend</i><b className="m-gold">{fmtUSD0(day.total_spend)}</b></div>
             <div className="mc-cell"><i>COGS</i><b>{fmtUSD0(day.cogs)}</b></div>
             <div className="mc-cell"><i>Est Ship</i><b>{fmtUSD0(day.shipping_cost)}</b></div>
-            <div className="mc-cell"><i>Operational</i><b>{pnl(day.operational)}</b></div>
+            <div className="mc-cell"><i>Oper.</i><b>{pnl(day.operational)}</b></div>
             <div className="mc-cell"><i>AOV</i><b>{fmtUSD0(day.aov)}</b></div>
             <div className="mc-cell"><i>CPA</i><b>{day.general_cpa != null ? fmtUSD0(day.general_cpa) : '—'}</b></div>
-            <div className="mc-cell"><i>Returning</i><b>{day.returning_customers}</b></div>
+            <div className="mc-cell"><i>Return</i><b>{day.returning_customers}</b></div>
           </div>
         </div>
       ))}
@@ -417,7 +433,7 @@ export default function Reports() {
 
   /* ── order cards (mobile) ───────────────────────────────────────────── */
   const orderCards = (
-    <div className="space-y-2.5 p-3">
+    <div className="space-y-2.5 p-3 max-lg:px-0 max-lg:pt-1">
       {filteredOrders.slice(0, 100).map((order) => (
         <div key={order.order_id} className={cn('m-mcard', order.is_cancelled && 'opacity-50')}>
           <div className="mc-head">
@@ -473,7 +489,7 @@ export default function Reports() {
       {/* Header */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <div className="min-w-0">
-          <h1 className="text-[1.45rem] lg:text-3xl font-extrabold tracking-tight text-white flex items-center gap-2.5 leading-tight">
+          <h1 className="text-[1.3rem] lg:text-3xl font-extrabold tracking-tight text-white flex items-center gap-2.5 leading-tight">
             Business Reports
             <span className="m-live"><i />LIVE</span>
           </h1>
@@ -568,9 +584,9 @@ export default function Reports() {
             kpiCards
           )}
 
-          <div className="m-glow-card">
-            <div className="flex items-center justify-between gap-3 px-4 pt-3.5 pb-2.5 border-b border-[#22304d]">
-              <div>
+          <div className="m-glow-card max-lg:!bg-transparent max-lg:!border-transparent max-lg:!shadow-none">
+            <div className="flex !flex-nowrap items-center justify-between gap-3 px-4 pt-3.5 pb-2.5 border-b border-[#22304d] max-lg:px-1 max-lg:border-transparent">
+              <div className="min-w-0">
                 <div className="font-extrabold text-white text-[0.95rem]">Daily Performance</div>
                 <div className="text-[0.7rem] text-[#8fa0b8]">Per-day breakdown · tap a header to sort</div>
               </div>
@@ -718,8 +734,8 @@ export default function Reports() {
                 </div>
               )}
 
-              <div className="m-glow-card">
-                <div className="flex flex-wrap items-center gap-2 px-4 pt-3.5 pb-2.5 border-b border-[#22304d]">
+              <div className="m-glow-card max-lg:!bg-transparent max-lg:!border-transparent max-lg:!shadow-none">
+                <div className="flex flex-wrap items-center gap-2 px-4 pt-3.5 pb-2.5 border-b border-[#22304d] max-lg:px-1 max-lg:border-transparent">
                   <div className="min-w-0 mr-auto">
                     <div className="font-extrabold text-white text-[0.95rem]">Order Breakdown</div>
                     <div className="text-[0.7rem] text-[#8fa0b8]">{filteredOrders.length} orders in range</div>
@@ -926,13 +942,13 @@ export default function Reports() {
                 ))}
               </div>
 
-              <div className="m-glow-card">
-                <div className="px-4 pt-3.5 pb-2.5 border-b border-[#22304d]">
+              <div className="m-glow-card max-lg:!bg-transparent max-lg:!border-transparent max-lg:!shadow-none">
+                <div className="px-4 pt-3.5 pb-2.5 border-b border-[#22304d] max-lg:px-1 max-lg:border-transparent">
                   <div className="font-extrabold text-white text-[0.95rem]">All Best Sellers</div>
                   <div className="text-[0.7rem] text-[#8fa0b8]">Top 100 by quantity · last {bestsellersDay} days</div>
                 </div>
                 {isMobile ? (
-                  <div className="space-y-2 p-3">
+                  <div className="space-y-2 p-3 max-lg:px-0 max-lg:pt-1">
                     {(bestsellersData.bestsellers || []).map((p, idx) => (
                       <div key={p.variant_id} className="m-mcard !p-2.5">
                         <div className="flex items-center gap-2.5">

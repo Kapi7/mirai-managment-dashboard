@@ -217,6 +217,8 @@
 /* spark bars inside KPI cards */
 .m-spark { display: flex; align-items: flex-end; gap: 2px; height: 26px; margin-top: 8px; position: relative; z-index: 1; }
 .m-spark i { flex: 1; min-width: 2px; border-radius: 2px 2px 0 0; background: var(--sp-c, rgba(148, 163, 184, 0.45)); opacity: .85; }
+.m-spark i.clk { cursor: pointer; transition: opacity .12s ease, box-shadow .12s ease, transform .12s ease; }
+.m-spark i.clk:hover { opacity: 1; transform: scaleY(1.06); box-shadow: 0 0 9px rgba(255, 255, 255, 0.35); }
 
 /* mobile bottom thumb-nav grid (kept out of the generic grid-cols overrides) */
 .m-thumbgrid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
@@ -230,9 +232,23 @@
 /* page shell padding */
 .m-page { padding: 20px 22px 26px; }
 @media (max-width: 1023.98px) {
-  .m-page { padding: 12px 10px; }
+  .m-page { padding: 12px 8px; }
   /* room for the floating thumb-nav on EVERY page (legacy ones included) */
   main { padding-bottom: 100px; }
+  /* hard backstop: the page itself never scrolls sideways on a phone */
+  html, body { overflow-x: hidden; }
+
+  /* tighter KPI hero cards on phones */
+  .m-kpi { padding: 11px 12px 9px; }
+  .m-kpi .k-value { font-size: 1.32rem; }
+  .m-kpi .k-sub { font-size: 0.64rem; }
+  .m-kpi .k-label { font-size: 0.6rem; }
+
+  /* mobile day/order cards: badge + amount stay on ONE line
+     (the generic gap-2 wrap rule below must not split them) */
+  .m-mcard .mc-head { flex-wrap: nowrap; }
+  .m-mcard .mc-head .flex { flex-wrap: nowrap !important; }
+  .m-mcard .mc-cell b { font-size: 0.76rem; }
 }
 
 /* brand wordmark gradient */

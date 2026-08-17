@@ -5,7 +5,6 @@ import { createPageUrl } from "@/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   Settings,
-  TrendingUp,
   Package,
   BarChart3,
   DollarSign,
@@ -125,14 +124,15 @@ export default function Layout({ children }) {
   };
 
   const brand = (
-    <div className="flex items-center gap-3">
-      <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-gradient-to-br from-rose-500 via-fuchsia-500 to-violet-500 shadow-[0_4px_18px_-4px_rgba(244,114,182,0.65)]">
-        <TrendingUp className="w-5 h-5 text-white" />
-      </div>
-      <div className="min-w-0">
-        <h2 className="font-extrabold text-[1.02rem] leading-tight m-wordmark tracking-tight">Mirai Skin</h2>
-        <p className="text-[0.64rem] font-semibold tracking-[0.14em] uppercase text-[#7487a3]">Management</p>
-      </div>
+    <div className="flex flex-col gap-1 min-w-0">
+      <img
+        src="/mirai-logo-white.png"
+        alt="Mirai Skin"
+        className="h-[16px] w-auto max-w-[140px] object-contain object-left"
+      />
+      <p className="text-[0.58rem] font-bold tracking-[0.3em] uppercase bg-gradient-to-r from-rose-300 to-violet-300 bg-clip-text text-transparent">
+        Management
+      </p>
     </div>
   );
 
