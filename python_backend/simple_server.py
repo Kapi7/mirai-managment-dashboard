@@ -667,7 +667,9 @@ async def daily_report(req: DateRangeRequest):
 
         # Fallback to API-based logic
         from report_logic import fetch_daily_reports
-        data = fetch_daily_reports(start_date, end_date)
+        # Run in a worker thread — this is slow, sync code; calling it
+        # inline blocks the whole event loop (every other request hangs).
+        data = await asyncio.to_thread(fetch_daily_reports, start_date, end_date)
 
         return {"data": data, "source": "api"}
 
@@ -1316,7 +1318,7 @@ async def order_report(req: OrderReportRequest):
 
         # Fallback to API-based logic
         from order_report_logic import fetch_order_report
-        data = fetch_order_report(start_date, end_date)
+        data = await asyncio.to_thread(fetch_order_report, start_date, end_date)
 
         return {"data": data, "source": "api"}
 
@@ -1354,7 +1356,7 @@ async def get_bestsellers(days: int = 30):
 
         # Fallback to API-based logic
         from bestsellers_logic import fetch_bestsellers
-        data = fetch_bestsellers(days)
+        data = await asyncio.to_thread(fetch_bestsellers, days)
         return {"success": True, "data": data, "source": "api"}
     except ImportError as e:
         print(f"❌ Import error in get_bestsellers: {e}")
@@ -1457,6 +1459,11 @@ def create_jwt_token(user_data: dict) -> str:
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Optional[dict]:
     """Get current user from JWT token"""
     if not credentials:
+        # LOCAL DEV ONLY: skip auth entirely when ALLOW_DEV_LOGIN=1 (set in the
+        # local, gitignored .env — never on Render). Lets localhost testing work
+        # without Google SSO (the OAuth client doesn't allow localhost origins).
+        if os.getenv("ALLOW_DEV_LOGIN") == "1":
+            return {"email": "local@dev", "name": "Local Dev", "picture": "", "is_admin": True}
         return None
 
     try:

@@ -100,6 +100,15 @@ class DatabaseService:
             return None
 
         try:
+            # Same TZ handling as get_daily_kpis — the two tabs must agree on
+            # which orders belong to a given local day (was naive UTC here).
+            shop_tz_str = os.getenv("SHOP_TZ", "Asia/Nicosia")
+            shop_tz = pytz.timezone(shop_tz_str)
+            start_local = shop_tz.localize(datetime.combine(start_date, datetime.min.time()))
+            start_utc = start_local.astimezone(pytz.UTC).replace(tzinfo=None)
+            end_local = shop_tz.localize(datetime.combine(end_date + timedelta(days=1), datetime.min.time()))
+            end_utc = end_local.astimezone(pytz.UTC).replace(tzinfo=None)
+
             async with get_db() as db:
                 query = (
                     select(Order)
@@ -109,8 +118,8 @@ class DatabaseService:
                     )
                     .where(
                         and_(
-                            Order.created_at >= datetime.combine(start_date, datetime.min.time()),
-                            Order.created_at < datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+                            Order.created_at >= start_utc,
+                            Order.created_at < end_utc
                         )
                     )
                     .order_by(desc(Order.created_at))
@@ -121,6 +130,46 @@ class DatabaseService:
 
                 result = await db.execute(query)
                 orders = result.scalars().all()
+
+                # ── Per-order Shop Campaigns ad cost ─────────────────────────
+                # Exact per-day spend (ShopifyQL capture) split across that day's
+                # NEWLY-ACQUIRED Shop customers; returning-customer Shop orders
+                # cost $0 (Shop Campaigns bills per acquisition). Fallback: CAC.
+                shop_spend_map = None
+                shop_cac = None
+                try:
+                    import shop_campaign_cost
+                    shop_spend_map = shop_campaign_cost.daily_spend_map()
+                    try:
+                        shop_cac = shop_campaign_cost.current_cac()
+                    except Exception:
+                        shop_cac = None
+                except Exception as _e:
+                    print(f"⚠️ Shop Campaigns ShopifyQL unavailable (order report): {_e}")
+
+                def _local_day(o) -> str:
+                    dt_utc = pytz.UTC.localize(o.created_at) if o.created_at.tzinfo is None else o.created_at
+                    return dt_utc.astimezone(shop_tz).date().isoformat()
+
+                shop_new_by_day: Dict[str, int] = {}
+                for o in orders:
+                    if o.channel == 'shop' and not o.cancelled_at and not o.is_returning:
+                        d = _local_day(o)
+                        shop_new_by_day[d] = shop_new_by_day.get(d, 0) + 1
+
+                def _shop_ad_cost_for(o) -> float:
+                    if o.channel != 'shop' or o.cancelled_at:
+                        return 0.0
+                    if o.is_returning:
+                        return 0.0  # not billed by Shop Campaigns
+                    d = _local_day(o)
+                    day_spend = (shop_spend_map or {}).get(d)
+                    n_new = shop_new_by_day.get(d, 0)
+                    if day_spend and day_spend > 0 and n_new > 0:
+                        return round(day_spend / n_new, 2)
+                    return round(shop_cac, 2) if shop_cac else 0.0
+
+                _default_item_kg = float(os.getenv("DEFAULT_ITEM_WEIGHT_KG", "0.25") or 0.25)
 
                 orders_data = []
                 for order in orders:
@@ -140,23 +189,7 @@ class DatabaseService:
                     # PSP fee estimate for this order (2.9% + $0.30)
                     psp_fee = round(net * 0.029 + 0.30, 2) if net > 0 else 0
 
-                    # Shipping cost from matrix lookup (weight + country)
-                    try:
-                        from master_report_mirai import _lookup_matrix_shipping_usd, _canonical_geo
-                        weight_kg = (order.total_weight_g or 0) / 1000.0
-                        country_code = order.country_code or ""
-                        country_name = order.country or ""
-                        geo = _canonical_geo(country_name, country_code)
-                        shipping_cost = round(_lookup_matrix_shipping_usd(geo, weight_kg), 2)
-                    except Exception:
-                        # Fallback to 80% estimate if matrix lookup fails
-                        shipping_cost = round(shipping * 0.8, 2)
-
-                    # Profit = net + shipping - shipping_cost - cogs - psp_fee
-                    profit = net + shipping - shipping_cost - cogs - psp_fee
-                    margin_pct = (profit / (net + shipping)) * 100 if (net + shipping) > 0 else 0
-
-                    # Build line items
+                    # Build line items (needed before shipping for the weight fallback)
                     items = []
                     items_count = 0
                     for line_item in order.line_items:
@@ -181,13 +214,43 @@ class DatabaseService:
                             "total_cogs": round((_decimal_to_float(line_item.unit_cogs) or 0) * qty, 2)
                         })
 
+                    # Shipping cost from matrix lookup (weight + country).
+                    # Weight fallback: items × DEFAULT_ITEM_WEIGHT_KG when Shopify
+                    # totalWeight is 0 (else the matrix prices the lowest tier).
+                    # GEO-miss fallback: 80% of what the customer was charged.
+                    try:
+                        from master_report_mirai import _lookup_matrix_shipping_usd, _canonical_geo
+                        weight_kg = (order.total_weight_g or 0) / 1000.0
+                        if weight_kg <= 0 and items_count > 0:
+                            weight_kg = items_count * _default_item_kg
+                        geo = _canonical_geo(order.country or "", order.country_code or "")
+                        shipping_cost = round(_lookup_matrix_shipping_usd(geo, weight_kg), 2)
+                        if shipping_cost <= 0 and shipping > 0:
+                            shipping_cost = round(shipping * 0.8, 2)
+                    except Exception:
+                        # Fallback to 80% estimate if matrix lookup fails
+                        shipping_cost = round(shipping * 0.8, 2)
+
+                    # Per-order Shop Campaigns ad cost (0 for non-Shop/returning)
+                    shop_ad_cost = _shop_ad_cost_for(order)
+
+                    # Profit = net + shipping - shipping_cost - cogs - psp_fee - shop_ad_cost
+                    profit = net + shipping - shipping_cost - cogs - psp_fee - shop_ad_cost
+                    margin_pct = (profit / (net + shipping)) * 100 if (net + shipping) > 0 else 0
+
+                    # Display date/time in shop-local TZ (stored value is UTC)
+                    _created_local = None
+                    if order.created_at:
+                        _cu = pytz.UTC.localize(order.created_at) if order.created_at.tzinfo is None else order.created_at
+                        _created_local = _cu.astimezone(shop_tz)
+
                     orders_data.append({
                         "order_id": order.shopify_gid.split("/")[-1] if order.shopify_gid else "",
                         "order_name": order.order_name,
-                        "created_at": order.created_at.isoformat() if order.created_at else "",
-                        "date": order.created_at.strftime("%Y-%m-%d") if order.created_at else "",
-                        "time": order.created_at.strftime("%H:%M") if order.created_at else "",
-                        "hour": order.created_at.hour if order.created_at else 0,
+                        "created_at": _created_local.isoformat() if _created_local else "",
+                        "date": _created_local.strftime("%Y-%m-%d") if _created_local else "",
+                        "time": _created_local.strftime("%H:%M") if _created_local else "",
+                        "hour": _created_local.hour if _created_local else 0,
                         "customer_name": customer_name,
                         "customer_email": customer_email,
                         "is_returning": order.is_returning or False,
@@ -203,6 +266,7 @@ class DatabaseService:
                         "shipping_cost": shipping_cost,
                         "cogs": cogs,
                         "psp_fee": psp_fee,
+                        "shop_ad_cost": shop_ad_cost,
                         "profit": round(profit, 2),
                         "margin_pct": round(margin_pct, 1),
                         "items_count": items_count,
@@ -328,6 +392,7 @@ class DatabaseService:
                         func.sum(case((Order.channel == 'google', 1), else_=0)).label('google_pur'),
                         func.sum(case((Order.channel == 'meta', 1), else_=0)).label('meta_pur'),
                         func.sum(case((Order.channel == 'shop', 1), else_=0)).label('shop_pur'),
+                        func.sum(case((and_(Order.channel == 'shop', Order.is_returning == False), 1), else_=0)).label('shop_new_pur'),
                         func.sum(case((Order.channel == 'shop', Order.gross), else_=0)).label('shop_gross'),
                     )
                     .where(
@@ -349,11 +414,17 @@ class DatabaseService:
                 #                    shop_campaign_insights (primary)
                 #   shop_rate      : billed-emails effective rate fallback
                 shop_spend_map = None
+                shop_cac = None
                 try:
                     import shop_campaign_cost
                     shop_spend_map = shop_campaign_cost.daily_spend_map()  # {day_iso: usd} or None
+                    try:
+                        shop_cac = shop_campaign_cost.current_cac()
+                    except Exception:
+                        shop_cac = None
                 except Exception as _e:
                     print(f"⚠️ Shop Campaigns ShopifyQL unavailable: {_e}")
+                today_local_iso = datetime.now(shop_tz).date().isoformat()
 
                 shop_rate = None
                 if shop_spend_map is None:
@@ -389,6 +460,7 @@ class DatabaseService:
                     google_pur = row.google_pur or 0
                     meta_pur = row.meta_pur or 0
                     shop_pur = row.shop_pur or 0
+                    shop_new_pur = row.shop_new_pur or 0
                     shop_gross = _decimal_to_float(row.shop_gross) or 0
                     returning_customers = row.returning_customers or 0
 
@@ -407,6 +479,13 @@ class DatabaseService:
                         except Exception:
                             _shop_per_order, _shop_pct = 0.0, 0.0
                         shop_spend = round(shop_pur * _shop_per_order + shop_gross * _shop_pct, 2)
+
+                    # shop_campaign_insights lags by hours: for TODAY, a 0 with Shop
+                    # orders present means "not reported yet", not free. Shop Campaigns
+                    # bills per NEWLY-ACQUIRED customer → estimate new orders × CAC.
+                    if (shop_spend <= 0 and _day_key == today_local_iso
+                            and shop_pur > 0 and shop_cac and shop_new_pur > 0):
+                        shop_spend = round(shop_new_pur * shop_cac, 2)
 
                     # Calculate metrics matching original formula from master_report_mirai.py
                     aov = gross / orders_count if orders_count > 0 else 0
@@ -455,7 +534,7 @@ class DatabaseService:
                         "total_spend": 0,
                         "operational": round(operational, 2),
                         "margin": round(operational, 2),  # Will be recalculated with ad spend
-                        "margin_pct": round((operational / revenue_base) if revenue_base > 0 else 0, 2),
+                        "margin_pct": round((operational / revenue_base) if revenue_base > 0 else 0, 4),
                         "revenue_base": round(revenue_base, 2),
                         "aov": round(aov, 2),
                         "returning_customers": returning_customers,
@@ -463,6 +542,7 @@ class DatabaseService:
                         "google_pur": google_pur,
                         "meta_pur": meta_pur,
                         "shop_pur": shop_pur,
+                        "shop_new_pur": shop_new_pur,
                         "shop_spend": shop_spend,
                         "google_cpa": None,  # Will be calculated after ad spend
                         "meta_cpa": None,
@@ -518,10 +598,13 @@ class DatabaseService:
                         kpi["meta_spend"] = round(meta_spend, 2)
                         kpi["total_spend"] = round(total_spend, 2)
 
-                        # Use real PSP fees from database if available, otherwise keep estimate
+                        # Use real PSP fees from database if available, otherwise keep estimate.
+                        # Shopify Payments balance-transaction fees are in EUR (payout
+                        # currency) — convert like the live report does (FX_EUR_TO_USD).
                         real_psp = psp_lookup.get(kpi["date"])
                         if real_psp is not None:
-                            kpi["psp_usd"] = round(real_psp, 2)
+                            _fx_eur = float(os.getenv("FX_EUR_TO_USD", "1.17") or 1.17)
+                            kpi["psp_usd"] = round(real_psp * _fx_eur, 2)
 
                         # Recalculate operational profit with real PSP fees
                         # operational = (net + shipping_charged) - shipping_cost - cogs - psp
@@ -536,7 +619,8 @@ class DatabaseService:
                         kpi["margin"] = round(kpi["operational"] - total_spend, 2)
 
                         # margin_pct = margin / revenue_base (as decimal 0.xx, not percentage)
-                        kpi["margin_pct"] = round(kpi["margin"] / revenue_base, 2) if revenue_base > 0 else 0
+                        # 4 decimals: rounding the FRACTION to 2 made the UI 1%-granular
+                        kpi["margin_pct"] = round(kpi["margin"] / revenue_base, 4) if revenue_base > 0 else 0
 
                         # Calculate CPAs (like Shopify attribution)
                         if kpi["orders"] > 0 and total_spend > 0:

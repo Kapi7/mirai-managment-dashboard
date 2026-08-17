@@ -215,14 +215,23 @@ class SyncOrders(BaseSyncJob):
                         first_visit = (customer_journey.get("lastVisit") or {}) or (customer_journey.get("firstVisit") or {})
                         utm_params = first_visit.get("utmParameters") or {}
 
-                        # Calculate shipping cost from matrix lookup
+                        # Calculate shipping cost from matrix lookup.
+                        # Weight fallback: items × DEFAULT_ITEM_WEIGHT_KG when Shopify
+                        # totalWeight is 0 (else the matrix prices the lowest tier).
+                        # GEO-miss fallback: 80% of what the customer was charged.
                         try:
                             from master_report_mirai import _lookup_matrix_shipping_usd, _canonical_geo
                             weight_kg = int(order_data.get("totalWeight") or 0) / 1000.0
+                            if weight_kg <= 0:
+                                _qty_total = sum(int(n.get("quantity") or 0) for n in line_items)
+                                _item_kg = float(os.getenv("DEFAULT_ITEM_WEIGHT_KG", "0.25") or 0.25)
+                                weight_kg = _qty_total * _item_kg
                             country_code = shipping.get("countryCodeV2") or ""
                             country_name = shipping.get("country") or ""
                             geo = _canonical_geo(country_name, country_code)
                             calculated_shipping_cost = round(_lookup_matrix_shipping_usd(geo, weight_kg), 2)
+                            if calculated_shipping_cost <= 0 and shipping_charged > 0:
+                                calculated_shipping_cost = round(shipping_charged * 0.8, 2)
                         except Exception:
                             # Fallback to 80% of charged if matrix lookup fails
                             calculated_shipping_cost = round(shipping_charged * 0.8, 2)
@@ -349,15 +358,19 @@ class SyncOrders(BaseSyncJob):
                         )
                         existing = result.scalar_one_or_none()
 
+                        # NOTE: Shopify Payments balance-transaction fees arrive in
+                        # EUR (payout currency); store them honestly as EUR — the
+                        # report layer converts with FX_EUR_TO_USD when reading.
                         if existing:
                             existing.fee_amount = fee_amount
+                            existing.currency = 'EUR'
                             existing.created_at = datetime.utcnow()
                         else:
                             psp_record = DailyPspFee(
                                 date=fee_date,
                                 store_id=self.store_id,
                                 fee_amount=fee_amount,
-                                currency='USD'
+                                currency='EUR'
                             )
                             db.add(psp_record)
                     except Exception as e:

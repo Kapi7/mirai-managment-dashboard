@@ -123,6 +123,40 @@ def fetch_order_report(start_date: date, end_date: date) -> Dict[str, Any]:
 
     print(f"📦 Found {len(unique_orders)} orders")
 
+    # ── Per-order cost model (matches database/service.py get_orders) ──────
+    from master_report_mirai import _lookup_matrix_shipping_usd, _order_geo, _order_weight_kg
+
+    # Shop Campaigns: exact per-day spend split across that day's NEW-customer
+    # Shop orders (returning customers are not billed); CAC as fallback.
+    shop_spend_map = None
+    shop_cac = None
+    try:
+        import shop_campaign_cost
+        shop_spend_map = shop_campaign_cost.daily_spend_map()
+        try:
+            shop_cac = shop_campaign_cost.current_cac()
+        except Exception:
+            shop_cac = None
+    except Exception as _e:
+        print(f"⚠️ Shop Campaigns ShopifyQL unavailable (order report): {_e}")
+
+    shop_new_by_day: Dict[str, int] = {}
+    for o in unique_orders:
+        if o.get("cancelledAt") or _shopify_channel(o) != "shop":
+            continue
+        cust = o.get("customer") or {}
+        try:
+            if int(cust.get("numberOfOrders") or 0) > 1:
+                continue
+        except Exception:
+            pass
+        dt = _parse_dt(o.get("createdAt"))
+        if dt:
+            if dt.tzinfo is None:
+                dt = pytz.UTC.localize(dt)
+            d = dt.astimezone(tz).date().isoformat()
+            shop_new_by_day[d] = shop_new_by_day.get(d, 0) + 1
+
     # Process orders
     orders_data = []
 
@@ -133,6 +167,7 @@ def fetch_order_report(start_date: date, end_date: date) -> Dict[str, Any]:
     total_net = 0.0
     total_cogs = 0.0
     total_shipping = 0.0
+    total_profit = 0.0
     channel_counts = {"google": 0, "meta": 0, "shop": 0, "organic": 0}
     country_counts = {}
     hourly_counts = {h: 0 for h in range(24)}
@@ -206,7 +241,28 @@ def fetch_order_report(start_date: date, end_date: date) -> Dict[str, Any]:
             )
 
             net = gross - discounts - refunds
-            profit = net + shipping - cogs
+
+            # Est. shipping cost: matrix lookup with weight fallback; a GEO
+            # miss falls back to 80% of what the customer was charged.
+            shipping_cost = round(_lookup_matrix_shipping_usd(_order_geo(order), _order_weight_kg(order)), 2)
+            if shipping_cost <= 0 and shipping > 0:
+                shipping_cost = round(shipping * 0.8, 2)
+
+            # PSP estimate (2.9% + $0.30), same as the DB path
+            psp_fee = round(net * 0.029 + 0.30, 2) if net > 0 else 0.0
+
+            # Per-order Shop Campaigns ad cost
+            shop_ad_cost = 0.0
+            if channel == "shop" and not is_cancelled and not is_returning:
+                _d = created_local.date().isoformat()
+                _day_spend = (shop_spend_map or {}).get(_d)
+                _n_new = shop_new_by_day.get(_d, 0)
+                if _day_spend and _day_spend > 0 and _n_new > 0:
+                    shop_ad_cost = round(_day_spend / _n_new, 2)
+                elif shop_cac:
+                    shop_ad_cost = round(shop_cac, 2)
+
+            profit = net + shipping - shipping_cost - cogs - psp_fee - shop_ad_cost
             margin_pct = (profit / (net + shipping)) * 100 if (net + shipping) > 0 else 0
 
             # Extract order number
@@ -235,7 +291,10 @@ def fetch_order_report(start_date: date, end_date: date) -> Dict[str, Any]:
                 "refunds": round(refunds, 2),
                 "net": round(net, 2),
                 "shipping": round(shipping, 2),
+                "shipping_cost": shipping_cost,
                 "cogs": round(cogs, 2),
+                "psp_fee": psp_fee,
+                "shop_ad_cost": shop_ad_cost,
                 "profit": round(profit, 2),
                 "margin_pct": round(margin_pct, 1),
                 "items_count": len(items),
@@ -253,6 +312,7 @@ def fetch_order_report(start_date: date, end_date: date) -> Dict[str, Any]:
                 total_net += net
                 total_cogs += cogs
                 total_shipping += shipping
+                total_profit += profit
                 channel_counts[channel] = channel_counts.get(channel, 0) + 1
                 country_counts[country] = country_counts.get(country, 0) + 1
                 hourly_counts[created_local.hour] += 1
@@ -266,7 +326,7 @@ def fetch_order_report(start_date: date, end_date: date) -> Dict[str, Any]:
 
     # Build analytics summary
     total_orders = len([o for o in orders_data if not o["is_cancelled"]])
-    total_profit = total_net + total_shipping - total_cogs
+    # total_profit accumulated per order (incl. ship cost, PSP, Shop ad cost)
     avg_order_value = total_gross / total_orders if total_orders > 0 else 0
     avg_margin = (total_profit / (total_net + total_shipping)) * 100 if (total_net + total_shipping) > 0 else 0
 

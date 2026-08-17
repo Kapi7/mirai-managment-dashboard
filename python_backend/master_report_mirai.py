@@ -175,6 +175,20 @@ def _order_weight_kg_from_totalWeight(order: dict) -> float:
         return 0.0
     return max(0.0, tw_g / 1000.0)
 
+# When Shopify totalWeight is missing/0 (products without configured weights),
+# estimate from item count so the matrix doesn't silently price the lowest tier.
+_DEFAULT_ITEM_WEIGHT_KG = float(os.getenv("DEFAULT_ITEM_WEIGHT_KG", "0.25") or 0.25)
+
+def _order_weight_kg(order: dict) -> float:
+    wkg = _order_weight_kg_from_totalWeight(order)
+    if wkg > 0:
+        return wkg
+    try:
+        qty = sum(int(li.get("quantity") or 0) for li in _line_nodes(order))
+    except Exception:
+        qty = 0
+    return qty * _DEFAULT_ITEM_WEIGHT_KG if qty > 0 else 0.0
+
 def _lookup_matrix_shipping_usd(geo: str, weight_kg: float) -> float:
     if not _SHIP_MATRIX:
         _load_shipping_matrix_geo_weight()
@@ -381,12 +395,29 @@ def _shop_effective_rate(tz_name: str) -> Optional[float]:
 
 
 def _shop_spend_usd(shop_orders: int, shop_gross: float,
-                    tz_name: Optional[str] = None, day_iso: Optional[str] = None) -> float:
+                    tz_name: Optional[str] = None, day_iso: Optional[str] = None,
+                    shop_new_orders: int = 0) -> float:
     # 1) EXACT per-day spend from Shopify ShopifyQL shop_campaign_insights
+    exact = None
     if day_iso:
         try:
             import shop_campaign_cost
             exact = shop_campaign_cost.spend_for_day(day_iso)
+            if exact is not None and exact > 0:
+                return round(exact, 2)
+            # shop_campaign_insights lags by hours: for TODAY, a 0/None with Shop
+            # orders present means "not reported yet", not "free". Estimate from
+            # newly-acquired customers × latest CAC (returning customers are not
+            # billed by Shop Campaigns). Past days trust the exact value.
+            if shop_orders > 0 and tz_name:
+                try:
+                    today_iso = datetime.now(pytz.timezone(tz_name)).date().isoformat()
+                except Exception:
+                    today_iso = None
+                if day_iso == today_iso:
+                    cac = shop_campaign_cost.current_cac()
+                    if cac and shop_new_orders > 0:
+                        return round(shop_new_orders * cac, 2)
             if exact is not None:
                 return round(exact, 2)
         except Exception as e:
@@ -586,6 +617,7 @@ def _kpis_from_orders(
     g_orders_created = 0
     m_orders_created = 0
     s_orders_created = 0
+    s_new_orders = 0
     shop_gross = 0.0
 
     for o in in_window:
@@ -620,6 +652,8 @@ def _kpis_from_orders(
         try:
             if int(cust.get("numberOfOrders") or 0) > 1 and cid:
                 returning_customers.add(cid)
+            elif ch == "shop":
+                s_new_orders += 1
         except Exception:
             pass
 
@@ -635,8 +669,13 @@ def _kpis_from_orders(
             shop_gross += order_gross
 
         geo = _order_geo(o)
-        wkg = _order_weight_kg_from_totalWeight(o)
-        matrix_shipping_total += _lookup_matrix_shipping_usd(geo, wkg)
+        wkg = _order_weight_kg(o)
+        est_ship = _lookup_matrix_shipping_usd(geo, wkg)
+        if est_ship <= 0 and sc > 0:
+            # Matrix miss (unknown GEO / no tier): $0 would read as free shipping
+            # and inflate profit — assume cost ≈ 80% of what the customer paid.
+            est_ship = sc * 0.8
+        matrix_shipping_total += est_ship
 
     net = gross - discounts - refunds
 
@@ -665,7 +704,8 @@ def _kpis_from_orders(
 
     g_cpa = round(g_spend / g_orders_created, 2) if g_orders_created > 0 else None
 
-    s_spend = _shop_spend_usd(s_orders_created, shop_gross, tz_name, day_iso)
+    s_spend = _shop_spend_usd(s_orders_created, shop_gross, tz_name, day_iso,
+                              shop_new_orders=s_new_orders)
     s_cpa = round(s_spend / s_orders_created, 2) if s_orders_created > 0 else None
 
     psp_eur = get_psp_fees_daily(start_local.date(), end_local.date()).get(start_local.date(), 0.0)
@@ -697,7 +737,7 @@ def _kpis_from_orders(
         total_spend=round(total_spend, 2),
         operational=round(operational, 2),
         margin=round(margin, 2),
-        margin_pct=None if margin_pct is None else round(margin_pct, 2),
+        margin_pct=None if margin_pct is None else round(margin_pct, 4),
         orders=orders_created,
         aov=round(aov, 2),
         returning_count=len(returning_customers),
@@ -803,7 +843,7 @@ def compute_mtd_kpis(anchor_day: date, tz_name: str) -> KPIs:
         total_spend=round(total_total_spend, 2),
         operational=round(total_op, 2),
         margin=round(total_margin, 2),
-        margin_pct=None if margin_pct is None else round(margin_pct, 2),
+        margin_pct=None if margin_pct is None else round(margin_pct, 4),
         orders=int(total_orders),
         aov=round(aov, 2),
         returning_count=int(total_returning),

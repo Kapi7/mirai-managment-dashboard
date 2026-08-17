@@ -21,7 +21,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 OUTPUTS_DIR = BASE_DIR / "outputs"
 CUSTOMER_ID = "8138907450"          # Mirai Skin live account
-API = "v21"
+API = "v24"          # bump when Google deprecates; see _search_once errors
 
 
 def creds() -> dict:
@@ -40,15 +40,28 @@ def access_token(c: dict) -> str:
     return r["access_token"]
 
 
+FATAL_ERRORS = ("UNSUPPORTED_VERSION", "AUTHENTICATION_ERROR",
+                "AUTHORIZATION_ERROR", "DEVELOPER_TOKEN")
+
+
 def search(c: dict, token: str, query: str, tries: int = 4) -> list:
+    """Retry transient throttling, but surface real errors immediately —
+    retrying a deprecated-version error just hides it (cost us a stale
+    ads feed for several days)."""
     import time as _t
     for attempt in range(tries):
         try:
             return _search_once(c, token, query)
         except urllib.error.HTTPError as e:
-            # 400s here are usually transient throttling on searchStream
-            if attempt == tries - 1:
-                raise
+            body = e.read().decode(errors="replace")
+            if any(k in body for k in FATAL_ERRORS) or attempt == tries - 1:
+                msg = ""
+                try:
+                    j = json.loads(body)
+                    msg = j[0]["error"]["details"][0]["errors"][0]["message"]
+                except Exception:
+                    msg = body[:200]
+                raise RuntimeError(f"Google Ads API: {msg}") from None
             _t.sleep(2 ** attempt)
     return []
 

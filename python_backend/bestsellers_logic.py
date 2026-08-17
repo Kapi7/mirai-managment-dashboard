@@ -69,12 +69,18 @@ def fetch_bestsellers(days: int = 30) -> Dict[str, Any]:
     for store in SHOPIFY_STORES:
         domain = store["domain"]
         token = store["access_token"]
-        orders = fetch_orders_created_between_for_store(
-            domain, token,
-            start_local.isoformat(),
-            end_local.isoformat(),
-            exclude_cancelled=True  # Exclude cancelled orders
-        )
+        try:
+            orders = fetch_orders_created_between_for_store(
+                domain, token,
+                start_local.isoformat(),
+                end_local.isoformat(),
+                exclude_cancelled=True  # Exclude cancelled orders
+            )
+        except Exception as e:
+            # Skip dead/unreachable stores (e.g. the retired Cosmetics store
+            # 404s on Admin API) instead of failing the whole report.
+            print(f"⚠️ Skipping store '{domain}' for bestsellers: {e}")
+            continue
         for o in orders:
             o["_store"] = domain
         all_orders.extend(orders)
