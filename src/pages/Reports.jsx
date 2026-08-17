@@ -1,20 +1,84 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Input } from '@/components/ui/input';
-import { CalendarIcon, TrendingUp, TrendingDown, DollarSign, ShoppingCart, Target, Percent, Package, Users, Globe, Clock, ArrowUpDown, Star, RefreshCw, ChevronDown, ChevronRight } from 'lucide-react';
+import {
+  CalendarIcon, TrendingUp, Package, Globe, Clock, Star, RefreshCw,
+  ChevronDown, ChevronRight, ArrowUpDown,
+} from 'lucide-react';
 import { format, subDays, startOfMonth, endOfMonth, subMonths, startOfDay, endOfDay } from 'date-fns';
 import { cn } from '@/lib/utils';
 
 // Use same-origin API to avoid CORS issues
 const REPORT_API_URL = import.meta.env.VITE_REPORT_API_URL ||
   (import.meta.env.DEV ? 'http://localhost:8080' : '/reports-api');
+
+/* ── helpers ──────────────────────────────────────────────────────────── */
+
+const fmtUSD = (v) =>
+  new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 }).format(v || 0);
+
+const fmtUSD0 = (v) =>
+  new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v || 0);
+
+const fmtPct = (v, digits = 1) => `${((v || 0) * 100).toFixed(digits)}%`;
+
+const useIsMobile = () => {
+  const [mob, setMob] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1024);
+  useEffect(() => {
+    const onR = () => setMob(window.innerWidth < 1024);
+    window.addEventListener('resize', onR);
+    return () => window.removeEventListener('resize', onR);
+  }, []);
+  return mob;
+};
+
+const marginBadge = (frac) => {
+  const cls = (frac || 0) >= 0.2 ? 'good' : (frac || 0) >= 0.08 ? 'ok' : 'bad';
+  return <span className={`m-badge ${cls}`}>{fmtPct(frac)}</span>;
+};
+
+const pnl = (v) => (
+  <span className={(v || 0) >= 0 ? 'm-pos' : 'm-neg'}>{fmtUSD(v)}</span>
+);
+
+/* tiny per-day bar sparkline for KPI cards */
+const Spark = ({ series, color, signed = false }) => {
+  if (!series || series.length < 2) return <div className="m-spark" />;
+  const mx = Math.max(...series.map((v) => Math.abs(v || 0)), 1);
+  return (
+    <div className="m-spark">
+      {series.map((v, i) => (
+        <i
+          key={i}
+          style={{
+            height: `${Math.max(8, (Math.abs(v || 0) / mx) * 100)}%`,
+            background: signed ? ((v || 0) >= 0 ? 'rgba(52,211,153,.75)' : 'rgba(248,113,113,.75)') : color,
+          }}
+        />
+      ))}
+    </div>
+  );
+};
+
+const channelChip = (channel) => {
+  const map = {
+    google: 'bg-blue-100 text-blue-800',
+    meta: 'bg-indigo-100 text-indigo-700',
+    shop: 'bg-purple-100 text-purple-800',
+    klaviyo: 'bg-amber-100 text-amber-700',
+    organic: 'bg-teal-100 text-teal-700',
+  };
+  return (
+    <span className={`inline-block px-2 py-0.5 rounded-md text-[0.68rem] font-bold capitalize ${map[channel] || 'bg-slate-100 text-slate-600'}`}>
+      {channel || '—'}
+    </span>
+  );
+};
+
+/* ── page ─────────────────────────────────────────────────────────────── */
 
 export default function Reports() {
   const [activeTab, setActiveTab] = useState('daily');
@@ -25,24 +89,19 @@ export default function Reports() {
   const [orderSearch, setOrderSearch] = useState('');
   const [bestsellersData, setBestsellersData] = useState(null);
   const [bestsellersDay, setBestsellersDay] = useState(30); // 7, 30, or 60
-  const [dateRange, setDateRange] = useState({
-    from: subDays(new Date(), 7),
-    to: new Date()
-  });
+  const [dateRange, setDateRange] = useState({ from: subDays(new Date(), 7), to: new Date() });
   const [expandedOrders, setExpandedOrders] = useState({});
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [dailySort, setDailySort] = useState({ key: 'date', dir: -1 });
+  const [preset, setPreset] = useState('7d');
+  const isMobile = useIsMobile();
 
-  // Cache key for localStorage
-  const getCacheKey = () => {
-    return `reports_${format(dateRange.from, 'yyyy-MM-dd')}_${format(dateRange.to, 'yyyy-MM-dd')}`;
-  };
+  const getCacheKey = () =>
+    `reports_${format(dateRange.from, 'yyyy-MM-dd')}_${format(dateRange.to, 'yyyy-MM-dd')}`;
 
-  // Load data when date range or tab changes
   useEffect(() => {
     if (activeTab === 'daily') {
-      const cacheKey = getCacheKey();
-      const cached = localStorage.getItem(cacheKey);
-
+      const cached = localStorage.getItem(getCacheKey());
       if (cached) {
         try {
           const { data, timestamp } = JSON.parse(cached);
@@ -60,47 +119,31 @@ export default function Reports() {
     }
   }, [dateRange, activeTab]);
 
-  // Refetch bestsellers when period changes
   useEffect(() => {
-    if (activeTab === 'bestsellers') {
-      fetchBestsellers();
-    }
+    if (activeTab === 'bestsellers') fetchBestsellers();
   }, [bestsellersDay]);
 
   const fetchReportData = async () => {
     setLoading(true);
     setError(null);
-
     try {
       const response = await fetch(`${REPORT_API_URL}/daily-report`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           start_date: format(dateRange.from, 'yyyy-MM-dd'),
-          end_date: format(dateRange.to, 'yyyy-MM-dd')
+          end_date: format(dateRange.to, 'yyyy-MM-dd'),
         }),
-        mode: 'cors'
+        mode: 'cors',
       });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const result = await response.json();
       const data = result.data || [];
       setReportData(data);
-
-      // Cache the result
-      const cacheKey = getCacheKey();
-      localStorage.setItem(cacheKey, JSON.stringify({
-        data,
-        timestamp: Date.now()
-      }));
+      localStorage.setItem(getCacheKey(), JSON.stringify({ data, timestamp: Date.now() }));
     } catch (err) {
       console.error('Failed to fetch report data:', err);
-      setError(`Unable to connect to reporting API: ${err.message}. Please check that mirai-reports.onrender.com is deployed and has CORS enabled.`);
+      setError(`Unable to reach the reporting API: ${err.message}`);
     } finally {
       setLoading(false);
     }
@@ -109,21 +152,16 @@ export default function Reports() {
   const fetchOrderData = async () => {
     setLoading(true);
     setError(null);
-
     try {
       const response = await fetch(`${REPORT_API_URL}/order-report`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           start_date: format(dateRange.from, 'yyyy-MM-dd'),
-          end_date: format(dateRange.to, 'yyyy-MM-dd')
-        })
+          end_date: format(dateRange.to, 'yyyy-MM-dd'),
+        }),
       });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const result = await response.json();
       setOrderData(result.data || { orders: [], analytics: null });
     } catch (err) {
@@ -137,14 +175,9 @@ export default function Reports() {
   const fetchBestsellers = async () => {
     setLoading(true);
     setError(null);
-
     try {
       const response = await fetch(`${REPORT_API_URL}/bestsellers/${bestsellersDay}`);
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const result = await response.json();
       setBestsellersData(result.data || null);
     } catch (err) {
@@ -155,12 +188,9 @@ export default function Reports() {
     }
   };
 
-  // Force refresh - clears cache and refetches
   const handleRefreshDaily = async () => {
     setIsRefreshing(true);
-    // Clear cache for this date range
-    const cacheKey = getCacheKey();
-    localStorage.removeItem(cacheKey);
+    localStorage.removeItem(getCacheKey());
     await fetchReportData();
     setIsRefreshing(false);
   };
@@ -171,872 +201,795 @@ export default function Reports() {
     setIsRefreshing(false);
   };
 
-  // Toggle order expansion to show line items
-  const toggleOrderExpansion = (orderId) => {
-    setExpandedOrders(prev => ({
-      ...prev,
-      [orderId]: !prev[orderId]
-    }));
-  };
+  const toggleOrderExpansion = (orderId) =>
+    setExpandedOrders((prev) => ({ ...prev, [orderId]: !prev[orderId] }));
 
-  // Filter orders by search
   const filteredOrders = useMemo(() => {
     if (!orderSearch.trim()) return orderData.orders || [];
     const search = orderSearch.toLowerCase();
-    return (orderData.orders || []).filter(o =>
-      o.order_name?.toLowerCase().includes(search) ||
-      o.customer_name?.toLowerCase().includes(search) ||
-      o.customer_email?.toLowerCase().includes(search) ||
-      o.country?.toLowerCase().includes(search)
+    return (orderData.orders || []).filter(
+      (o) =>
+        o.order_name?.toLowerCase().includes(search) ||
+        o.customer_name?.toLowerCase().includes(search) ||
+        o.customer_email?.toLowerCase().includes(search) ||
+        o.country?.toLowerCase().includes(search)
     );
   }, [orderData.orders, orderSearch]);
 
-  // Calculate summary metrics (memoized to avoid recalculation on every render)
+  /* summary: profit uses ?? (a legit $0 margin must not fall through),
+     margin is REVENUE-WEIGHTED, ad spend carries the G/M/Shop split */
   const summary = useMemo(() => {
-    return reportData.reduce((acc, day) => ({
-      totalOrders: acc.totalOrders + (day.orders || 0),
-      totalGross: acc.totalGross + (day.gross || 0),
-      totalNet: acc.totalNet + (day.net || 0),
-      totalSpend: acc.totalSpend + (day.total_spend || 0),
-      totalProfit: acc.totalProfit + (day.margin || day.operational || 0),
-      totalPsp: acc.totalPsp + (day.psp_usd || 0),
-    }), { totalOrders: 0, totalGross: 0, totalNet: 0, totalSpend: 0, totalProfit: 0, totalPsp: 0 });
+    const s = reportData.reduce(
+      (acc, day) => {
+        const profit = day.margin ?? day.operational ?? 0;
+        const revBase = day.revenue_base ?? ((day.net || 0) + (day.shipping_charged || 0));
+        return {
+          totalOrders: acc.totalOrders + (day.orders || 0),
+          totalGross: acc.totalGross + (day.gross || 0),
+          totalNet: acc.totalNet + (day.net || 0),
+          totalSpend: acc.totalSpend + (day.total_spend || 0),
+          totalGoogle: acc.totalGoogle + (day.google_spend || 0),
+          totalMeta: acc.totalMeta + (day.meta_spend || 0),
+          totalShop: acc.totalShop + (day.shop_spend || 0),
+          totalProfit: acc.totalProfit + profit,
+          totalRevBase: acc.totalRevBase + revBase,
+        };
+      },
+      { totalOrders: 0, totalGross: 0, totalNet: 0, totalSpend: 0, totalGoogle: 0, totalMeta: 0, totalShop: 0, totalProfit: 0, totalRevBase: 0 }
+    );
+    s.weightedMargin = s.totalRevBase > 0 ? s.totalProfit / s.totalRevBase : 0;
+    s.avgAOV = s.totalOrders > 0 ? s.totalNet / s.totalOrders : 0;
+    return s;
   }, [reportData]);
 
-  const avgMargin = useMemo(() => {
-    return reportData.length > 0
-      ? reportData.reduce((sum, day) => sum + (day.margin_pct || 0), 0) / reportData.length
-      : 0;
+  /* chronological series for the KPI sparklines */
+  const series = useMemo(() => {
+    const asc = [...reportData].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    return {
+      orders: asc.map((d) => d.orders || 0),
+      net: asc.map((d) => d.net || 0),
+      spend: asc.map((d) => d.total_spend || 0),
+      profit: asc.map((d) => d.margin ?? d.operational ?? 0),
+    };
   }, [reportData]);
 
-  const avgAOV = useMemo(() => {
-    return summary.totalOrders > 0 ? summary.totalNet / summary.totalOrders : 0;
-  }, [summary]);
+  const sortedDaily = useMemo(() => {
+    const rows = [...reportData];
+    const { key, dir } = dailySort;
+    rows.sort((a, b) => {
+      const av = key === 'date' ? a.date || '' : a[key] ?? -Infinity;
+      const bv = key === 'date' ? b.date || '' : b[key] ?? -Infinity;
+      if (av < bv) return -dir;
+      if (av > bv) return dir;
+      return 0;
+    });
+    return rows;
+  }, [reportData, dailySort]);
 
-  const formatCurrency = (value) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2
-    }).format(value || 0);
+  const sortDaily = (key) =>
+    setDailySort((s) => ({ key, dir: s.key === key ? -s.dir : -1 }));
+
+  const applyPreset = (id, range) => {
+    setPreset(id);
+    setDateRange(range);
   };
 
-  const formatPercent = (value) => {
-    return `${((value || 0) * 100).toFixed(2)}%`;
-  };
+  const presets = [
+    { id: 'today', label: 'Today', range: () => ({ from: startOfDay(new Date()), to: endOfDay(new Date()) }) },
+    { id: 'yday', label: 'Yesterday', range: () => ({ from: startOfDay(subDays(new Date(), 1)), to: endOfDay(subDays(new Date(), 1)) }) },
+    { id: '3d', label: '3D', range: () => ({ from: subDays(new Date(), 3), to: new Date() }) },
+    { id: '7d', label: '7D', range: () => ({ from: subDays(new Date(), 7), to: new Date() }) },
+    { id: '30d', label: '30D', range: () => ({ from: subDays(new Date(), 30), to: new Date() }) },
+    { id: 'month', label: 'This Month', range: () => ({ from: startOfMonth(new Date()), to: endOfMonth(new Date()) }) },
+    { id: 'lastm', label: 'Last Month', range: () => ({ from: startOfMonth(subMonths(new Date(), 1)), to: endOfMonth(subMonths(new Date(), 1)) }) },
+  ];
 
+  const spendTooltip = `Google ${fmtUSD(summary.totalGoogle)} · Meta ${fmtUSD(summary.totalMeta)} · Shop ${fmtUSD(summary.totalShop)}`;
+
+  /* ── KPI cards ──────────────────────────────────────────────────────── */
+  const kpiCards = (
+    <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
+      <div className="m-glow-card m-kpi" style={{ '--kpi-c1': '#6366f1', '--kpi-c2': '#a5b4fc', '--kpi-glow': 'rgba(99,102,241,.10)' }}>
+        <div className="k-label">Total Orders</div>
+        <div className="k-value">{summary.totalOrders}</div>
+        <div className="k-sub">AOV <b>{fmtUSD(summary.avgAOV)}</b></div>
+        <Spark series={series.orders} color="rgba(129,140,248,.7)" />
+      </div>
+
+      <div className="m-glow-card m-kpi" style={{ '--kpi-c1': '#22d3ee', '--kpi-c2': '#67e8f9', '--kpi-glow': 'rgba(34,211,238,.09)' }}>
+        <div className="k-label">Revenue (Net)</div>
+        <div className="k-value m-rev">{fmtUSD0(summary.totalNet)}</div>
+        <div className="k-sub">Gross <b>{fmtUSD0(summary.totalGross)}</b></div>
+        <Spark series={series.net} color="rgba(34,211,238,.65)" />
+      </div>
+
+      <div className="m-glow-card m-kpi" style={{ '--kpi-c1': '#f59e0b', '--kpi-c2': '#fbbf24', '--kpi-glow': 'rgba(245,158,11,.10)' }} title={spendTooltip}>
+        <div className="k-label">Ad Spend</div>
+        <div className="k-value m-gold">{fmtUSD0(summary.totalSpend)}</div>
+        <div className="k-sub">
+          G <b>{fmtUSD0(summary.totalGoogle)}</b> · M <b>{fmtUSD0(summary.totalMeta)}</b> · Shop <b>{fmtUSD0(summary.totalShop)}</b>
+        </div>
+        <Spark series={series.spend} color="rgba(251,191,36,.65)" />
+      </div>
+
+      <div
+        className="m-glow-card m-kpi"
+        style={
+          summary.totalProfit >= 0
+            ? { '--kpi-c1': '#10b981', '--kpi-c2': '#34d399', '--kpi-glow': 'rgba(16,185,129,.10)' }
+            : { '--kpi-c1': '#ef4444', '--kpi-c2': '#f87171', '--kpi-glow': 'rgba(239,68,68,.10)' }
+        }
+      >
+        <div className="k-label">Net Profit</div>
+        <div className={`k-value ${summary.totalProfit >= 0 ? 'm-pos' : 'm-neg'}`}>{fmtUSD0(summary.totalProfit)}</div>
+        <div className="k-sub">Margin <b>{fmtPct(summary.weightedMargin)}</b> of revenue</div>
+        <Spark series={series.profit} signed />
+      </div>
+    </div>
+  );
+
+  /* ── daily table / cards ────────────────────────────────────────────── */
+  const dailyCols = [
+    { key: 'date', label: 'Date' },
+    { key: 'orders', label: 'Orders' },
+    { key: 'net', label: 'Net Sales' },
+    { key: 'cogs', label: 'COGS' },
+    { key: 'shipping_charged', label: 'Ship Chg' },
+    { key: 'shipping_cost', label: 'Est Ship' },
+    { key: 'psp_usd', label: 'PSP' },
+    { key: 'total_spend', label: 'Ad Spend' },
+    { key: 'operational', label: 'Operational' },
+    { key: 'margin', label: 'Margin $' },
+    { key: 'margin_pct', label: 'Margin %' },
+    { key: 'aov', label: 'AOV' },
+    { key: 'general_cpa', label: 'CPA' },
+    { key: 'returning_customers', label: 'Ret.' },
+  ];
+
+  const dailyTable = (
+    <div className="overflow-x-auto rounded-b-[14px]">
+      <table className="m-table">
+        <thead>
+          <tr>
+            {dailyCols.map((c) => (
+              <th key={c.key} className={c.key === 'date' ? 'sticky-col' : ''} onClick={() => sortDaily(c.key)}>
+                {c.label}
+                {dailySort.key === c.key && <span className="text-rose-300"> {dailySort.dir === 1 ? '▲' : '▼'}</span>}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {sortedDaily.map((day) => (
+            <tr key={day.date}>
+              <td className="sticky-col">{day.label}</td>
+              <td>{day.orders}</td>
+              <td className="m-rev">{fmtUSD(day.net)}</td>
+              <td>{fmtUSD(day.cogs)}</td>
+              <td>{fmtUSD(day.shipping_charged)}</td>
+              <td>{fmtUSD(day.shipping_cost)}</td>
+              <td>{fmtUSD(day.psp_usd)}</td>
+              <td
+                className="m-gold"
+                title={`Google ${fmtUSD(day.google_spend)} · Meta ${fmtUSD(day.meta_spend)} · Shop ${fmtUSD(day.shop_spend)}`}
+              >
+                {fmtUSD(day.total_spend)}
+              </td>
+              <td>{pnl(day.operational)}</td>
+              <td>{pnl(day.margin)}</td>
+              <td>{marginBadge(day.margin_pct)}</td>
+              <td>{fmtUSD(day.aov)}</td>
+              <td>{day.general_cpa != null ? fmtUSD(day.general_cpa) : '—'}</td>
+              <td>{day.returning_customers}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  const dailyCards = (
+    <div className="space-y-2.5 p-3">
+      {sortedDaily.map((day) => (
+        <div key={day.date} className="m-mcard">
+          <div className="mc-head">
+            <b className="text-white text-[0.86rem]">{day.label}</b>
+            <div className="flex items-center gap-2">
+              {marginBadge(day.margin_pct)}
+              <span className="text-[0.8rem] font-extrabold">{pnl(day.margin)}</span>
+            </div>
+          </div>
+          <div className="mc-grid">
+            <div className="mc-cell"><i>Orders</i><b>{day.orders}</b></div>
+            <div className="mc-cell"><i>Net</i><b className="m-rev">{fmtUSD0(day.net)}</b></div>
+            <div className="mc-cell"><i>Spend</i><b className="m-gold">{fmtUSD0(day.total_spend)}</b></div>
+            <div className="mc-cell"><i>COGS</i><b>{fmtUSD0(day.cogs)}</b></div>
+            <div className="mc-cell"><i>Est Ship</i><b>{fmtUSD0(day.shipping_cost)}</b></div>
+            <div className="mc-cell"><i>Operational</i><b>{pnl(day.operational)}</b></div>
+            <div className="mc-cell"><i>AOV</i><b>{fmtUSD0(day.aov)}</b></div>
+            <div className="mc-cell"><i>CPA</i><b>{day.general_cpa != null ? fmtUSD0(day.general_cpa) : '—'}</b></div>
+            <div className="mc-cell"><i>Returning</i><b>{day.returning_customers}</b></div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  /* ── order cards (mobile) ───────────────────────────────────────────── */
+  const orderCards = (
+    <div className="space-y-2.5 p-3">
+      {filteredOrders.slice(0, 100).map((order) => (
+        <div key={order.order_id} className={cn('m-mcard', order.is_cancelled && 'opacity-50')}>
+          <div className="mc-head">
+            <div className="flex items-center gap-2 min-w-0">
+              <b className="text-white text-[0.86rem]">{order.order_name}</b>
+              {channelChip(order.channel)}
+              {order.is_cancelled && <span className="m-badge bad">Cancelled</span>}
+            </div>
+            <span className="text-[0.8rem] font-extrabold">{pnl(order.profit)}</span>
+          </div>
+          <div className="text-[0.7rem] text-[#8fa0b8] mb-2 truncate">
+            {order.date} {order.time} · {order.customer_name} · {order.country}
+            {order.is_returning ? ' · returning' : ' · first-time'}
+          </div>
+          <div className="mc-grid">
+            <div className="mc-cell"><i>Net</i><b className="m-rev">{fmtUSD(order.net)}</b></div>
+            <div className="mc-cell"><i>COGS</i><b>{fmtUSD(order.cogs)}</b></div>
+            <div className="mc-cell"><i>Ship Cost</i><b>{fmtUSD(order.shipping_cost)}</b></div>
+            <div className="mc-cell"><i>PSP</i><b>{fmtUSD(order.psp_fee)}</b></div>
+            {(order.shop_ad_cost || 0) > 0 && (
+              <div className="mc-cell"><i>Shop Ads</i><b className="m-gold">{fmtUSD(order.shop_ad_cost)}</b></div>
+            )}
+            <div className="mc-cell"><i>Margin</i><b>{marginBadge((order.margin_pct || 0) / 100)}</b></div>
+            <div className="mc-cell"><i>Items</i><b>{order.items_count}</b></div>
+          </div>
+          {order.items && order.items.length > 0 && (
+            <button
+              className="mt-2 text-[0.7rem] font-bold text-rose-300 flex items-center gap-1"
+              onClick={() => toggleOrderExpansion(order.order_id)}
+            >
+              {expandedOrders[order.order_id] ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+              {order.items.length} line item{order.items.length > 1 ? 's' : ''}
+            </button>
+          )}
+          {expandedOrders[order.order_id] && order.items && (
+            <div className="mt-2 space-y-1">
+              {order.items.map((item, idx) => (
+                <div key={idx} className="flex items-center justify-between gap-2 text-[0.72rem] bg-black/25 rounded-lg px-2.5 py-1.5">
+                  <span className="text-[#c3cede] truncate">{item.name || 'Unknown Item'}</span>
+                  <span className="text-[#8fa0b8] whitespace-nowrap">×{item.quantity} · {fmtUSD(item.gross)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+
+  /* ── render ─────────────────────────────────────────────────────────── */
   return (
-    <div className="p-6 space-y-6">
+    <div className="m-page space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-slate-900">Business Reports</h1>
-          <p className="text-slate-500 mt-1">Daily performance metrics and order analytics</p>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="min-w-0">
+          <h1 className="text-[1.45rem] lg:text-3xl font-extrabold tracking-tight text-white flex items-center gap-2.5 leading-tight">
+            Business Reports
+            <span className="m-live"><i />LIVE</span>
+          </h1>
+          <p className="text-[#8fa0b8] text-[0.78rem] lg:text-sm mt-0.5">
+            Daily performance · orders · best sellers
+          </p>
         </div>
 
-        {/* Date Range Picker */}
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button
-              variant="outline"
-              className={cn(
-                "w-[280px] justify-start text-left font-normal",
-                !dateRange && "text-muted-foreground"
-              )}
-            >
-              <CalendarIcon className="mr-2 h-4 w-4" />
-              {dateRange?.from ? (
-                dateRange.to ? (
-                  <>
-                    {format(dateRange.from, "LLL dd, y")} -{" "}
-                    {format(dateRange.to, "LLL dd, y")}
-                  </>
-                ) : (
-                  format(dateRange.from, "LLL dd, y")
-                )
-              ) : (
-                <span>Pick a date range</span>
-              )}
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-auto p-0" align="end">
-            <div className="p-3 space-y-2">
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const today = new Date();
-                    setDateRange({ from: startOfDay(today), to: endOfDay(today) });
-                  }}
-                >
-                  Today
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const yesterday = subDays(new Date(), 1);
-                    setDateRange({ from: startOfDay(yesterday), to: endOfDay(yesterday) });
-                  }}
-                >
-                  Yesterday
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setDateRange({ from: subDays(new Date(), 3), to: new Date() })}
-                >
-                  Last 3 Days
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setDateRange({ from: subDays(new Date(), 7), to: new Date() })}
-                >
-                  Last 7 Days
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setDateRange({ from: subDays(new Date(), 30), to: new Date() })}
-                >
-                  Last 30 Days
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const now = new Date();
-                    setDateRange({ from: startOfMonth(now), to: endOfMonth(now) });
-                  }}
-                >
-                  This Month
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    const lastMonth = subMonths(new Date(), 1);
-                    setDateRange({ from: startOfMonth(lastMonth), to: endOfMonth(lastMonth) });
-                  }}
-                >
-                  Last Month
-                </Button>
+        <div className="ml-auto flex items-center gap-2">
+          <Popover>
+            <PopoverTrigger asChild>
+              <button className="m-chip on-indigo !text-[0.72rem]">
+                <CalendarIcon className="h-3.5 w-3.5" />
+                {dateRange?.from
+                  ? dateRange.to
+                    ? `${format(dateRange.from, 'MMM d')} – ${format(dateRange.to, 'MMM d')}`
+                    : format(dateRange.from, 'MMM d, y')
+                  : 'Pick dates'}
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-3 max-w-[94vw]" align="end">
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {presets.map((p) => (
+                  <button
+                    key={p.id}
+                    className={cn('m-chip !py-1 !px-3 !text-[0.68rem]', preset === p.id && 'on')}
+                    onClick={() => applyPreset(p.id, p.range())}
+                  >
+                    {p.label}
+                  </button>
+                ))}
               </div>
               <Calendar
                 initialFocus
                 mode="range"
                 defaultMonth={dateRange?.from}
                 selected={dateRange}
-                onSelect={setDateRange}
-                numberOfMonths={2}
+                onSelect={(r) => { setPreset(null); setDateRange(r); }}
+                numberOfMonths={isMobile ? 1 : 2}
               />
-            </div>
-          </PopoverContent>
-        </Popover>
+            </PopoverContent>
+          </Popover>
+        </div>
       </div>
 
-      {/* Error State */}
+      {/* Error */}
       {error && (
-        <Card className="border-red-200 bg-red-50">
-          <CardHeader>
-            <CardTitle className="text-red-900">Error Loading Reports</CardTitle>
-            <CardDescription className="text-red-700">{error}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button onClick={activeTab === 'daily' ? fetchReportData : fetchOrderData} variant="outline">Retry</Button>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="daily">
-            <TrendingUp className="h-4 w-4 mr-2" />
-            Daily Report
-          </TabsTrigger>
-          <TabsTrigger value="orders">
-            <Package className="h-4 w-4 mr-2" />
-            Order Report
-          </TabsTrigger>
-          <TabsTrigger value="bestsellers">
-            <Star className="h-4 w-4 mr-2" />
-            Best Sellers
-          </TabsTrigger>
-        </TabsList>
-
-        {/* DAILY REPORT TAB */}
-        <TabsContent value="daily" className="space-y-4">
-          {/* Summary Cards */}
-      {loading ? (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          {[1, 2, 3, 4].map((i) => (
-            <Card key={i}>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <Skeleton className="h-4 w-[100px]" />
-                <Skeleton className="h-4 w-4 rounded-full" />
-              </CardHeader>
-              <CardContent>
-                <Skeleton className="h-8 w-[120px]" />
-                <Skeleton className="h-3 w-[80px] mt-2" />
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          {/* Total Orders */}
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Orders</CardTitle>
-              <ShoppingCart className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{summary.totalOrders}</div>
-              <p className="text-xs text-muted-foreground">
-                Avg AOV: {formatCurrency(avgAOV)}
-              </p>
-            </CardContent>
-          </Card>
-
-          {/* Total Revenue */}
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
-              <DollarSign className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{formatCurrency(summary.totalNet)}</div>
-              <p className="text-xs text-muted-foreground">
-                Gross: {formatCurrency(summary.totalGross)}
-              </p>
-            </CardContent>
-          </Card>
-
-          {/* Total Spend */}
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Ad Spend</CardTitle>
-              <Target className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{formatCurrency(summary.totalSpend)}</div>
-              <p className="text-xs text-muted-foreground">
-                Google + Meta ads
-              </p>
-            </CardContent>
-          </Card>
-
-          {/* Profit */}
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Net Profit</CardTitle>
-              <Percent className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className={`text-2xl font-bold ${summary.totalProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                {formatCurrency(summary.totalProfit)}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Avg Margin: {formatPercent(avgMargin)}
-              </p>
-            </CardContent>
-          </Card>
+        <div className="m-glow-card p-4 !border-red-400/40">
+          <div className="font-bold text-red-300 mb-1">Error loading reports</div>
+          <div className="text-[0.8rem] text-[#a9b7cc] mb-3">{error}</div>
+          <button
+            className="m-chip on"
+            onClick={activeTab === 'daily' ? fetchReportData : activeTab === 'orders' ? fetchOrderData : fetchBestsellers}
+          >
+            Retry
+          </button>
         </div>
       )}
 
-      {/* Detailed Daily Report Table */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Daily Performance Breakdown</CardTitle>
-              <CardDescription>
-                Detailed metrics for each day in the selected range
-              </CardDescription>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleRefreshDaily}
-              disabled={isRefreshing || loading}
-            >
-              <RefreshCw className={cn("h-4 w-4 mr-2", isRefreshing && "animate-spin")} />
-              Refresh
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent>
+      {/* Tab switch */}
+      <div className="m-seg no-scrollbar">
+        {[
+          { id: 'daily', label: 'Daily Report', icon: TrendingUp },
+          { id: 'orders', label: 'Orders', icon: Package },
+          { id: 'bestsellers', label: 'Best Sellers', icon: Star },
+        ].map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setActiveTab(t.id)}
+            className={cn('m-chip !border-0', activeTab === t.id && 'on')}
+          >
+            <t.icon className="h-3.5 w-3.5" />
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ════════ DAILY ════════ */}
+      {activeTab === 'daily' && (
+        <div className="space-y-4">
           {loading ? (
-            <div className="space-y-2">
-              {[1, 2, 3, 4, 5].map((i) => (
-                <Skeleton key={i} className="h-12 w-full" />
+            <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="m-glow-card p-4">
+                  <Skeleton className="h-3 w-20 bg-white/10" />
+                  <Skeleton className="h-7 w-24 mt-2 bg-white/10" />
+                  <Skeleton className="h-6 w-full mt-3 bg-white/5" />
+                </div>
               ))}
             </div>
-          ) : reportData.length === 0 ? (
-            <div className="text-center py-8 text-slate-500">
-              No data available for the selected date range
-            </div>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Date</TableHead>
-                    <TableHead className="text-right">Orders</TableHead>
-                    <TableHead className="text-right">Net Sales</TableHead>
-                    <TableHead className="text-right">COGS</TableHead>
-                    <TableHead className="text-right">Ship Charged</TableHead>
-                    <TableHead className="text-right">Est Ship Cost</TableHead>
-                    <TableHead className="text-right">PSP Fee</TableHead>
-                    <TableHead className="text-right">Ad Spend</TableHead>
-                    <TableHead className="text-right">Operational</TableHead>
-                    <TableHead className="text-right">Margin $</TableHead>
-                    <TableHead className="text-right">Margin %</TableHead>
-                    <TableHead className="text-right">AOV</TableHead>
-                    <TableHead className="text-right">CPA</TableHead>
-                    <TableHead className="text-right">Return Cust</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {reportData.map((day) => (
-                    <TableRow key={day.date}>
-                      <TableCell className="font-medium">
-                        {day.label}
-                      </TableCell>
-                      <TableCell className="text-right">{day.orders}</TableCell>
-                      <TableCell className="text-right">{formatCurrency(day.net)}</TableCell>
-                      <TableCell className="text-right">{formatCurrency(day.cogs)}</TableCell>
-                      <TableCell className="text-right">{formatCurrency(day.shipping_charged)}</TableCell>
-                      <TableCell className="text-right">{formatCurrency(day.shipping_cost)}</TableCell>
-                      <TableCell className="text-right">{formatCurrency(day.psp_usd)}</TableCell>
-                      <TableCell className="text-right">{formatCurrency(day.total_spend)}</TableCell>
-                      <TableCell className="text-right">
-                        <span className={(day.operational || 0) >= 0 ? 'text-green-600' : 'text-red-600'}>
-                          {formatCurrency(day.operational)}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <span className={(day.margin || 0) >= 0 ? 'text-green-600' : 'text-red-600'}>
-                          {formatCurrency(day.margin)}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Badge variant={(day.margin_pct || 0) >= 0.20 ? 'default' : (day.margin_pct || 0) >= 0.10 ? 'secondary' : 'destructive'}>
-                          {formatPercent(day.margin_pct)}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">{formatCurrency(day.aov)}</TableCell>
-                      <TableCell className="text-right">{formatCurrency(day.general_cpa)}</TableCell>
-                      <TableCell className="text-right">{day.returning_customers}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+            kpiCards
           )}
-        </CardContent>
-      </Card>
-        </TabsContent>
 
-        {/* ORDER REPORT TAB */}
-        <TabsContent value="orders" className="space-y-4">
-          {loading ? (
-            <div className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                {[1, 2, 3, 4].map((i) => (
-                  <Card key={i}>
-                    <CardContent className="pt-6">
-                      <Skeleton className="h-8 w-20" />
-                      <Skeleton className="h-4 w-24 mt-2" />
-                    </CardContent>
-                  </Card>
-                ))}
+          <div className="m-glow-card">
+            <div className="flex items-center justify-between gap-3 px-4 pt-3.5 pb-2.5 border-b border-[#22304d]">
+              <div>
+                <div className="font-extrabold text-white text-[0.95rem]">Daily Performance</div>
+                <div className="text-[0.7rem] text-[#8fa0b8]">Per-day breakdown · tap a header to sort</div>
               </div>
-              {[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-12 w-full" />)}
+              <button className="m-chip !px-3" onClick={handleRefreshDaily} disabled={isRefreshing || loading}>
+                <RefreshCw className={cn('h-3.5 w-3.5', isRefreshing && 'animate-spin')} />
+                <span className="desk-only">Refresh</span>
+              </button>
+            </div>
+
+            {loading ? (
+              <div className="space-y-2 p-4">
+                {[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-10 w-full bg-white/5" />)}
+              </div>
+            ) : reportData.length === 0 ? (
+              <div className="text-center py-10 text-[#8fa0b8] text-sm">No data for the selected range</div>
+            ) : isMobile ? (
+              dailyCards
+            ) : (
+              dailyTable
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ════════ ORDERS ════════ */}
+      {activeTab === 'orders' && (
+        <div className="space-y-4">
+          {loading ? (
+            <div className="grid gap-3 grid-cols-2 lg:grid-cols-5">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <div key={i} className="m-glow-card p-4">
+                  <Skeleton className="h-7 w-16 bg-white/10" />
+                  <Skeleton className="h-3 w-20 mt-2 bg-white/5" />
+                </div>
+              ))}
             </div>
           ) : (
             <>
-              {/* Order Analytics Summary */}
               {orderData.analytics && (
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
-                  <Card>
-                    <CardContent className="pt-6">
-                      <div className="text-2xl font-bold">{orderData.analytics.total_orders}</div>
-                      <p className="text-xs text-muted-foreground">Total Orders</p>
-                      {orderData.analytics.cancelled_orders > 0 && (
-                        <p className="text-xs text-red-500 mt-1">{orderData.analytics.cancelled_orders} cancelled</p>
-                      )}
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardContent className="pt-6">
-                      <div className="text-2xl font-bold">{formatCurrency(orderData.analytics.total_net)}</div>
-                      <p className="text-xs text-muted-foreground">Net Revenue</p>
-                      <p className="text-xs text-slate-500 mt-1">AOV: {formatCurrency(orderData.analytics.avg_order_value)}</p>
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardContent className="pt-6">
-                      <div className={`text-2xl font-bold ${orderData.analytics.total_profit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                        {formatCurrency(orderData.analytics.total_profit)}
-                      </div>
-                      <p className="text-xs text-muted-foreground">Total Profit</p>
-                      <p className="text-xs text-slate-500 mt-1">Margin: {orderData.analytics.avg_margin_pct?.toFixed(1)}%</p>
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardContent className="pt-6">
-                      <div className="text-2xl font-bold">{orderData.analytics.returning_customers}</div>
-                      <p className="text-xs text-muted-foreground">Returning Customers</p>
-                      <p className="text-xs text-slate-500 mt-1">
-                        {orderData.analytics.total_orders > 0
-                          ? `${((orderData.analytics.returning_customers / orderData.analytics.total_orders) * 100).toFixed(1)}% repeat`
-                          : '0%'}
-                      </p>
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardContent className="pt-6">
-                      <div className="text-sm font-semibold mb-2">Channels</div>
-                      <div className="space-y-1 text-xs">
-                        <div className="flex justify-between">
-                          <span>Google</span>
-                          <Badge variant="outline">{orderData.analytics.channels?.google || 0}</Badge>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Meta</span>
-                          <Badge variant="outline">{orderData.analytics.channels?.meta || 0}</Badge>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Shop</span>
-                          <Badge variant="outline">{orderData.analytics.channels?.shop || 0}</Badge>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Klaviyo</span>
-                          <Badge variant="outline">{orderData.analytics.channels?.klaviyo || 0}</Badge>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Organic</span>
-                          <Badge variant="outline">{orderData.analytics.channels?.organic || 0}</Badge>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-              )}
-
-              {/* Top Countries & Peak Hours */}
-              {orderData.analytics && (
-                <div className="grid gap-4 md:grid-cols-2">
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-medium flex items-center gap-2">
-                        <Globe className="h-4 w-4" /> Top Countries
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-2">
-                        {(orderData.analytics.top_countries || []).slice(0, 5).map((c, i) => (
-                          <div key={i} className="flex justify-between items-center text-sm">
-                            <span>{c.country}</span>
-                            <Badge variant="secondary">{c.count} orders</Badge>
-                          </div>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-medium flex items-center gap-2">
-                        <Clock className="h-4 w-4" /> Peak Hours
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-2">
-                        {(orderData.analytics.peak_hours || []).map((h, i) => (
-                          <div key={i} className="flex justify-between items-center text-sm">
-                            <span>{h.hour}:00 - {h.hour}:59</span>
-                            <Badge variant="secondary">{h.count} orders</Badge>
-                          </div>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-              )}
-
-              {/* Orders Table */}
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <CardTitle>Order Breakdown</CardTitle>
-                      <CardDescription>
-                        {filteredOrders.length} orders in selected date range
-                      </CardDescription>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        placeholder="Search orders..."
-                        value={orderSearch}
-                        onChange={(e) => setOrderSearch(e.target.value)}
-                        className="w-[250px]"
-                      />
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleRefreshOrders}
-                        disabled={isRefreshing || loading}
-                      >
-                        <RefreshCw className={cn("h-4 w-4 mr-2", isRefreshing && "animate-spin")} />
-                        Refresh
-                      </Button>
+                <div className="grid gap-3 grid-cols-2 lg:grid-cols-5">
+                  <div className="m-glow-card m-kpi" style={{ '--kpi-c1': '#6366f1', '--kpi-c2': '#a5b4fc' }}>
+                    <div className="k-label">Orders</div>
+                    <div className="k-value">{orderData.analytics.total_orders}</div>
+                    <div className="k-sub">
+                      {orderData.analytics.cancelled_orders > 0
+                        ? <span className="m-neg">{orderData.analytics.cancelled_orders} cancelled</span>
+                        : 'no cancellations'}
                     </div>
                   </div>
-                </CardHeader>
-                <CardContent>
-                  {filteredOrders.length === 0 ? (
-                    <div className="text-center py-8 text-slate-500">
-                      No orders found for the selected date range
+                  <div className="m-glow-card m-kpi" style={{ '--kpi-c1': '#22d3ee', '--kpi-c2': '#67e8f9' }}>
+                    <div className="k-label">Net Revenue</div>
+                    <div className="k-value m-rev">{fmtUSD0(orderData.analytics.total_net)}</div>
+                    <div className="k-sub">AOV <b>{fmtUSD(orderData.analytics.avg_order_value)}</b></div>
+                  </div>
+                  <div
+                    className="m-glow-card m-kpi"
+                    style={orderData.analytics.total_profit >= 0
+                      ? { '--kpi-c1': '#10b981', '--kpi-c2': '#34d399' }
+                      : { '--kpi-c1': '#ef4444', '--kpi-c2': '#f87171' }}
+                  >
+                    <div className="k-label">Profit</div>
+                    <div className={`k-value ${orderData.analytics.total_profit >= 0 ? 'm-pos' : 'm-neg'}`}>
+                      {fmtUSD0(orderData.analytics.total_profit)}
                     </div>
-                  ) : (
-                    <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
-                      <Table>
-                        <TableHeader className="sticky top-0 bg-white z-10">
-                          <TableRow>
-                            <TableHead className="w-8"></TableHead>
-                            <TableHead>Order</TableHead>
-                            <TableHead>Date/Time</TableHead>
-                            <TableHead>Customer</TableHead>
-                            <TableHead>Channel</TableHead>
-                            <TableHead>Country</TableHead>
-                            <TableHead className="text-right">Gross</TableHead>
-                            <TableHead className="text-right">Ship Chg</TableHead>
-                            <TableHead className="text-right">Ship Cost</TableHead>
-                            <TableHead className="text-right">Net</TableHead>
-                            <TableHead className="text-right">COGS</TableHead>
-                            <TableHead className="text-right">PSP</TableHead>
-                            <TableHead className="text-right">Profit</TableHead>
-                            <TableHead className="text-right">Margin</TableHead>
-                            <TableHead className="text-right">Items</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {filteredOrders.slice(0, 100).map((order) => (
-                            <React.Fragment key={order.order_id}>
-                              <TableRow className={cn(order.is_cancelled ? 'opacity-50' : '', expandedOrders[order.order_id] ? 'bg-slate-50' : '')}>
-                                <TableCell className="w-8">
-                                  {order.items && order.items.length > 0 && (
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      className="h-6 w-6 p-0"
-                                      onClick={() => toggleOrderExpansion(order.order_id)}
-                                    >
-                                      {expandedOrders[order.order_id] ? (
-                                        <ChevronDown className="h-4 w-4" />
-                                      ) : (
-                                        <ChevronRight className="h-4 w-4" />
-                                      )}
-                                    </Button>
-                                  )}
-                                </TableCell>
-                                <TableCell className="font-medium">
-                                  {order.order_name}
-                                  {order.is_cancelled && <Badge variant="destructive" className="ml-2 text-xs">Cancelled</Badge>}
-                                </TableCell>
-                                <TableCell className="text-sm">
-                                  <div>{order.date}</div>
-                                  <div className="text-xs text-slate-500">{order.time}</div>
-                                </TableCell>
-                                <TableCell>
-                                  <div className="text-sm">{order.customer_name}</div>
-                                  <Badge
-                                    variant={order.is_returning ? 'default' : 'outline'}
-                                    className={cn("text-xs", order.is_returning ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800')}
+                    <div className="k-sub">Avg margin <b>{orderData.analytics.avg_margin_pct?.toFixed(1)}%</b></div>
+                  </div>
+                  <div className="m-glow-card m-kpi" style={{ '--kpi-c1': '#a78bfa', '--kpi-c2': '#c4b5fd' }}>
+                    <div className="k-label">Returning</div>
+                    <div className="k-value">{orderData.analytics.returning_customers}</div>
+                    <div className="k-sub">
+                      <b>
+                        {orderData.analytics.total_orders > 0
+                          ? `${((orderData.analytics.returning_customers / orderData.analytics.total_orders) * 100).toFixed(1)}%`
+                          : '0%'}
+                      </b>{' '}
+                      repeat rate
+                    </div>
+                  </div>
+                  <div className="m-glow-card m-kpi col-span-2 lg:col-span-1" style={{ '--kpi-c1': '#fb7185', '--kpi-c2': '#f0abfc' }}>
+                    <div className="k-label">Channels</div>
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {['google', 'meta', 'shop', 'klaviyo', 'organic'].map((ch) => (
+                        <span key={ch} className="inline-flex items-center gap-1">
+                          {channelChip(ch)}
+                          <b className="text-[0.74rem] text-white">{orderData.analytics.channels?.[ch] || 0}</b>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {orderData.analytics && (
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <div className="m-glow-card p-4">
+                    <div className="font-bold text-white text-[0.82rem] flex items-center gap-2 mb-3">
+                      <Globe className="h-4 w-4 text-rose-300" /> Top Countries
+                    </div>
+                    <div className="space-y-2">
+                      {(() => {
+                        const tc = (orderData.analytics.top_countries || []).slice(0, 5);
+                        const mx = Math.max(...tc.map((c) => c.count), 1);
+                        return tc.map((c, i) => (
+                          <div key={i}>
+                            <div className="flex justify-between items-center text-[0.78rem] mb-1">
+                              <span className="text-[#c3cede]">{c.country}</span>
+                              <b className="text-white">{c.count}</b>
+                            </div>
+                            <div className="h-[4px] rounded bg-[#22304d]/60 overflow-hidden">
+                              <div
+                                className="h-full rounded bg-gradient-to-r from-indigo-500 to-indigo-300"
+                                style={{ width: `${(c.count / mx) * 100}%` }}
+                              />
+                            </div>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  </div>
+                  <div className="m-glow-card p-4">
+                    <div className="font-bold text-white text-[0.82rem] flex items-center gap-2 mb-3">
+                      <Clock className="h-4 w-4 text-rose-300" /> Peak Hours
+                    </div>
+                    <div className="space-y-2">
+                      {(() => {
+                        const ph = orderData.analytics.peak_hours || [];
+                        const mx = Math.max(...ph.map((h) => h.count), 1);
+                        return ph.map((h, i) => (
+                          <div key={i}>
+                            <div className="flex justify-between items-center text-[0.78rem] mb-1">
+                              <span className="text-[#c3cede]">{String(h.hour).padStart(2, '0')}:00 – {String(h.hour).padStart(2, '0')}:59</span>
+                              <b className="text-white">{h.count}</b>
+                            </div>
+                            <div className="h-[4px] rounded bg-[#22304d]/60 overflow-hidden">
+                              <div
+                                className="h-full rounded bg-gradient-to-r from-rose-500 to-fuchsia-300"
+                                style={{ width: `${(h.count / mx) * 100}%` }}
+                              />
+                            </div>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="m-glow-card">
+                <div className="flex flex-wrap items-center gap-2 px-4 pt-3.5 pb-2.5 border-b border-[#22304d]">
+                  <div className="min-w-0 mr-auto">
+                    <div className="font-extrabold text-white text-[0.95rem]">Order Breakdown</div>
+                    <div className="text-[0.7rem] text-[#8fa0b8]">{filteredOrders.length} orders in range</div>
+                  </div>
+                  <Input
+                    placeholder="Search orders…"
+                    value={orderSearch}
+                    onChange={(e) => setOrderSearch(e.target.value)}
+                    className="w-[160px] lg:w-[240px] h-8 text-[0.78rem] bg-[#0f1830] border-[#2b3a55]"
+                  />
+                  <button className="m-chip !px-3" onClick={handleRefreshOrders} disabled={isRefreshing || loading}>
+                    <RefreshCw className={cn('h-3.5 w-3.5', isRefreshing && 'animate-spin')} />
+                  </button>
+                </div>
+
+                {filteredOrders.length === 0 ? (
+                  <div className="text-center py-10 text-[#8fa0b8] text-sm">No orders found</div>
+                ) : isMobile ? (
+                  orderCards
+                ) : (
+                  <div className="overflow-x-auto max-h-[640px] overflow-y-auto rounded-b-[14px]">
+                    <table className="m-table">
+                      <thead>
+                        <tr>
+                          <th className="!cursor-default w-8"></th>
+                          <th className="!cursor-default !text-left">Order</th>
+                          <th className="!cursor-default !text-left">Date</th>
+                          <th className="!cursor-default !text-left">Customer</th>
+                          <th className="!cursor-default !text-left">Channel</th>
+                          <th className="!cursor-default !text-left">Country</th>
+                          <th className="!cursor-default">Gross</th>
+                          <th className="!cursor-default">Ship Chg</th>
+                          <th className="!cursor-default">Ship Cost</th>
+                          <th className="!cursor-default">Net</th>
+                          <th className="!cursor-default">COGS</th>
+                          <th className="!cursor-default">PSP</th>
+                          <th className="!cursor-default" title="Shop Campaigns ad cost (new-customer acquisitions only)">Shop Ads</th>
+                          <th className="!cursor-default">Profit</th>
+                          <th className="!cursor-default">Margin</th>
+                          <th className="!cursor-default">Items</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredOrders.slice(0, 100).map((order) => (
+                          <React.Fragment key={order.order_id}>
+                            <tr className={cn(order.is_cancelled && 'opacity-45')}>
+                              <td className="!text-center">
+                                {order.items && order.items.length > 0 && (
+                                  <button
+                                    className="p-0.5 rounded text-[#8fa0b8] hover:text-white"
+                                    onClick={() => toggleOrderExpansion(order.order_id)}
                                   >
-                                    {order.is_returning ? 'Return' : 'First Time'}
-                                  </Badge>
-                                </TableCell>
-                                <TableCell>
-                                  <Badge
-                                    variant={
-                                      order.channel === 'google' ? 'default' :
-                                      order.channel === 'meta' ? 'secondary' :
-                                      order.channel === 'shop' ? 'secondary' :
-                                      order.channel === 'klaviyo' ? 'outline' : 'outline'
-                                    }
-                                    className={order.channel === 'shop' ? 'bg-purple-100 text-purple-800' : undefined}
-                                  >
-                                    {order.channel}
-                                  </Badge>
-                                </TableCell>
-                                <TableCell>{order.country}</TableCell>
-                                <TableCell className="text-right">{formatCurrency(order.gross)}</TableCell>
-                                <TableCell className="text-right">{formatCurrency(order.shipping)}</TableCell>
-                                <TableCell className="text-right">{formatCurrency(order.shipping_cost)}</TableCell>
-                                <TableCell className="text-right">{formatCurrency(order.net)}</TableCell>
-                                <TableCell className="text-right">{formatCurrency(order.cogs)}</TableCell>
-                                <TableCell className="text-right">{formatCurrency(order.psp_fee)}</TableCell>
-                                <TableCell className="text-right">
-                                  <span className={(order.profit || 0) >= 0 ? 'text-green-600' : 'text-red-600'}>
-                                    {formatCurrency(order.profit)}
-                                  </span>
-                                </TableCell>
-                                <TableCell className="text-right">
-                                  <Badge variant={(order.margin_pct || 0) >= 20 ? 'default' : (order.margin_pct || 0) >= 10 ? 'secondary' : 'destructive'}>
-                                    {order.margin_pct?.toFixed(1)}%
-                                  </Badge>
-                                </TableCell>
-                                <TableCell className="text-right font-medium">{order.items_count}</TableCell>
-                              </TableRow>
-                              {/* Expanded Items Row */}
-                              {expandedOrders[order.order_id] && order.items && order.items.length > 0 && (
-                                <TableRow className="bg-slate-100">
-                                  <TableCell colSpan={15} className="p-0">
-                                    <div className="px-8 py-3">
-                                      <div className="text-xs font-semibold text-slate-600 mb-2">Line Items:</div>
-                                      <div className="space-y-1">
-                                        {order.items.map((item, idx) => (
-                                          <div key={idx} className="flex items-center justify-between text-sm bg-white p-2 rounded border">
-                                            <div className="flex-1">
-                                              <span className="font-medium">{item.name || 'Unknown Item'}</span>
-                                              {item.sku && <span className="text-slate-500 ml-2">(SKU: {item.sku})</span>}
-                                            </div>
-                                            <div className="flex items-center gap-4 text-slate-600">
-                                              <span>Qty: {item.quantity}</span>
-                                              <span>Gross: {formatCurrency(item.gross)}</span>
-                                              <span>COGS: {formatCurrency(item.total_cogs)}</span>
-                                            </div>
-                                          </div>
-                                        ))}
+                                    {expandedOrders[order.order_id]
+                                      ? <ChevronDown className="h-3.5 w-3.5" />
+                                      : <ChevronRight className="h-3.5 w-3.5" />}
+                                  </button>
+                                )}
+                              </td>
+                              <td>
+                                {order.order_name}
+                                {order.is_cancelled && <span className="m-badge bad ml-2 !min-w-0">✕</span>}
+                              </td>
+                              <td className="!text-left !text-[0.74rem]">
+                                <span className="text-[#c3cede]">{order.date}</span>{' '}
+                                <span className="text-[#7487a3]">{order.time}</span>
+                              </td>
+                              <td className="!text-left max-w-[160px]">
+                                <div className="truncate text-[#c3cede]">{order.customer_name}</div>
+                                <span className={cn('text-[0.62rem] font-bold', order.is_returning ? 'text-blue-300' : 'text-emerald-300')}>
+                                  {order.is_returning ? '↻ returning' : '★ first-time'}
+                                </span>
+                              </td>
+                              <td className="!text-left">{channelChip(order.channel)}</td>
+                              <td className="!text-left text-[#c3cede]">{order.country}</td>
+                              <td>{fmtUSD(order.gross)}</td>
+                              <td>{fmtUSD(order.shipping)}</td>
+                              <td>{fmtUSD(order.shipping_cost)}</td>
+                              <td className="m-rev">{fmtUSD(order.net)}</td>
+                              <td>{fmtUSD(order.cogs)}</td>
+                              <td>{fmtUSD(order.psp_fee)}</td>
+                              <td className={cn((order.shop_ad_cost || 0) > 0 && 'm-gold')}>
+                                {(order.shop_ad_cost || 0) > 0 ? fmtUSD(order.shop_ad_cost) : '—'}
+                              </td>
+                              <td>{pnl(order.profit)}</td>
+                              <td>{marginBadge((order.margin_pct || 0) / 100)}</td>
+                              <td>{order.items_count}</td>
+                            </tr>
+                            {expandedOrders[order.order_id] && order.items && order.items.length > 0 && (
+                              <tr>
+                                <td colSpan={16} className="!p-0 !text-left bg-black/20">
+                                  <div className="px-10 py-2.5 space-y-1">
+                                    {order.items.map((item, idx) => (
+                                      <div key={idx} className="flex items-center justify-between gap-3 text-[0.74rem] bg-[#101a30] border border-[#22304d] rounded-lg px-3 py-1.5">
+                                        <span className="text-[#c3cede] truncate">
+                                          {item.name || 'Unknown Item'}
+                                          {item.sku && <span className="text-[#63748f] ml-2">SKU {item.sku}</span>}
+                                        </span>
+                                        <span className="text-[#8fa0b8] whitespace-nowrap">
+                                          ×{item.quantity} · {fmtUSD(item.gross)} · COGS {fmtUSD(item.total_cogs)}
+                                        </span>
                                       </div>
-                                    </div>
-                                  </TableCell>
-                                </TableRow>
-                              )}
-                            </React.Fragment>
-                          ))}
-                        </TableBody>
-                      </Table>
-                      {filteredOrders.length > 100 && (
-                        <p className="text-sm text-slate-500 text-center py-2">
-                          Showing first 100 of {filteredOrders.length} orders
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+                                    ))}
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        ))}
+                      </tbody>
+                    </table>
+                    {filteredOrders.length > 100 && (
+                      <p className="text-[0.72rem] text-[#8fa0b8] text-center py-2">
+                        Showing first 100 of {filteredOrders.length} orders
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
             </>
           )}
-        </TabsContent>
+        </div>
+      )}
 
-        {/* BESTSELLERS TAB */}
-        <TabsContent value="bestsellers" className="space-y-4">
-          {/* Period Selector */}
-          <div className="flex items-center gap-2 mb-4">
-            <span className="text-sm font-medium text-slate-700">Period:</span>
-            <div className="flex gap-2">
-              {[7, 30, 60].map((days) => (
-                <Button
-                  key={days}
-                  variant={bestsellersDay === days ? 'default' : 'outline'}
-                  size="sm"
-                  onClick={() => setBestsellersDay(days)}
-                >
-                  Last {days} Days
-                </Button>
-              ))}
-            </div>
+      {/* ════════ BEST SELLERS ════════ */}
+      {activeTab === 'bestsellers' && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-1.5">
+            {[7, 30, 60].map((days) => (
+              <button
+                key={days}
+                className={cn('m-chip', bestsellersDay === days && 'on')}
+                onClick={() => setBestsellersDay(days)}
+              >
+                {days}D
+              </button>
+            ))}
           </div>
 
           {loading ? (
-            <div className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                {[1, 2, 3, 4].map((i) => (
-                  <Card key={i}>
-                    <CardContent className="pt-6">
-                      <Skeleton className="h-8 w-20" />
-                      <Skeleton className="h-4 w-24 mt-2" />
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-              {[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-12 w-full" />)}
+            <div className="grid gap-3 grid-cols-2 lg:grid-cols-5">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <div key={i} className="m-glow-card p-4">
+                  <Skeleton className="h-7 w-16 bg-white/10" />
+                  <Skeleton className="h-3 w-20 mt-2 bg-white/5" />
+                </div>
+              ))}
             </div>
           ) : !bestsellersData ? (
-            <div className="text-center py-8 text-slate-500">
-              <p>No bestsellers data available</p>
-            </div>
+            <div className="text-center py-10 text-[#8fa0b8] text-sm">No bestsellers data available</div>
           ) : (
             <>
-              {/* Analytics Summary */}
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
-                <Card>
-                  <CardContent className="pt-6">
-                    <div className="text-2xl font-bold">{bestsellersData.analytics?.total_products_sold || 0}</div>
-                    <p className="text-xs text-muted-foreground">Products Sold</p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="pt-6">
-                    <div className="text-2xl font-bold">{bestsellersData.analytics?.total_units_sold || 0}</div>
-                    <p className="text-xs text-muted-foreground">Total Units</p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="pt-6">
-                    <div className="text-2xl font-bold">{formatCurrency(bestsellersData.analytics?.total_revenue || 0)}</div>
-                    <p className="text-xs text-muted-foreground">Total Revenue</p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="pt-6">
-                    <div className={`text-2xl font-bold ${(bestsellersData.analytics?.total_profit || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {formatCurrency(bestsellersData.analytics?.total_profit || 0)}
-                    </div>
-                    <p className="text-xs text-muted-foreground">Total Profit</p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="pt-6">
-                    <div className="text-2xl font-bold">{bestsellersData.analytics?.total_orders || 0}</div>
-                    <p className="text-xs text-muted-foreground">Total Orders</p>
-                  </CardContent>
-                </Card>
-              </div>
-
-              {/* Top Products by Different Metrics */}
-              <div className="grid gap-4 md:grid-cols-3">
-                {/* Top by Quantity */}
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium flex items-center gap-2">
-                      <Package className="h-4 w-4" /> Top by Quantity
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2">
-                      {(bestsellersData.top_by_quantity || []).slice(0, 5).map((p, i) => (
-                        <div key={i} className="flex justify-between items-center text-sm">
-                          <span className="truncate max-w-[180px]" title={`${p.product_title} ${p.variant_title}`}>
-                            {i + 1}. {p.product_title}
-                          </span>
-                          <Badge variant="secondary">{p.total_qty} units</Badge>
-                        </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* Top by Revenue */}
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium flex items-center gap-2">
-                      <DollarSign className="h-4 w-4" /> Top by Revenue
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2">
-                      {(bestsellersData.top_by_revenue || []).slice(0, 5).map((p, i) => (
-                        <div key={i} className="flex justify-between items-center text-sm">
-                          <span className="truncate max-w-[180px]" title={`${p.product_title} ${p.variant_title}`}>
-                            {i + 1}. {p.product_title}
-                          </span>
-                          <Badge variant="secondary">{formatCurrency(p.total_revenue)}</Badge>
-                        </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* Top by Profit */}
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium flex items-center gap-2">
-                      <TrendingUp className="h-4 w-4" /> Top by Profit
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2">
-                      {(bestsellersData.top_by_profit || []).slice(0, 5).map((p, i) => (
-                        <div key={i} className="flex justify-between items-center text-sm">
-                          <span className="truncate max-w-[180px]" title={`${p.product_title} ${p.variant_title}`}>
-                            {i + 1}. {p.product_title}
-                          </span>
-                          <Badge variant={p.total_profit >= 0 ? 'default' : 'destructive'}>
-                            {formatCurrency(p.total_profit)}
-                          </Badge>
-                        </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-
-              {/* Full Bestsellers Table */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>All Best Sellers</CardTitle>
-                  <CardDescription>
-                    Showing top 100 products by quantity sold in the last {bestsellersDay} days
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
-                    <Table>
-                      <TableHeader className="sticky top-0 bg-white">
-                        <TableRow>
-                          <TableHead className="w-12">#</TableHead>
-                          <TableHead>Product</TableHead>
-                          <TableHead>Variant</TableHead>
-                          <TableHead className="text-right">Qty Sold</TableHead>
-                          <TableHead className="text-right">Orders</TableHead>
-                          <TableHead className="text-right">Revenue</TableHead>
-                          <TableHead className="text-right">COGS</TableHead>
-                          <TableHead className="text-right">Profit</TableHead>
-                          <TableHead className="text-right">Margin</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {(bestsellersData.bestsellers || []).map((product, idx) => (
-                          <TableRow key={product.variant_id}>
-                            <TableCell className="font-bold text-slate-500">{idx + 1}</TableCell>
-                            <TableCell className="font-medium max-w-[200px] truncate" title={product.product_title}>
-                              {product.product_title}
-                            </TableCell>
-                            <TableCell className="text-sm text-slate-600 max-w-[150px] truncate">
-                              {product.variant_title || 'Default'}
-                            </TableCell>
-                            <TableCell className="text-right font-bold">{product.total_qty}</TableCell>
-                            <TableCell className="text-right">{product.order_count}</TableCell>
-                            <TableCell className="text-right">{formatCurrency(product.total_revenue)}</TableCell>
-                            <TableCell className="text-right">{formatCurrency(product.total_cogs)}</TableCell>
-                            <TableCell className="text-right">
-                              <span className={product.total_profit >= 0 ? 'text-green-600' : 'text-red-600'}>
-                                {formatCurrency(product.total_profit)}
-                              </span>
-                            </TableCell>
-                            <TableCell className="text-right">
-                              <Badge variant={product.margin_pct >= 20 ? 'default' : product.margin_pct >= 10 ? 'secondary' : 'destructive'}>
-                                {product.margin_pct?.toFixed(1)}%
-                              </Badge>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
+              <div className="grid gap-3 grid-cols-2 lg:grid-cols-5">
+                <div className="m-glow-card m-kpi" style={{ '--kpi-c1': '#6366f1', '--kpi-c2': '#a5b4fc' }}>
+                  <div className="k-label">Products Sold</div>
+                  <div className="k-value">{bestsellersData.analytics?.total_products_sold || 0}</div>
+                </div>
+                <div className="m-glow-card m-kpi" style={{ '--kpi-c1': '#a78bfa', '--kpi-c2': '#c4b5fd' }}>
+                  <div className="k-label">Units</div>
+                  <div className="k-value">{bestsellersData.analytics?.total_units_sold || 0}</div>
+                </div>
+                <div className="m-glow-card m-kpi" style={{ '--kpi-c1': '#22d3ee', '--kpi-c2': '#67e8f9' }}>
+                  <div className="k-label">Revenue</div>
+                  <div className="k-value m-rev">{fmtUSD0(bestsellersData.analytics?.total_revenue || 0)}</div>
+                </div>
+                <div
+                  className="m-glow-card m-kpi"
+                  style={(bestsellersData.analytics?.total_profit || 0) >= 0
+                    ? { '--kpi-c1': '#10b981', '--kpi-c2': '#34d399' }
+                    : { '--kpi-c1': '#ef4444', '--kpi-c2': '#f87171' }}
+                >
+                  <div className="k-label">Profit</div>
+                  <div className={`k-value ${(bestsellersData.analytics?.total_profit || 0) >= 0 ? 'm-pos' : 'm-neg'}`}>
+                    {fmtUSD0(bestsellersData.analytics?.total_profit || 0)}
                   </div>
-                </CardContent>
-              </Card>
+                </div>
+                <div className="m-glow-card m-kpi col-span-2 lg:col-span-1" style={{ '--kpi-c1': '#fb7185', '--kpi-c2': '#f0abfc' }}>
+                  <div className="k-label">Orders</div>
+                  <div className="k-value">{bestsellersData.analytics?.total_orders || 0}</div>
+                </div>
+              </div>
+
+              <div className="grid gap-3 lg:grid-cols-3">
+                {[
+                  { title: 'Top by Quantity', rows: bestsellersData.top_by_quantity, val: (p) => `${p.total_qty} units` },
+                  { title: 'Top by Revenue', rows: bestsellersData.top_by_revenue, val: (p) => fmtUSD0(p.total_revenue) },
+                  { title: 'Top by Profit', rows: bestsellersData.top_by_profit, val: (p) => fmtUSD0(p.total_profit) },
+                ].map((block) => (
+                  <div key={block.title} className="m-glow-card p-4">
+                    <div className="font-bold text-white text-[0.82rem] mb-3">{block.title}</div>
+                    <div className="space-y-2">
+                      {(block.rows || []).slice(0, 5).map((p, i) => (
+                        <div key={i} className="flex justify-between items-center gap-2 text-[0.78rem]">
+                          <span className="truncate text-[#c3cede]" title={`${p.product_title} ${p.variant_title || ''}`}>
+                            <b className={cn('mr-1.5', i === 0 ? 'text-amber-300' : i === 1 ? 'text-slate-300' : i === 2 ? 'text-orange-300' : 'text-[#63748f]')}>
+                              {i + 1}
+                            </b>
+                            {p.product_title}
+                          </span>
+                          <b className="text-white whitespace-nowrap">{block.val(p)}</b>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="m-glow-card">
+                <div className="px-4 pt-3.5 pb-2.5 border-b border-[#22304d]">
+                  <div className="font-extrabold text-white text-[0.95rem]">All Best Sellers</div>
+                  <div className="text-[0.7rem] text-[#8fa0b8]">Top 100 by quantity · last {bestsellersDay} days</div>
+                </div>
+                {isMobile ? (
+                  <div className="space-y-2 p-3">
+                    {(bestsellersData.bestsellers || []).map((p, idx) => (
+                      <div key={p.variant_id} className="m-mcard !p-2.5">
+                        <div className="flex items-center gap-2.5">
+                          <b className={cn('text-[0.82rem] w-6 text-center shrink-0', idx < 3 ? 'text-amber-300' : 'text-[#63748f]')}>{idx + 1}</b>
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[0.78rem] font-semibold text-white truncate">{p.product_title}</div>
+                            <div className="text-[0.66rem] text-[#8fa0b8] truncate">
+                              {p.variant_title || 'Default'} · {p.total_qty} units · {fmtUSD0(p.total_revenue)}
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <div className="text-[0.76rem] font-bold">{pnl(p.total_profit)}</div>
+                            {marginBadge((p.margin_pct || 0) / 100)}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto max-h-[560px] overflow-y-auto rounded-b-[14px]">
+                    <table className="m-table">
+                      <thead>
+                        <tr>
+                          <th className="!cursor-default w-10">#</th>
+                          <th className="!cursor-default !text-left">Product</th>
+                          <th className="!cursor-default !text-left">Variant</th>
+                          <th className="!cursor-default">Qty</th>
+                          <th className="!cursor-default">Orders</th>
+                          <th className="!cursor-default">Revenue</th>
+                          <th className="!cursor-default">COGS</th>
+                          <th className="!cursor-default">Profit</th>
+                          <th className="!cursor-default">Margin</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(bestsellersData.bestsellers || []).map((p, idx) => (
+                          <tr key={p.variant_id}>
+                            <td className={cn('!text-center font-extrabold', idx < 3 ? 'text-amber-300' : 'text-[#63748f]')}>{idx + 1}</td>
+                            <td className="max-w-[260px] truncate" title={p.product_title}>{p.product_title}</td>
+                            <td className="!text-left !text-[#8fa0b8] max-w-[150px] truncate">{p.variant_title || 'Default'}</td>
+                            <td className="font-bold text-white">{p.total_qty}</td>
+                            <td>{p.order_count}</td>
+                            <td className="m-rev">{fmtUSD(p.total_revenue)}</td>
+                            <td>{fmtUSD(p.total_cogs)}</td>
+                            <td>{pnl(p.total_profit)}</td>
+                            <td>{marginBadge((p.margin_pct || 0) / 100)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
             </>
           )}
-        </TabsContent>
-      </Tabs>
+        </div>
+      )}
     </div>
   );
 }

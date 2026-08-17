@@ -21,6 +21,30 @@ export default function Login() {
     }
   }, [isAuthenticated, loading, navigate]);
 
+  // LOCAL DEV: try the no-SSO dev sign-in first. The backend only honors it
+  // when ALLOW_DEV_LOGIN=1 (local, gitignored .env) — in production this is a
+  // 403 and the normal Google flow below takes over. This covers every local
+  // serving mode (vite :3000, node :3001, LAN IP from a phone) since the
+  // Google OAuth client has no localhost origins (redirect_uri_mismatch).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/auth/dev-login', { method: 'POST' });
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (data?.token && data?.user) {
+          localStorage.setItem('mirai_auth_token', data.token);
+          localStorage.setItem('mirai_auth_user', JSON.stringify(data.user));
+          window.location.replace('/');
+        }
+      } catch {
+        // backend unreachable — fall through to Google sign-in
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   // Load Google Sign-In script
   useEffect(() => {
     if (!GOOGLE_CLIENT_ID) {

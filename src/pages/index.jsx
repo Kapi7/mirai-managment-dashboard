@@ -58,6 +58,8 @@ const PAGES = {
 
     Support: Support,
 
+    Tracking: Tracking,
+
     Activity: Activity,
 
     Marketing: Marketing,

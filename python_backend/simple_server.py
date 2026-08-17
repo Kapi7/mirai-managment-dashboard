@@ -1608,6 +1608,21 @@ async def google_login(req: GoogleAuthRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/auth/dev-login")
+async def dev_login():
+    """LOCAL DEV ONLY — issue a session without Google SSO.
+
+    Enabled solely by ALLOW_DEV_LOGIN=1 in the local, gitignored .env; the
+    variable is never set on Render, so this endpoint is a 403 in production.
+    Exists because the Google OAuth client has no localhost origins
+    (redirect_uri_mismatch on any local URL).
+    """
+    if os.getenv("ALLOW_DEV_LOGIN") != "1":
+        raise HTTPException(status_code=403, detail="Not available")
+    user = {"email": "local@dev", "name": "Local Dev", "picture": "", "is_admin": True}
+    return {"token": create_jwt_token(user), "user": user}
+
+
 @app.get("/auth/me")
 async def get_me(user: dict = Depends(require_auth)):
     """Get current user info"""

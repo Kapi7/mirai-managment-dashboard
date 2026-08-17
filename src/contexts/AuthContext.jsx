@@ -6,13 +6,21 @@ const AUTH_API_URL = '/api/auth';
 const TOKEN_KEY = 'mirai_auth_token';
 const USER_KEY = 'mirai_auth_user';
 
+// LOCAL DEV ONLY: `import.meta.env.DEV` is false in production builds, so this
+// can never activate on the deployed dashboard. Set VITE_DEV_NO_AUTH=0 in
+// .env.development if you want to exercise the real Google SSO flow locally.
+const DEV_NO_AUTH = import.meta.env.DEV && import.meta.env.VITE_DEV_NO_AUTH !== '0';
+const DEV_USER = { email: 'local@dev', name: 'Local Dev', picture: '', is_admin: true };
+
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState(DEV_NO_AUTH ? DEV_USER : null);
+  const [loading, setLoading] = useState(!DEV_NO_AUTH);
   const [error, setError] = useState(null);
 
   // Load user from localStorage on mount
   useEffect(() => {
+    if (DEV_NO_AUTH) return; // local dev: no JWT, no verification
+
     const token = localStorage.getItem(TOKEN_KEY);
     const savedUser = localStorage.getItem(USER_KEY);
 
@@ -37,7 +45,11 @@ export function AuthProvider({ children }) {
       });
 
       if (!response.ok) {
-        logout();
+        // Only drop the session when the token is actually rejected — a 5xx
+        // during a backend restart/deploy should not log everyone out.
+        if (response.status === 401 || response.status === 403) {
+          logout();
+        }
         return false;
       }
 
@@ -86,6 +98,7 @@ export function AuthProvider({ children }) {
   const logout = useCallback(() => {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
+    if (DEV_NO_AUTH) return; // local dev session can't be signed out
     setUser(null);
   }, []);
 

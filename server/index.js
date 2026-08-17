@@ -816,6 +816,23 @@ app.post('/api/auth/google', async (req, res) => {
   }
 });
 
+// Auth - local dev sign-in (backend only honors it when ALLOW_DEV_LOGIN=1,
+// which is never set on Render — in production this proxies to a 403)
+app.post('/api/auth/dev-login', async (req, res) => {
+  try {
+    const pythonBackendUrl = process.env.PYTHON_BACKEND_URL || 'http://localhost:8080';
+    const response = await fetch(`${pythonBackendUrl}/auth/dev-login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(10000)
+    });
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Auth - Get current user
 app.get('/api/auth/me', async (req, res) => {
   try {

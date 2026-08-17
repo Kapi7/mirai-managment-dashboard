@@ -14,6 +14,13 @@ export default defineConfig({
         target: 'http://localhost:8080',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/reports-api/, '')
+      },
+      // Local login: in prod Node maps /api/auth/* -> FastAPI /auth/*; mirror
+      // that in dev so Google sign-in + token verify work on the vite port.
+      '/api/auth': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, '')
       }
     }
   },

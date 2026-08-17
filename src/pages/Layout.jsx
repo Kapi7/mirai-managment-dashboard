@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { createPageUrl } from "@/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -17,25 +17,11 @@ import {
   Target,
   FileText,
   Share2,
-  Bot
+  LayoutGrid,
+  X,
 } from "lucide-react";
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarHeader,
-  SidebarFooter,
-  SidebarProvider,
-  SidebarTrigger,
-} from "@/components/ui/sidebar";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { watchTables } from "@/lib/cardifyTables";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -50,23 +36,22 @@ const navigationSections = [
     label: "Analytics",
     items: [
       { title: "Reports", url: createPageUrl("Reports"), icon: BarChart3 },
-    ]
+    ],
   },
   {
     label: "Marketing",
     items: [
-      { title: "AI Agents", url: createPageUrl("AgentDashboard"), icon: Bot, hasPendingBadge: true },
       { title: "Meta Ads", url: createPageUrl("Marketing"), icon: Target },
       { title: "Blog Creator", url: createPageUrl("BlogCreator"), icon: FileText },
       { title: "Social Media", url: createPageUrl("SocialMedia"), icon: Share2 },
-    ]
+    ],
   },
   {
     label: "Operations",
     items: [
       { title: "Pricing", url: createPageUrl("Pricing"), icon: DollarSign },
       { title: "Korealy Tracking", url: createPageUrl("KorealyProcessor"), icon: Package },
-    ]
+    ],
   },
   {
     label: "Sales & Support",
@@ -74,179 +59,230 @@ const navigationSections = [
       { title: "Support Inbox", url: createPageUrl("Support"), icon: MessageSquare },
       { title: "Tracking", url: createPageUrl("Tracking"), icon: Truck },
       { title: "Activity Center", url: createPageUrl("Activity"), icon: ClipboardList },
-    ]
+    ],
   },
   {
     label: "Settings",
     items: [
       { title: "Integrations", url: createPageUrl("Settings"), icon: Settings },
-    ]
-  }
+    ],
+  },
 ];
 
-const LAYOUT_API_URL = import.meta.env.DEV ? 'http://localhost:8080' : '/api';
+// Bottom thumb-nav on mobile: the 4 most-used destinations + "More" sheet
+const mobilePrimary = [
+  { title: "Reports", url: createPageUrl("Reports"), icon: BarChart3 },
+  { title: "Pricing", url: createPageUrl("Pricing"), icon: DollarSign },
+  { title: "Support", url: createPageUrl("Support"), icon: MessageSquare },
+  { title: "Tracking", url: createPageUrl("Tracking"), icon: Truck },
+];
 
 export default function Layout({ children }) {
   const location = useLocation();
-  const { user, isAdmin, logout, getAuthHeader } = useAuth();
+  const { user, isAdmin, logout } = useAuth();
+  const [moreOpen, setMoreOpen] = useState(false);
 
-  // Pending agent approvals badge
-  const [pendingCount, setPendingCount] = useState(0);
+  // Close the mobile sheet on navigation
+  useEffect(() => { setMoreOpen(false); }, [location.pathname]);
 
-  const fetchPendingCount = useCallback(async () => {
-    try {
-      const res = await fetch(`${LAYOUT_API_URL}/agents/pending-count`, {
-        headers: { ...getAuthHeader(), 'Content-Type': 'application/json' },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setPendingCount(data.total || 0);
-      }
-    } catch {
-      // Silently fail — badge just won't show
+  // Legacy pages: keep wide tables stamped for the mobile card treatment
+  useEffect(() => watchTables(document.body), []);
+
+  // "/" serves Reports — count it as active. Route paths are capitalized
+  // (/Reports) while createPageUrl lowercases, so compare case-insensitively.
+  const isActive = (url) =>
+    location.pathname.toLowerCase() === url.toLowerCase() ||
+    (url === createPageUrl("Reports") && location.pathname === "/");
+
+  const currentTitle = (() => {
+    for (const s of navigationSections) {
+      const hit = s.items.find((i) => isActive(i.url));
+      if (hit) return hit.title;
     }
-  }, [getAuthHeader]);
+    if (location.pathname === "/UserManagement") return "User Management";
+    return "Mirai Skin";
+  })();
 
-  useEffect(() => {
-    fetchPendingCount();
-    const interval = setInterval(fetchPendingCount, 60000); // Poll every 60s
-    return () => clearInterval(interval);
-  }, [fetchPendingCount]);
+  const navLink = (item, onNavigate) => {
+    const active = isActive(item.url);
+    return (
+      <Link
+        key={item.title}
+        to={item.url}
+        onClick={onNavigate}
+        className={`group flex items-center gap-3 px-3 py-2.5 rounded-xl mb-0.5 text-[0.86rem] font-medium transition-all duration-150 border ${
+          active
+            ? "bg-gradient-to-r from-rose-500/15 to-fuchsia-500/10 border-rose-400/25 text-white shadow-[0_0_18px_-6px_rgba(251,113,133,0.45)]"
+            : "border-transparent text-[#a9b7cc] hover:text-white hover:bg-white/[0.04]"
+        }`}
+      >
+        <item.icon
+          className={`w-4 h-4 shrink-0 transition-colors ${active ? "text-rose-300" : "text-[#7487a3] group-hover:text-rose-200"}`}
+        />
+        <span className="truncate">{item.title}</span>
+      </Link>
+    );
+  };
+
+  const brand = (
+    <div className="flex items-center gap-3">
+      <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-gradient-to-br from-rose-500 via-fuchsia-500 to-violet-500 shadow-[0_4px_18px_-4px_rgba(244,114,182,0.65)]">
+        <TrendingUp className="w-5 h-5 text-white" />
+      </div>
+      <div className="min-w-0">
+        <h2 className="font-extrabold text-[1.02rem] leading-tight m-wordmark tracking-tight">Mirai Skin</h2>
+        <p className="text-[0.64rem] font-semibold tracking-[0.14em] uppercase text-[#7487a3]">Management</p>
+      </div>
+    </div>
+  );
+
+  const userFooter = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button className="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-white/[0.05] transition-colors text-left">
+          <Avatar className="h-9 w-9 border border-[#2b3a55]">
+            {user?.picture && <AvatarImage src={user.picture} alt={user.name} />}
+            <AvatarFallback className="bg-gradient-to-br from-rose-500 to-violet-500 text-white font-semibold">
+              {user?.name?.charAt(0)?.toUpperCase() || user?.email?.charAt(0)?.toUpperCase() || "U"}
+            </AvatarFallback>
+          </Avatar>
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold text-white text-sm truncate">{user?.name || "User"}</p>
+            <p className="text-xs text-[#8fa0b8] truncate">{user?.email || ""}</p>
+          </div>
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuLabel>My Account</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {isAdmin && (
+          <DropdownMenuItem asChild>
+            <Link to="/UserManagement" className="flex items-center">
+              <Users className="mr-2 h-4 w-4" />
+              User Management
+            </Link>
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem onClick={logout} className="text-red-500">
+          <LogOut className="mr-2 h-4 w-4" />
+          Sign Out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 
   return (
-    <SidebarProvider>
-      <div className="min-h-screen flex w-full bg-gradient-to-br from-slate-50 to-slate-100">
-        <Sidebar className="border-r border-slate-200 bg-white">
-          <SidebarHeader className="border-b border-slate-200 p-6">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg">
-                <TrendingUp className="w-6 h-6 text-white" />
+    <div className="min-h-screen w-full flex">
+      {/* ── Desktop sidebar (≥ lg) ─────────────────────────────────────── */}
+      <aside className="desk-only w-[248px] shrink-0 sticky top-0 h-screen flex flex-col border-r border-[#22304d] bg-[#0d1426]/90 backdrop-blur">
+        <div className="p-5 pb-4 border-b border-[#22304d]">{brand}</div>
+
+        <nav className="flex-1 overflow-y-auto px-3 py-4">
+          {navigationSections.map((section) => (
+            <div key={section.label} className="mb-4">
+              <div className="text-[0.62rem] font-bold uppercase tracking-[0.16em] text-[#5c6e8c] px-3 pb-1.5">
+                {section.label}
               </div>
-              <div>
-                <h2 className="font-bold text-slate-900 text-lg">Mirai Skin</h2>
-                <p className="text-xs text-slate-500">Admin Dashboard</p>
-              </div>
+              {section.items.map((item) => navLink(item))}
             </div>
-          </SidebarHeader>
+          ))}
 
-          <SidebarContent className="p-3">
-            {navigationSections.map((section) => (
-              <SidebarGroup key={section.label} className="mb-4">
-                <SidebarGroupLabel className="text-xs font-semibold text-slate-500 uppercase tracking-wider px-3 py-2">
-                  {section.label}
-                </SidebarGroupLabel>
-                <SidebarGroupContent>
-                  <SidebarMenu>
-                    {section.items.map((item) => (
-                      <SidebarMenuItem key={item.title}>
-                        <SidebarMenuButton
-                          asChild
-                          className={`hover:bg-indigo-50 hover:text-indigo-700 transition-all duration-200 rounded-lg mb-1 ${
-                            location.pathname === item.url ? 'bg-indigo-100 text-indigo-700 font-medium' : ''
-                          }`}
-                        >
-                          <Link to={item.url} className="flex items-center gap-3 px-3 py-2.5">
-                            <item.icon className="w-4 h-4" />
-                            <span>{item.title}</span>
-                            {item.hasPendingBadge && pendingCount > 0 && (
-                              <Badge variant="secondary" className="ml-auto text-xs bg-amber-100 text-amber-700 border-0">
-                                {pendingCount}
-                              </Badge>
-                            )}
-                            {item.badge && (
-                              <Badge variant="secondary" className="ml-auto text-xs bg-amber-100 text-amber-700 border-0">
-                                {item.badge}
-                              </Badge>
-                            )}
-                          </Link>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                    ))}
-                  </SidebarMenu>
-                </SidebarGroupContent>
-              </SidebarGroup>
-            ))}
+          {isAdmin && (
+            <div className="mb-4">
+              <div className="text-[0.62rem] font-bold uppercase tracking-[0.16em] text-[#5c6e8c] px-3 pb-1.5">
+                Admin
+              </div>
+              {navLink({ title: "User Management", url: "/UserManagement", icon: Users })}
+            </div>
+          )}
+        </nav>
 
-            {/* Admin section */}
-            {isAdmin && (
-              <SidebarGroup className="mb-4">
-                <SidebarGroupLabel className="text-xs font-semibold text-slate-500 uppercase tracking-wider px-3 py-2">
-                  Admin
-                </SidebarGroupLabel>
-                <SidebarGroupContent>
-                  <SidebarMenu>
-                    <SidebarMenuItem>
-                      <SidebarMenuButton
-                        asChild
-                        className={`hover:bg-indigo-50 hover:text-indigo-700 transition-all duration-200 rounded-lg mb-1 ${
-                          location.pathname === '/UserManagement' ? 'bg-indigo-100 text-indigo-700 font-medium' : ''
-                        }`}
-                      >
-                        <Link to="/UserManagement" className="flex items-center gap-3 px-3 py-2.5">
-                          <Users className="w-4 h-4" />
-                          <span>User Management</span>
-                        </Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  </SidebarMenu>
-                </SidebarGroupContent>
-              </SidebarGroup>
-            )}
-          </SidebarContent>
+        <div className="border-t border-[#22304d] p-3">{userFooter}</div>
+      </aside>
 
-          <SidebarFooter className="border-t border-slate-200 p-4">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" className="w-full justify-start p-0 h-auto hover:bg-transparent">
-                  <div className="flex items-center gap-3 w-full">
-                    <Avatar className="h-9 w-9">
-                      {user?.picture && <AvatarImage src={user.picture} alt={user.name} />}
-                      <AvatarFallback className="bg-gradient-to-br from-indigo-500 to-purple-600 text-white font-semibold">
-                        {user?.name?.charAt(0)?.toUpperCase() || user?.email?.charAt(0)?.toUpperCase() || 'U'}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="flex-1 min-w-0 text-left">
-                      <p className="font-medium text-slate-900 text-sm truncate">
-                        {user?.name || 'User'}
-                      </p>
-                      <p className="text-xs text-slate-500 truncate">{user?.email || ''}</p>
-                    </div>
-                  </div>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuLabel>My Account</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                {isAdmin && (
-                  <DropdownMenuItem asChild>
-                    <Link to="/UserManagement" className="flex items-center">
-                      <Users className="mr-2 h-4 w-4" />
-                      User Management
-                    </Link>
-                  </DropdownMenuItem>
+      {/* ── Main column ────────────────────────────────────────────────── */}
+      <main className="flex-1 min-w-0 flex flex-col">
+        {/* Mobile top bar (< lg) */}
+        <header className="mob-only sticky top-0 z-40 flex items-center justify-between gap-3 px-4 py-2.5 bg-[#0d1426]/92 backdrop-blur border-b border-[#22304d]">
+          {brand}
+          <span className="text-[0.78rem] font-bold text-[#a9b7cc] truncate">{currentTitle}</span>
+        </header>
+
+        <div className="flex-1 min-w-0">{children}</div>
+      </main>
+
+      {/* ── Mobile floating thumb-nav (< lg) ───────────────────────────── */}
+      <nav className="mob-only fixed bottom-[max(14px,env(safe-area-inset-bottom))] inset-x-3 z-50 rounded-2xl border border-[#2e3d5c] bg-[#0f1830]/92 backdrop-blur-xl shadow-[0_14px_44px_-10px_rgba(0,0,0,0.85),0_0_0_1px_rgba(99,102,241,0.06)] overflow-hidden">
+        <div className="m-thumbgrid">
+          {mobilePrimary.map((item) => {
+            const active = isActive(item.url);
+            return (
+              <Link
+                key={item.title}
+                to={item.url}
+                className={`relative flex flex-col items-center gap-0.5 py-2 text-[0.6rem] font-bold transition-colors ${
+                  active ? "text-rose-300" : "text-[#7487a3]"
+                }`}
+              >
+                {active && (
+                  <span className="absolute top-0 h-[2.5px] w-9 rounded-full bg-gradient-to-r from-rose-400 to-fuchsia-400 shadow-[0_0_10px_rgba(251,113,133,0.7)]" />
                 )}
-                <DropdownMenuItem onClick={logout} className="text-red-600">
-                  <LogOut className="mr-2 h-4 w-4" />
-                  Sign Out
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </SidebarFooter>
-        </Sidebar>
+                <item.icon className="w-5 h-5" />
+                {item.title}
+              </Link>
+            );
+          })}
+          <button
+            onClick={() => setMoreOpen(true)}
+            className={`flex flex-col items-center gap-0.5 py-2 text-[0.6rem] font-bold transition-colors ${
+              moreOpen ? "text-rose-300" : "text-[#7487a3]"
+            }`}
+          >
+            <LayoutGrid className="w-5 h-5" />
+            More
+          </button>
+        </div>
+      </nav>
 
-        <main className="flex-1 flex flex-col overflow-hidden">
-          <header className="bg-white border-b border-slate-200 px-6 py-4 lg:hidden">
-            <div className="flex items-center gap-4">
-              <SidebarTrigger className="hover:bg-slate-100 p-2 rounded-lg transition-colors duration-200" />
-              <h1 className="text-xl font-bold text-slate-900">Mirai Skin Admin</h1>
+      {/* ── Mobile "More" sheet ────────────────────────────────────────── */}
+      {moreOpen && (
+        <div className="mob-only fixed inset-0 z-[60]" role="dialog" aria-modal="true">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setMoreOpen(false)} />
+          <div className="absolute bottom-0 inset-x-0 max-h-[82vh] overflow-y-auto rounded-t-2xl border-t border-[#2b3a55] bg-[#101a30] p-4 pb-[calc(16px+env(safe-area-inset-bottom))] shadow-[0_-18px_50px_-12px_rgba(0,0,0,0.8)]">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-sm font-extrabold text-white">All sections</span>
+              <button
+                onClick={() => setMoreOpen(false)}
+                className="p-2 rounded-lg bg-white/[0.06] text-[#a9b7cc] hover:text-white"
+                aria-label="Close menu"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
-          </header>
-
-          <div className="flex-1 overflow-auto">
-            {children}
+            {navigationSections.map((section) => (
+              <div key={section.label} className="mb-3">
+                <div className="text-[0.62rem] font-bold uppercase tracking-[0.16em] text-[#5c6e8c] px-1 pb-1.5">
+                  {section.label}
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {section.items.map((item) => navLink(item, () => setMoreOpen(false)))}
+                </div>
+              </div>
+            ))}
+            {isAdmin && (
+              <div className="mb-1">
+                <div className="text-[0.62rem] font-bold uppercase tracking-[0.16em] text-[#5c6e8c] px-1 pb-1.5">
+                  Admin
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {navLink({ title: "User Management", url: "/UserManagement", icon: Users }, () => setMoreOpen(false))}
+                </div>
+              </div>
+            )}
+            <div className="border-t border-[#22304d] mt-3 pt-3">{userFooter}</div>
           </div>
-        </main>
-      </div>
-    </SidebarProvider>
+        </div>
+      )}
+    </div>
   );
 }
