@@ -24,6 +24,12 @@ async def sync_shipping_rates():
         "shipping_matrix_all.csv"
     )
 
+    try:
+        from shipping_matrix_source import refresh_if_stale
+        refresh_if_stale(csv_path)  # live source = Korealy Google Sheet
+    except Exception as e:
+        print(f"⚠️ Shipping matrix sheet refresh skipped: {e}")
+
     if not os.path.exists(csv_path):
         print(f"⚠️ Shipping matrix not found at {csv_path}")
         return 0

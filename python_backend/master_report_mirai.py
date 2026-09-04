@@ -82,6 +82,12 @@ _SHIP_MATRIX: Dict[str, Dict[float, float]] = {}
 _WARNED_MISSING_GEOS: set[str] = set()
 _WARNED_MATRIX = False
 
+try:
+    from shipping_matrix_source import refresh_if_stale as _refresh_matrix_if_stale
+except Exception:  # pragma: no cover - keep working without the live-sheet helper
+    def _refresh_matrix_if_stale(*_a, **_k):
+        return False
+
 def _canonical_geo(country_name: Optional[str], iso2: Optional[str]) -> str:
     s = (country_name or "").strip()
     cc = (iso2 or "").strip().upper()
@@ -94,7 +100,9 @@ def _canonical_geo(country_name: Optional[str], iso2: Optional[str]) -> str:
 
 def _load_shipping_matrix_geo_weight() -> None:
     global _SHIP_MATRIX, _WARNED_MATRIX
-    if _SHIP_MATRIX:
+    # Live source = Korealy Google Sheet; reload when a fresh copy landed.
+    refreshed = _refresh_matrix_if_stale(_MATRIX_PATH)
+    if _SHIP_MATRIX and not refreshed:
         return
 
     if not os.path.exists(_MATRIX_PATH):
@@ -190,8 +198,7 @@ def _order_weight_kg(order: dict) -> float:
     return qty * _DEFAULT_ITEM_WEIGHT_KG if qty > 0 else 0.0
 
 def _lookup_matrix_shipping_usd(geo: str, weight_kg: float) -> float:
-    if not _SHIP_MATRIX:
-        _load_shipping_matrix_geo_weight()
+    _load_shipping_matrix_geo_weight()  # cheap when fresh; reloads after a sheet refresh
     if not _SHIP_MATRIX:
         return 0.0
 
