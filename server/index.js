@@ -342,6 +342,37 @@ function parseKorealyEmail(subject, body) {
 }
 
 // API: Fetch Korealy emails from Gmail
+// Admin endpoints on the Python backend (shipping-cost backfill/restore).
+// Forwards the caller's Authorization header — Python enforces require_admin.
+app.all('/reports-api/admin/*', async (req, res) => {
+  try {
+    const path = req.path.replace('/reports-api', '');
+    const url = `${process.env.PYTHON_BACKEND_URL || 'http://localhost:8080'}${path}`;
+    console.log(`🛠️ Proxying ${req.method} admin request: ${path}`);
+
+    const headers = { 'Content-Type': 'application/json' };
+    if (req.headers.authorization) headers['Authorization'] = req.headers.authorization;
+
+    const response = await fetch(url, {
+      method: req.method,
+      headers,
+      body: ['GET', 'HEAD'].includes(req.method) ? undefined : JSON.stringify(req.body || {}),
+      signal: AbortSignal.timeout(300000) // 5 min: backfills walk every order in the window
+    });
+
+    const text = await response.text();
+    res.status(response.status);
+    try {
+      res.json(JSON.parse(text));
+    } catch {
+      res.send(text);
+    }
+  } catch (error) {
+    console.error('❌ Error proxying admin request:', error);
+    res.status(502).json({ error: error.message });
+  }
+});
+
 app.get('/api/fetch-korealy-emails', async (req, res) => {
   try {
     // Search for emails from order@korealy.co

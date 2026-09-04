@@ -269,6 +269,20 @@ class PriceUpdate(Base):
     variant = relationship("Variant", back_populates="price_updates")
 
 
+class ShippingBackfillRun(Base):
+    """One applied shipping_cost backfill: summary + per-order old/new = rollback snapshot."""
+    __tablename__ = "shipping_backfill_runs"
+
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    since = Column(String(10))
+    until = Column(String(10))
+    applied = Column(Integer, default=0)      # rows written
+    restored_at = Column(DateTime)            # set when rolled back
+    summary = Column(JSON)
+    rows = Column(JSON)                       # [{id, order_name, old, new, ...}]
+
+
 class DailyKPI(Base):
     """Pre-aggregated daily KPIs"""
     __tablename__ = "daily_kpis"

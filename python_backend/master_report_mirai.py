@@ -168,6 +168,18 @@ def _load_shipping_matrix_geo_weight() -> None:
         print(f"⚠️ Shipping matrix load error: {e}")
         _SHIP_MATRIX = {}
 
+def reload_shipping_matrix(fetch: bool = True) -> None:
+    """Drop the in-memory matrix and reload it, optionally re-fetching the sheet first."""
+    global _SHIP_MATRIX
+    if fetch:
+        try:
+            from shipping_matrix_source import refresh as _refresh_matrix
+            _refresh_matrix(_MATRIX_PATH)
+        except Exception as e:
+            print(f"⚠️ Shipping matrix re-fetch failed, using the file on disk: {e}")
+    _SHIP_MATRIX = {}
+    _load_shipping_matrix_geo_weight()
+
 def _order_geo(order: dict) -> str:
     addr = order.get("shippingAddress") or {}
     cn = (addr.get("country") or "").strip()

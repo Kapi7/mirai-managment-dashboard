@@ -2263,50 +2263,74 @@ async def migrate_sent_at(user: dict = Depends(get_current_user)):
         }
 
 
+class ShippingBackfillRequest(BaseModel):
+    since: Optional[str] = None       # first local (shop TZ) date, YYYY-MM-DD; None = all history
+    until: Optional[str] = None       # last local date inclusive; None = today
+    dry_run: bool = True              # default is a plan only — nothing written
+    include_rows: bool = False        # per-order old/new in the response (an apply stores them anyway)
+    refresh_matrix: bool = True       # re-fetch the Korealy sheet before pricing
+
+
+class ShippingRestoreRequest(BaseModel):
+    run_id: Optional[int] = None                  # a stored run from an earlier apply
+    values: Optional[List[Dict[str, Any]]] = None # or plan rows (uses `old`) / [{id, shipping_cost}]
+
+
 @app.post("/admin/backfill-shipping-costs")
-async def backfill_shipping_costs(user: dict = Depends(get_current_user)):
+async def backfill_shipping_costs(req: ShippingBackfillRequest = None, user: dict = Depends(require_admin)):
     """
-    Backfill shipping_cost for all orders using the shipping matrix.
-    This recalculates shipping costs based on weight and country.
+    Recompute orders.shipping_cost from the (live-sheet) shipping matrix for a
+    date window. Dry run by default: returns per-order old/new without writing.
+    POST {"since":"2026-08-01","dry_run":false} to apply — only changed rows are
+    written, in one transaction, and the returned rows double as the rollback
+    snapshot for /admin/restore-shipping-costs.
     """
     if not DB_SERVICE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
+    req = req or ShippingBackfillRequest()
 
     from database.connection import get_db
-    from database.models import Order
-    from sqlalchemy import select
-    from master_report_mirai import _lookup_matrix_shipping_usd, _canonical_geo
+    from backfill_shipping import plan_backfill, apply_backfill, _parse_date
 
-    updated_count = 0
-    errors = []
+    try:
+        since, until = _parse_date(req.since), _parse_date(req.until)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"bad date: {e}")
 
     async with get_db() as db:
-        # Get all orders
-        result = await db.execute(select(Order))
-        orders = result.scalars().all()
-
-        for order in orders:
-            try:
-                weight_kg = (order.total_weight_g or 0) / 1000.0
-                country_code = order.country_code or ""
-                country_name = order.country or ""
-                geo = _canonical_geo(country_name, country_code)
-                shipping_cost = _lookup_matrix_shipping_usd(geo, weight_kg)
-
-                if shipping_cost != (float(order.shipping_cost) if order.shipping_cost else 0):
-                    order.shipping_cost = round(shipping_cost, 2)
-                    updated_count += 1
-            except Exception as e:
-                errors.append(f"Order {order.order_name}: {str(e)}")
-
-        await db.commit()
+        plan = await plan_backfill(db, since, until, refresh_matrix=req.refresh_matrix)
+        applied, run_id = 0, None
+        if not req.dry_run:
+            out = await apply_backfill(db, plan)
+            applied, run_id = out["applied"], out["run_id"]
 
     return {
         "success": True,
-        "message": f"Updated shipping costs for {updated_count} orders",
-        "updated_count": updated_count,
-        "errors": errors[:10] if errors else []
+        "dry_run": req.dry_run,
+        "applied": applied,
+        "run_id": run_id,
+        "message": (f"dry run: {plan['summary']['changed']} of {plan['summary']['orders']} orders would change"
+                    if req.dry_run else f"updated shipping_cost on {applied} orders (rollback: run_id {run_id})"),
+        **plan["summary"],
+        "rows": plan["rows"] if req.include_rows else [],
     }
+
+
+@app.post("/admin/restore-shipping-costs")
+async def restore_shipping_costs(req: ShippingRestoreRequest, user: dict = Depends(require_admin)):
+    """Roll back a backfill: by stored run_id, or from plan rows ({id, old}) / [{id, shipping_cost}]."""
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+    from database.connection import get_db
+    from backfill_shipping import restore_backfill
+    if req.run_id is None and not req.values:
+        raise HTTPException(status_code=400, detail="run_id or values required")
+    try:
+        async with get_db() as db:
+            out = await restore_backfill(db, values=req.values, run_id=req.run_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"success": True, **out}
 
 
 @app.post("/support/emails/{email_id}/reject")
