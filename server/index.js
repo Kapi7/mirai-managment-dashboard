@@ -1,3 +1,4 @@
+import { reportsProxy } from '../consolidation/reports-proxy.js';
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -15,6 +16,7 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Middleware
+app.use(reportsProxy);
 app.use(cors());
 app.use(express.json());
 

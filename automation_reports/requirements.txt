@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+pydantic
+requests
+pytz
+python-dotenv
+pandas
+requests
+gspread
+gspread-formatting
+google-api-python-client
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+ShopifyAPI
+google-ads
