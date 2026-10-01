@@ -1,0 +1,44 @@
+credentials:
+  mirai:
+    kind: oauth_token
+    env: MIRAI_SEO_GOOGLE_TOKEN_PATH
+
+settings:
+  database: data/mirai-seo.db
+  backfill_months: 3
+  refresh_window_days: 7
+  gsc_lag_days: 3
+  ga4_lag_days: 2
+  affiliate_events: [affiliate_click, outbound_click, mirai_click]
+
+sites:
+  - slug: mirai-skin
+    name: mirai-skin.com
+    vertical: Main
+    platform: Shopify
+    gsc_property: sc-domain:mirai-skin.com
+    ga4_property_id: '475812683'
+    gsc_auth: mirai
+    ga4_auth: mirai
+    wordpress: false
+    hosts: [mirai-skin.com, www.mirai-skin.com, ai.mirai-skin.com]
+  - slug: glow-coded
+    name: glow-coded.com
+    vertical: Satellites
+    platform: Cloudflare Pages
+    gsc_property: sc-domain:glow-coded.com
+    ga4_property_id: '530345570'
+    gsc_auth: mirai
+    ga4_auth: mirai
+    wordpress: false
+    hosts: [glow-coded.com, www.glow-coded.com]
+  - slug: rooted-glow
+    name: rooted-glow.com
+    vertical: Satellites
+    platform: Cloudflare Pages
+    gsc_property: sc-domain:rooted-glow.com
+    ga4_property_id: '530337594'
+    gsc_auth: mirai
+    ga4_auth: mirai
+    wordpress: false
+    hosts: [rooted-glow.com, www.rooted-glow.com]

@@ -14,6 +14,7 @@ const UserManagement = lazy(() => import('./UserManagement'));
 const Support = lazy(() => import('./Support'));
 const Tracking = lazy(() => import('./Tracking'));
 const Activity = lazy(() => import('./Activity'));
+const SEO = lazy(() => import('./SEO'));
 const Marketing = lazy(() => import('./Marketing'));
 const BlogCreator = lazy(() => import('./BlogCreator'));
 const SocialMedia = lazy(() => import('./SocialMedia'));
@@ -61,6 +62,8 @@ const PAGES = {
     Tracking: Tracking,
 
     Activity: Activity,
+
+    SEO: SEO,
 
     Marketing: Marketing,
 
@@ -115,6 +118,7 @@ function PagesContent() {
                     <Route path="/Support" element={<ProtectedRoute><Support /></ProtectedRoute>} />
                     <Route path="/Tracking" element={<ProtectedRoute><Tracking /></ProtectedRoute>} />
                     <Route path="/Activity" element={<ProtectedRoute><Activity /></ProtectedRoute>} />
+                    <Route path="/SEO" element={<ProtectedRoute><SEO /></ProtectedRoute>} />
                     <Route path="/Marketing" element={<ProtectedRoute><Marketing /></ProtectedRoute>} />
                     <Route path="/BlogCreator" element={<ProtectedRoute><BlogCreator /></ProtectedRoute>} />
                     <Route path="/SocialMedia" element={<ProtectedRoute><SocialMedia /></ProtectedRoute>} />

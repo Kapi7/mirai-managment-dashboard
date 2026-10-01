@@ -1,5 +1,6 @@
 import { reportsProxy } from '../consolidation/reports-proxy.js';
 import express from 'express';
+import { createSeoRouter } from '../seo/server/router.js';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { google } from 'googleapis';
@@ -19,6 +20,7 @@ const PORT = process.env.PORT || 3001;
 app.use(reportsProxy);
 app.use(cors());
 app.use(express.json());
+app.use('/seo-dashboard', createSeoRouter());
 
 // Reports API endpoint - proxies to Python backend with real mirai_report logic
 app.post('/reports-api/daily-report', async (req, res) => {

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="aio-base" content="%BASE%">
+<title>Mirai SEO</title>
+<script>/*__THEME__*/</script>
+<link rel="stylesheet" href="%BASE%/family/style.css?v=%VER%">
+<script src="%BASE%/family/app.js?v=%VER%" defer></script>
+</head>
+<body>
+<div class="wrap">
+ <div class="top-nav" id="topNav">
+  <header class="nh" aria-label="Mirai SEO">
+    <div class="nh-row">
+      <div class="lens" role="radiogroup" aria-label="Which sites" id="lens"></div>
+      <div class="nh-c">
+        <h1><span class="badge" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/><path d="M7.5 12.5l2-2.5 2 1.5 2.2-3"/></svg></span>Mirai <span class="grad">SEO</span></h1>
+        <div class="sub"><span class="lbl-perf">Search performance</span><span class="dim">·</span>
+          <button type="button" class="step" id="stepBack" aria-label="Previous period">&#9664;</button>
+          <button type="button" class="daypill" id="dayPill" aria-label="Change dates">…</button>
+          <button type="button" class="step" id="stepFwd" aria-label="Next period">&#9654;</button></div>
+        <div class="live-row"><div class="dd"><button type="button" class="pill status" id="btnStatus" aria-expanded="false" aria-controls="popStatus" aria-haspopup="dialog"><i></i><span id="statusTxt">…</span><span class="arr"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></span></button>
+          <div class="pop pop-c" id="popStatus" role="dialog" aria-label="Data freshness" hidden></div></div></div>
+      </div>
+      <button type="button" class="cta" id="ctaConn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0V7ZM12 16v5"/></svg><span class="t">Connections</span><span class="n" id="ctaN">0</span></button>
+    </div>
+  </header>
+  <div class="nav-row"><nav class="vtabs" role="tablist" aria-label="Detail views" id="vtabs"></nav><button type="button" class="ctl-btn nav-filters" data-editfilters>Filters</button></div>
+ </div>
+
+  <section class="fpanel" id="fpanel" aria-label="Filters">
+    <div class="fp-head"><b>Filters</b><button type="button" class="chipbtn" data-fclose>Close</button></div>
+    <div class="frow">
+      <div class="fgrp"><span class="flabel" id="lbl-period">Period</span><div class="seg" role="radiogroup" aria-labelledby="lbl-period" id="segPeriod"></div>
+        <div class="dd"><button type="button" class="ctl-btn" id="btnCustom" aria-expanded="false" aria-controls="popCustom" aria-haspopup="dialog"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg><span class="val" id="customLbl">Custom</span><span class="arr" aria-hidden="true">&#9660;</span></button>
+          <div class="pop" id="popCustom" role="dialog" aria-label="Custom dates" hidden></div></div></div>
+      <span class="fdiv" aria-hidden="true"></span>
+      <div class="fgrp"><button type="button" class="switch" role="switch" id="swCompare" aria-checked="true" data-tip="Compare every number with the same number of days just before"><span class="tr" aria-hidden="true"></span>Compare</button></div>
+    </div>
+    <div class="frow">
+      <div class="fgrp"><span class="flabel">Sites</span><div class="dd"><button type="button" class="ctl-btn" id="btnSites" aria-expanded="false" aria-controls="popSites" aria-haspopup="dialog"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18M7 6.5h.01M10 6.5h.01"/></svg><span class="val" id="sitesLbl">All sites</span><span class="arr" aria-hidden="true">&#9660;</span></button>
+        <div class="pop" id="popSites" role="dialog" aria-label="Choose sites" hidden></div></div></div>
+      <span class="fdiv" aria-hidden="true"></span>
+      <div class="fgrp"><span class="flabel" id="lbl-traffic">Visits</span><div class="seg" role="radiogroup" aria-labelledby="lbl-traffic" id="segTraffic"></div>
+        <button type="button" class="ib" data-tip="Direct visits have no recorded referrer. Excluding them changes the traffic scope; Direct is not proof of bots or organic acquisition." aria-label="About Direct traffic">i</button></div>
+      <span class="fdiv" aria-hidden="true"></span>
+      <div class="find"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
+        <input id="find" type="search" placeholder="Find a site, term or page" aria-label="Find in the lists below" autocomplete="off"><button type="button" class="clr" id="findClr" aria-label="Clear search" hidden>&#10005;</button></div>
+    </div>
+    <div class="frow country-control"><label class="flabel" for="countryFilter">Countries · visits</label><select class="ctl-btn" id="countryFilter" aria-describedby="countryScope"></select><span class="small dim" id="countryScope">Filters country breakdowns only · includes Direct</span><button type="button" class="reset" data-go-country>View countries</button></div>
+    <div class="fsum" id="fsum" aria-live="polite"></div>
+    <div class="fp-foot"><button type="button" class="btn" data-fclose>Show results</button></div>
+  </section>
+  <div class="fscrim" data-fclose></div>
+  <div class="mini" id="mini" hidden><span id="miniTxt"></span><button type="button" class="btn" id="editFilters">Edit filters</button></div>
+
+  <div class="ecosystem-strip"><span><b>Mirai Skin</b> Main store</span><span class="eco-arrow" aria-hidden="true">←</span><span><b>Glow Coded</b> Beauty satellite</span><span>+</span><span><b>Rooted Glow</b> Wellness satellite</span></div>
+  <div class="refresh-line"><span id="refreshMessage" role="status"></span><button type="button" class="ctl-btn" id="refreshSeo">Refresh Google data</button></div>
+  <main id="main" class="wrap" aria-live="off"><div class="panel boot" id="boot" role="status"><span class="spin" aria-hidden="true"></span>Loading the dashboard…</div></main>
+  <footer id="foot"></footer>
+</div>
+<nav class="bnav" id="bnav" role="tablist" aria-label="Detail views"></nav>
+<button type="button" class="fab" id="fab" aria-expanded="false"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg>Filters<span class="n" id="fabN" hidden></span></button>
+<div id="dwRoot"></div>
+<div id="tip" role="tooltip" hidden></div>
+</body>
+</html>

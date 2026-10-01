@@ -53,3 +53,8 @@ python_backend/google-ads-2.yaml
 python_backend/outputs/
 
 .reports-venv/
+
+# SEO runtime cache and local secrets
+seo/data/
+seo/.env
+seo/*.db*
