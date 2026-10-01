@@ -145,3 +145,12 @@ test('a dropped Postgres cache connection never crashes the app or saves without
     assert.equal(writes,0);assert.equal(destroyed,true);
   }finally{await storage.close();t.cleanup();}
 });
+
+test('persistent-disk mode keeps SEO independent of the management Postgres connection',async()=>{
+  const {createStorage}=await import('../server/storage.js');const t=tempDb();
+  const oldMode=process.env.MIRAI_SEO_STORAGE,oldUrl=process.env.DATABASE_URL;
+  process.env.MIRAI_SEO_STORAGE='disk';process.env.DATABASE_URL='postgres://unreachable.invalid/should-not-connect';
+  const storage=createStorage(t.path);
+  try{assert.equal(storage.durable,true);await storage.restore();assert.equal(await storage.exclusive(async()=>42),42);}
+  finally{await storage.close();t.cleanup();if(oldMode===undefined)delete process.env.MIRAI_SEO_STORAGE;else process.env.MIRAI_SEO_STORAGE=oldMode;if(oldUrl===undefined)delete process.env.DATABASE_URL;else process.env.DATABASE_URL=oldUrl;}
+});

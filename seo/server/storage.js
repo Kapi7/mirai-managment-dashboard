@@ -9,7 +9,7 @@ import { openDb } from './db.js';
 
 // Render's filesystem is ephemeral. Keep an atomic compressed aggregate-only
 // cache in the existing Mirai Postgres database; no customer or credential data.
-export function createStorage(filename, connectionString = process.env.DATABASE_URL, suppliedPool) {
+export function createStorage(filename, connectionString = process.env.MIRAI_SEO_STORAGE === 'disk' ? null : process.env.DATABASE_URL, suppliedPool) {
   const pool = suppliedPool || (connectionString ? new pg.Pool({ connectionString, max: 2, connectionTimeoutMillis: 10000,
     keepAlive: true, keepAliveInitialDelayMillis: 10000, query_timeout: 30000 }) : null);
   // A dropped idle cache connection must never take down the management app.
@@ -24,7 +24,7 @@ export function createStorage(filename, connectionString = process.env.DATABASE_
   }
   let writing = false;
   const storage = {
-    durable: Boolean(pool),
+    durable: Boolean(pool) || process.env.MIRAI_SEO_STORAGE === 'disk',
     async restore({ force = false } = {}) {
       if (!pool || (!force && existsSync(filename))) return;
       await initialize();

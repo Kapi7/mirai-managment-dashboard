@@ -41,6 +41,7 @@ Render start command and reports supervisor remain the same.
 | `MIRAI_SEO_AHREFS_API_KEY` | Alternative to the Ahrefs secret file |
 | `MIRAI_SEO_AUTO_REFRESH` | Set `1` to check hourly and refresh Google when the last successful run is over 24 hours old |
 | `MIRAI_SEO_DATABASE_PATH` | Optional local SQLite path; default `seo/data/mirai-seo.db` |
+| `MIRAI_SEO_STORAGE` | Set `disk` with a database path on an existing persistent mount to keep history there without a Postgres cache connection |
 | `DATABASE_URL` | Existing Mirai Postgres; stores a compressed aggregate-only snapshot in `mirai_seo_cache` |
 | `MIRAI_SEO_BACKFILL_MONTHS` | Initial/full import range, 1–16; default 3 |
 | `MIRAI_SEO_AHREFS_RESEARCH_MONTHLY_UNITS` | Research budget, default 10000; provider allowance also applies |
@@ -71,6 +72,14 @@ latest shared snapshot before running, so overlapping deployments cannot overwri
 one another's history or run simultaneous research. A failed restore prevents SEO
 API access while leaving the main dashboard available. Without `DATABASE_URL`,
 use a persistent local disk; ephemeral local-only storage does not survive deploys.
+
+The Mirai production service uses its existing `/data` persistent disk:
+`MIRAI_SEO_STORAGE=disk` and
+`MIRAI_SEO_DATABASE_PATH=/data/mirai-seo/mirai-seo.db`. Its mounted disk is
+exclusive to one Render instance. Keep one web writer for that path. SEO does not
+hold a database connection while Google imports run in this mode. The optional
+Postgres mode keeps its advisory-lock session alive and handles dropped clients
+without restarting the management service.
 
 Every SEO API request validates the Mirai bearer session through `/auth/me`.
 Only admins may refresh or run research. Responses containing analytics use
