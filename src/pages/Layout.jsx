@@ -14,6 +14,7 @@ import {
   Truck,
   ClipboardList,
   Target,
+  Search,
   FileText,
   Share2,
   LayoutGrid,
@@ -40,6 +41,7 @@ const navigationSections = [
   {
     label: "Marketing",
     items: [
+      { title: "SEO", url: createPageUrl("SEO"), icon: Search },
       { title: "Meta Ads", url: createPageUrl("Marketing"), icon: Target },
       { title: "Blog Creator", url: createPageUrl("BlogCreator"), icon: FileText },
       { title: "Social Media", url: createPageUrl("SocialMedia"), icon: Share2 },
