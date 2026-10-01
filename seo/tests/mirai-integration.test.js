@@ -132,3 +132,16 @@ test('commerce graph distinguishes missing days from a source observed at zero',
   context.sites.push({sales:[[10,'google','organic',3,0,0]]});
   assert.deepEqual(JSON.parse(vm.runInContext("JSON.stringify(commerceSeries(sites,{s:10,e:12},'purchases'))",context)),[2,null,null]);
 });
+
+test('a dropped Postgres cache connection never crashes the app or saves without its lock',async()=>{
+  const {EventEmitter}=await import('node:events');const {createStorage}=await import('../server/storage.js');const t=tempDb();
+  const client=new EventEmitter();let destroyed=false,writes=0;
+  client.query=async sql=>{if(sql.startsWith('INSERT'))writes++;return {rows:[{locked:true}]};};client.release=bad=>{destroyed=bad;};
+  const pool=new EventEmitter();pool.query=async()=>({rows:[]});pool.connect=async()=>client;pool.end=async()=>{};
+  const storage=createStorage(t.path,null,pool);
+  try{
+    assert.doesNotThrow(()=>pool.emit('error',new Error('idle connection reset')));
+    await assert.rejects(storage.exclusive(async()=>{client.emit('error',new Error('active connection reset'));return {failed:[]};}),/interrupted/);
+    assert.equal(writes,0);assert.equal(destroyed,true);
+  }finally{await storage.close();t.cleanup();}
+});
