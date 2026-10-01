@@ -34,7 +34,9 @@ function timeChart(cfg) {
     const k = Math.min(n, Math.max(2, Math.floor((W - L - R) / 105)));
     for (let j = 0; j < k; j++) { const i = k === 1 ? 0 : Math.round(j * (n - 1) / (k - 1)); g += svgText(x(i), H - 6, dm(cfg.s + i), j === 0 && k > 1 ? 'start' : j === k - 1 && k > 1 ? 'end' : 'middle'); }
     const line = arr => { let d = '', pen = false; arr.forEach((v, i) => { if (v == null) { pen = false; return; } d += (pen ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(v).toFixed(1); pen = true; }); return d; };
-    for (const s of cfg.series) {
+    for (const [si, s] of cfg.series.entries()) {
+      const gradient = `${el.dataset.chart}-fill-${si}`;
+      g += `<defs><linearGradient id="${gradient}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${s.color}" stop-opacity=".42"/><stop offset="100%" stop-color="${s.color}" stop-opacity=".015"/></linearGradient></defs>`;
       if (cmp && s.prev) g += `<path d="${line(s.prev)}" fill="none" stroke="${s.color}" stroke-width="1.4" stroke-dasharray="4 4" opacity=".5"/>`;
       if (s.kind === 'bars') {
         const bw = Math.max(1, step * (n > 120 ? 0.9 : 0.68));
@@ -45,9 +47,9 @@ function timeChart(cfg) {
           let area = ''; let seg = [];
           const flush = () => { if (seg.length) { area += `M${x(seg[0]).toFixed(1)} ${H - B}` + seg.map(i => `L${x(i).toFixed(1)} ${y(s.vals[i]).toFixed(1)}`).join('') + `L${x(seg[seg.length - 1]).toFixed(1)} ${H - B}Z`; seg = []; } };
           s.vals.forEach((v, i) => v == null ? flush() : seg.push(i)); flush();
-          g += `<path d="${area}" fill="${s.color}" fill-opacity=".15"/>`;
+          g += `<path d="${area}" fill="url(#${gradient})"/>`;
         }
-        g += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+        g += `<path class="trend-line" style="--trend:${s.color}" d="${d}" fill="none" stroke="${s.color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`;
         let li = s.vals.length - 1; while (li >= 0 && s.vals[li] == null) li--;
         if (li >= 0) g += `<circle cx="${x(li).toFixed(1)}" cy="${y(s.vals[li]).toFixed(1)}" r="3.6" fill="${s.color}" stroke="var(--bg)" stroke-width="2"/>`;
       }

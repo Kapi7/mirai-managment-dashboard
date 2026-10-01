@@ -117,11 +117,11 @@ function kpiHTML(ctx) {
   const heroA = kcard({ c: 'var(--gsc)', src: 'GSC', srcCls: 's-gsc', icon: 'eye', label: 'Seen on Google', tip: 'Times a page from these sites appeared in Google results, once per search.',
     value: fmt(T.impr), delta: `${delta(T.impr, TP.impr)}${vsShort(w, fmt(TP.impr))}`,
     extra: `<div class="inset"><div><div class="il">Click rate</div><div class="iv">${ctr ? '1 in ' + fmt(ctr) : 'No clicks'}</div></div></div>`,
-    spark: timeChart({ s: w.s, e: w.e, h: 130, series: [{ label: 'Views', color: 'var(--gsc)', vals: S.impr, prev: SP.impr, kind: 'area' }], marks, aria: `Daily Google views, ${R}` }), legend: legendHTML('var(--gsc)', marks.length) });
+    spark: timeChart({ s: w.s, e: w.e, h: 230, series: [{ label: 'Views', color: 'var(--gsc)', vals: S.impr, prev: SP.impr, kind: 'area' }], marks, aria: `Daily Google views, ${R}` }), legend: legendHTML('var(--gsc)', marks.length) });
   const heroB = kcard({ c: 'var(--pos)', src: 'GSC', srcCls: 's-gsc', icon: 'ladder', label: 'Average Google rank', tip: 'Search Console average rank, weighted by Google views (impressions). Lower is better; #1 is first. It combines the selected sites and searches, so a change in search mix can move this average even without a ranking change for the same keyword.',
     value: rankText(T.pos), delta: `${posDelta(T.pos, TP.pos)}${vsShort(w, TP.pos ? rankText(TP.pos) : null)}`,
     extra: `<div class="rank-note">Lower is better · #1 is first<br><span>Average across searches, not a fixed site rank.</span></div><div class="inset">${ring(p1, 'var(--gold)')}<div><div class="il">Views from keywords averaging top 10</div><div class="iv">${bt ? pct(p1, p1 && p1 < .01 ? 1 : 0) : '—'}</div></div></div><div class="rank-coverage">Reported keywords cover ${T.impr ? pct(bt / T.impr) : '—'} of Google views. The percentage above uses only those keywords.</div>`,
-    spark: timeChart({ s: w.s, e: w.e, h: 130, invert: true, series: [{ label: 'Avg rank', color: 'var(--pos)', vals: S.pos, prev: SP.pos, kind: 'line', fmt: v => `${rankText(v)} · lower is better` }], aria: `Daily average Google position, ${R}` }), legend: legendHTML('var(--pos)', 0) });
+    spark: timeChart({ s: w.s, e: w.e, h: 230, invert: true, series: [{ label: 'Avg rank', color: 'var(--pos)', vals: S.pos, prev: SP.pos, kind: 'line', fmt: v => `${rankText(v)} · lower is better` }], aria: `Daily average Google position, ${R}` }), legend: legendHTML('var(--pos)', 0) });
   const withClicks = L.filter(s => agg(s, w.s, w.e).clicks > 0).length;
   const top3 = ctx.eng.slice(0, 3).map(e => `<span class="eg"><i style="background:${ENG_COL[e.name] || 'var(--muted)'}"></i>${esc(e.name)} <b>${fmt(e.n)}</b></span>`).join('');
   const r3 = [

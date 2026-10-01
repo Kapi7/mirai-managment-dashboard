@@ -122,3 +122,13 @@ test('runtime serializes refreshes, preserves errors and never exposes provider 
     await assert.rejects(runtime.mutate(async()=>{throw Error('client_secret=private');}),/could not complete/);assert.ok(!JSON.stringify(runtime.state).includes('private'));
   }finally{unblock();await runtime.close();t.cleanup();}
 });
+
+test('commerce graph distinguishes missing days from a source observed at zero',()=>{
+  const source=readFileSync(new URL('../web/family/src/ecosystem.js',import.meta.url),'utf8');
+  const context=vm.createContext({});vm.runInContext(source,context);
+  context.sites=[{sales:[[10,'google','organic',8,2,90],[11,'direct','none',5,1,40]]}];
+  const actual=JSON.parse(vm.runInContext("JSON.stringify(commerceSeries(sites,{s:10,e:12},'sessions',r=>r.medium==='organic'))",context));
+  assert.deepEqual(actual,[8,0,null]);
+  context.sites.push({sales:[[10,'google','organic',3,0,0]]});
+  assert.deepEqual(JSON.parse(vm.runInContext("JSON.stringify(commerceSeries(sites,{s:10,e:12},'purchases'))",context)),[2,null,null]);
+});

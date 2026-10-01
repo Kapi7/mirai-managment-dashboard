@@ -31,6 +31,13 @@ function sortViews(V) {
   return V.sort((a, b) => { const x = sortVal(a, k), y = sortVal(b, k); return (typeof x === 'string' ? x.localeCompare(y) : x - y) * dir || b.a.impr - a.a.impr || b.a.sessAll - a.a.sessAll; });
 }
 const tv = (l, v, c) => `<div class="tv" style="--c:${c}"><b>${v}</b><span>${l}</span></div>`;
+function ecosystemTrend(L, w) {
+  if (L.length < 2) return '';
+  const colors = {'mirai-skin':'var(--v-main)','glow-coded':'var(--pos)','rooted-glow':'var(--good)'};
+  const chart = (key,label) => timeChart({s:w.s,e:w.e,h:225,series:L.map(site=>({label:site.name,color:colors[site.slug]||vhex(site.vertical),vals:series([site],w.s,w.e)[key],kind:'line'})),aria:`Daily ${label.toLowerCase()} by site`});
+  const legend = `<div class="legend">${L.map(site=>`<span><i style="background:${colors[site.slug]||vhex(site.vertical)}"></i>${esc(site.name)}</span>`).join('')}</div>`;
+  return `<section class="grid2 ecosystem-trends"><div class="panel glow-chart" style="--c:var(--v-main)"><div class="ph"><h2>Google clicks by site</h2><span class="src s-gsc">GSC</span></div>${chart('clicks','Google clicks')}${legend}</div><div class="panel glow-chart" style="--c:var(--good)"><div class="ph"><h2>Search visits by site</h2><span class="src s-ga4">GA4</span></div>${chart('org','search visits')}${legend}</div></section>`;
+}
 function vSites(L, w) {
   const f = findTxt(), nd = state.traffic === 'nodirect', T = totals(L, w.s, w.e);
   const V = sortViews(L.map(s => siteView(s, w)).filter(v => !f || v.site.name.includes(f)));
@@ -39,7 +46,7 @@ function vSites(L, w) {
   const tbar = `<div class="tbar"><div class="who"><span class="av" style="--vc:var(--gold)">${icon('grid', 15)}</span><div><b>Portfolio total</b><span>${L.length} ${plural(L.length, 'site')} · ${rangeTxt(w.s, w.e)}</span></div></div>
     ${tv('Views', fmt(T.impr), 'var(--gsc)')}${tv('Google clicks', fmt(T.clicks), 'var(--gsc)')}${tv('Avg rank', rankText(T.pos), 'var(--pos)')}${tv('Search visits', fmt(T.org), 'var(--ga4)')}${tv(nd ? 'Visits w/o Direct' : 'All visits', fmt(T.sess), 'var(--visits)')}${tv('Partner clicks', fmt(T.aff), 'var(--partner)')}</div>`;
   if (!V.length) return tool + tbar + `<div class="panel">${noMatch('the site list')}</div>`;
-  return tool + tbar + (state.view === 'table' ? sitesTable(V, nd) : `<section class="cards" aria-label="Sites">${V.map(v => siteCard(v, f)).join('')}</section>`);
+  return tool + ecosystemTrend(L,w) + tbar + (state.view === 'table' ? sitesTable(V, nd) : `<section class="cards" aria-label="Sites">${V.map(v => siteCard(v, f)).join('')}</section>`);
 }
 function siteCard(v, f) {
   const { site: s, a, p, wp } = v, ah = v.ah?.[1] != null ? v.ah : null;

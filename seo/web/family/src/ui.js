@@ -65,7 +65,7 @@ function renderAll() {
   CTX = { L, w, T: totals(L, w.s, w.e), TP: totals(L, w.ps, w.pe), S: series(L, w.s, w.e), SP: state.compare ? series(L, w.ps, w.pe) : {}, qs: queryAgg(L, w.s, w.e), qsPrev: state.compare ? queryAgg(L, w.ps, w.pe) : [], eng: engineAgg(L, w.s, w.e) };
   const cnt = { sites: L.length, searches: CTX.qs.filter(q => q.i > 0).length, connections: fixItems(L).filter(a => a.sev === 'bad').length };
   const partial = w.s < MIN || (state.compare && w.ps < MIN);
-  main.innerHTML = (partial ? `<div class="banner warn">History begins ${dm(MIN)} ${yr(MIN)}. This range or its comparison includes days before collection; those days are unavailable, not measured zero.</div>` : '') + signalsHTML(CTX) + kpiHTML(CTX) + arenaHTML(CTX)
+  main.innerHTML = (partial ? `<div class="banner warn">History begins ${dm(MIN)} ${yr(MIN)}. This range or its comparison includes days before collection; those days are unavailable, not measured zero.</div>` : '') + kpiHTML(CTX) + signalsHTML(CTX) + arenaHTML(CTX)
     + `<div id="tabBody" class="wrap" role="tabpanel" tabindex="-1"></div>`;
   $('#vtabs').innerHTML = TABS.map(t => tabBtn(t, 'vtab', cnt)).join('');
   $('#bnav').innerHTML = TABS.map(t => tabBtn(t, 'bn', cnt)).join('');

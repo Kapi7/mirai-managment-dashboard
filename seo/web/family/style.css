@@ -627,3 +627,16 @@ body{background:radial-gradient(800px 300px at 50% 0,rgba(244,114,182,.08),trans
   .vtab{flex:0 0 auto;min-width:120px;white-space:nowrap;flex-wrap:nowrap;padding:11px 12px}
   .nav-filters{display:none}
 }
+
+/* Aether chart language, expressed in Mirai's rose / violet / mint palette. */
+.trend-line{filter:drop-shadow(0 0 4px color-mix(in srgb,var(--trend) 45%,transparent))}
+.hero .kcard{background:radial-gradient(ellipse at 50% 0,color-mix(in srgb,var(--c) 10%,transparent),transparent 65%),var(--panel);padding-top:22px}
+.hero .kchart{padding-top:16px}
+.commerce-lane{background:radial-gradient(ellipse at 50% 0,color-mix(in srgb,var(--c) 11%,transparent),transparent 70%),var(--panel);overflow:hidden}
+.commerce-lane .chart{margin-top:22px}
+.commerce-lane .klegend{justify-content:center;margin-top:8px}
+.glow-chart{position:relative;overflow:hidden;border-color:color-mix(in srgb,var(--c) 25%,var(--line));background:radial-gradient(ellipse at 50% 100%,color-mix(in srgb,var(--c) 7%,transparent),transparent 70%),var(--panel)}
+.glow-chart::before{content:"";position:absolute;top:0;left:15%;right:15%;height:1px;background:linear-gradient(90deg,transparent,var(--c),transparent);box-shadow:0 0 18px color-mix(in srgb,var(--c) 35%,transparent)}
+.glow-chart .chart{margin:10px 0}.glow-chart .legend,.glow-chart .klegend{padding:0 18px 15px;justify-content:center;flex-wrap:wrap}
+@media(max-width:760px){.commerce-trends,.ecosystem-trends{grid-template-columns:1fr}.hero .kcard{padding-top:18px}.hero .kv{font-size:2.6rem}}
+@media(prefers-reduced-motion:reduce){.trend-line{filter:none}}
