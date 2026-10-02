@@ -3,9 +3,10 @@ import { loadConfig } from './config.js';
 import { runFetch } from './fetch.js';
 import { createStorage } from './storage.js';
 import { AccessDenied, BudgetExceeded, AhrefsUnavailable } from './ahrefs.js';
+import { googleFreshness, GOOGLE_CHECK_INTERVAL_MS } from './freshness.js';
 
 export function createRuntime({ cfg = loadConfig(), fetcher = runFetch, storage = createStorage(cfg.settings.database) } = {}) {
-  const state = { running: false, startedAt: null, finishedAt: null, error: null, failed: [], durable: storage.durable };
+  const state = { running: false, startedAt: null, finishedAt: null, nextCheckAt: null, error: null, failed: [], durable: storage.durable };
   let readyError = null;
   const ready = storage.restore().then(() => { initDb(cfg.settings.database).close(); })
     .catch(() => { readyError = 'SEO history could not be restored. Retry after checking the database connection.'; });
@@ -14,7 +15,7 @@ export function createRuntime({ cfg = loadConfig(), fetcher = runFetch, storage 
     await ready;
     if (readyError) throw new Error(readyError);
     if (task) throw new Error('A refresh is already running.');
-    state.running = true; state.startedAt = new Date().toISOString(); state.error = null;
+    state.running = true; state.startedAt = new Date().toISOString(); state.error = null; state.failed = [];
     task = (async () => {
       try {
         const result = await storage.exclusive(operation);
@@ -37,19 +38,24 @@ export function createRuntime({ cfg = loadConfig(), fetcher = runFetch, storage 
       return { failed: [...gsc.failed, ...ga4.failed], sourceAsOf: ga4.sourceAsOf };
     });
   }
+  function freshness(now = new Date()) {
+    const database = openDb(cfg.settings.database, { readonly: true });
+    try { return googleFreshness(database, cfg, now); } finally { database.close(); }
+  }
+  async function checkRefresh(now = new Date()) {
+    await ready;
+    state.nextCheckAt = new Date(now.getTime() + GOOGLE_CHECK_INTERVAL_MS).toISOString();
+    if (readyError || state.running) return;
+    if (freshness(now).due) await refresh();
+  }
   let timer;
   if (process.env.MIRAI_SEO_AUTO_REFRESH === '1') {
-    const tick = async () => {
-      await ready;
-      if (readyError || state.running) return;
-      const database = openDb(cfg.settings.database, { readonly: true });
-      let latest;
-      try { latest = database.prepare("SELECT MAX(run_at) AS d FROM fetch_log WHERE source='ga4' AND status='ok'").get()?.d; } finally { database.close(); }
-      if (!latest || Date.now() - Date.parse(latest) > 864e5) await refresh().catch(() => {});
-    };
-    ready.then(() => tick());
-    timer = setInterval(tick, 3600e3); timer.unref();
+    const tick = () => checkRefresh().catch(() => {
+      state.error ||= 'Automatic refresh could not complete. It will retry at the next hourly check.';
+    });
+    void tick();
+    timer = setInterval(tick, GOOGLE_CHECK_INTERVAL_MS); timer.unref();
   }
-  return { cfg, state, ready, refresh, mutate, storage, error: () => readyError,
+  return { cfg, state, ready, refresh, mutate, storage, freshness, checkRefresh, error: () => readyError,
     async close() { clearInterval(timer); await task?.catch(() => {}); await storage.close(); } };
 }

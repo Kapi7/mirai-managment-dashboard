@@ -39,7 +39,7 @@ Render start command and reports supervisor remain the same.
 | `MIRAI_SEO_GOOGLE_TOKEN_PATH` | Absolute path to the Mirai OAuth JSON secret; default `/etc/secrets/mirai-seo-google.json` |
 | `MIRAI_SEO_AHREFS_TOKEN_PATH` | Absolute path to the Ahrefs key file; default `/etc/secrets/mirai-ahrefs-token` |
 | `MIRAI_SEO_AHREFS_API_KEY` | Alternative to the Ahrefs secret file |
-| `MIRAI_SEO_AUTO_REFRESH` | Set `1` to check hourly and refresh Google when the last successful run is over 24 hours old |
+| `MIRAI_SEO_AUTO_REFRESH` | Set `1` to check every site/source hourly; refresh for a newer reporting date, retry a failed import, or recheck corrections after 6 hours |
 | `MIRAI_SEO_DATABASE_PATH` | Optional local SQLite path; default `seo/data/mirai-seo.db` |
 | `MIRAI_SEO_STORAGE` | Set `disk` with a database path on an existing persistent mount to keep history there without a Postgres cache connection |
 | `DATABASE_URL` | Existing Mirai Postgres; stores a compressed aggregate-only snapshot in `mirai_seo_cache` |
@@ -64,6 +64,17 @@ Verified registry:
 An administrator can click **Refresh Google data**. This never calls paid Ahrefs
 endpoints. Ahrefs research/refresh requires a separate explicit dashboard action;
 quota checks refuse requests before spending when included allowance is too low.
+
+Automatic refresh checks each site's Search Console, Analytics and commerce import
+independently, including its configured property. A successful property cannot mask
+another property's failure. Reporting buffers remain 3 days for GSC and 2 days for
+GA4; the last 7 days are fetched again for corrections. A successful empty response
+is a checked reporting window, not an invented zero or a failed refresh.
+The freshness menu shows actual data dates, the Google sync time and the next
+scheduled check. Visible dashboards check for finished imports every minute and
+on returning to the tab, then reload with their URL filters preserved. An active
+input is allowed to finish before reloading. Failed checks keep the saved data
+visible and show a status message. Ahrefs never runs on this timer.
 
 SQLite serves local reads. With `DATABASE_URL`, a consistent SQLite backup is
 compressed and saved atomically in Postgres after each update. Startup restores

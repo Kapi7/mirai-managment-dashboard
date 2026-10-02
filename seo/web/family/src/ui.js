@@ -1,6 +1,10 @@
 /* ---------- controls + rendering ---------- */
 const LENSES = [{ k: 'All', l: 'Ecosystem', icon: 'globe' }, { k: 'Main', l: 'Mirai Skin', icon: 'spark' }, { k: 'Satellites', l: 'Satellites', icon: 'bars' }];
 const isPhone = () => window.matchMedia('(max-width:760px)').matches;
+document.addEventListener('mirai:seo-status', ({ detail }) => {
+  Object.assign(D.refresh ||= {}, detail);
+  if (!document.activeElement?.matches('input, textarea, select, [contenteditable="true"]')) syncChrome();
+});
 function buildStatic() {
   $('#lens').innerHTML = LENSES.map(x => { const n = x.k === 'All' ? ACTIVE.length : ACTIVE.filter(s => s.vertical === x.k).length; return `<button type="button" role="radio" data-lens="${x.k}" aria-checked="false" data-tip="${n} ${plural(n, 'site')}">${icon(x.icon, 15)}${x.l}</button>`; }).join('');
   $('#segPeriod').innerHTML = PRESETS.map(p => `<button type="button" role="radio" data-preset="${p.k}" aria-checked="false">${p.l}</button>`).join('');
@@ -47,9 +51,11 @@ function syncChrome() {
   $('#stepBack').setAttribute('aria-label', w.n === 1 ? 'Previous day' : 'Previous period');
   $('#stepFwd').setAttribute('aria-label', w.n === 1 ? 'Next day' : 'Next period');
   const age = TODAY - END, urgentAll = fixItems(ACTIVE).filter(a => a.sev === 'bad').length;
-  $('#btnStatus').className = `pill status ${age <= 4 ? 'fresh' : 'stale'}`;
-  $('#statusTxt').textContent = `Data to ${dm(END)}${age > 4 ? ` · ${age}d old` : ''}`;
-  $('#popStatus').innerHTML = `<h3>Data freshness</h3><div class="srows"><span>Search Console</span><b>to ${dm(D.gscEnd)} ${yr(D.gscEnd)}</b><span>Analytics 4</span><b>to ${dm(D.ga4End)} ${yr(D.ga4End)}</b><span>Last fetch</span><b>${dm(D.lastFetch)}, ${esc(String(D.lastFetch || '').slice(11, 16))} UTC</b><span>Live check</span><b>${LIVE.state === 'done' ? `${liveTime()} today` : LIVE.state === 'running' ? 'running…' : 'not run yet'}</b><span>Needs a fix</span><b class="${urgentAll ? 'w' : 'ok'}">${urgentAll} urgent</b><span>Refresh</span><b>${D.refresh?.automatic ? 'daily while running' : 'manual refresh'}</b></div><button type="button" class="more" data-go="connections">Open Connections ›</button>`;
+  const syncFailures = D.refresh?.freshness?.failures || 0;
+  const googleFetch = D.refresh?.freshness?.lastFetch || D.lastFetch;
+  $('#btnStatus').className = `pill status ${age <= 4 && !syncFailures ? 'fresh' : 'stale'}`;
+  $('#statusTxt').textContent = `Data to ${dm(END)}${syncFailures ? ' · sync needs attention' : age > 4 ? ` · ${age}d old` : ''}`;
+  $('#popStatus').innerHTML = `<h3>Data freshness</h3><div class="srows"><span>Search Console</span><b>to ${dm(D.gscEnd)} ${yr(D.gscEnd)}</b><span>Analytics 4</span><b>to ${dm(D.ga4End)} ${yr(D.ga4End)}</b><span>Last Google sync</span><b>${dm(googleFetch)}, ${esc(String(googleFetch || '').slice(11, 16))} UTC</b><span>Google sources</span><b class="${syncFailures ? 'w' : 'ok'}">${syncFailures ? `${syncFailures} need attention` : 'all checked successfully'}</b><span>Refresh</span><b>${D.refresh?.automatic ? 'every 6h · checked hourly' : 'manual refresh'}</b><span>Next automatic check</span><b>${D.refresh?.nextCheckAt ? `${dm(D.refresh.nextCheckAt)}, ${esc(D.refresh.nextCheckAt.slice(11,16))} UTC` : '—'}</b></div><p class="small muted">New reporting dates and failed imports are checked hourly for every site. Search Console uses a 3-day reporting buffer; Analytics uses 2 days. Recent dates are rechecked for corrections. Open dashboards check for completed imports every minute.</p><button type="button" class="more" data-go="connections">Open Connections ›</button>`;
   const chips = activeChips(w, L);
   $('#fsum').innerHTML = `<span>${state.compare ? `vs <b>${rangeTxt(w.ps, w.pe)}</b> · ` : ''}<b>${L.length}</b> ${plural(L.length, 'site')}</span>${dayTrail.length ? '<button type="button" class="chipbtn" data-chart-back>← Back to period</button>' : ''}${chips.join('')}${chips.length ? '<button type="button" class="reset" data-resetall>Reset all</button>' : ''}`;
   $('#fabN').textContent = chips.length; $('#fabN').hidden = !chips.length;

@@ -13,7 +13,9 @@
     if (token && new URL(url, location.href).origin === location.origin) headers.set('Authorization', `Bearer ${token}`);
     return window.fetch(url, { ...options, headers });
   };
+  let manualRefresh = false;
   async function refreshData() {
+    manualRefresh = true;
     const button = document.getElementById('refreshSeo');
     button.disabled = true; button.textContent = 'Refreshing…';
     try {
@@ -31,9 +33,37 @@
         }
       }
     } catch (error) { document.getElementById('refreshMessage').textContent = error.message; }
-    finally { button.disabled = false; button.textContent = 'Refresh Google data'; }
+    finally { manualRefresh = false; button.disabled = false; button.textContent = 'Refresh Google data'; }
   }
   document.getElementById('refreshSeo').addEventListener('click', refreshData);
+  function watchFreshness(initial) {
+    const loadedAt = initial.refresh?.freshness?.lastFetch ?? initial.lastFetch;
+    let checking = false;
+    const check = async () => {
+      if (checking || manualRefresh || document.visibilityState === 'hidden') return;
+      checking = true;
+      try {
+        const response = await fetch(`${BASE}/api/status`, { cache: 'no-store' });
+        if (!response.ok) throw new Error('Refresh status is unavailable.');
+        const status = await response.json();
+        document.dispatchEvent(new CustomEvent('mirai:seo-status', { detail: status }));
+        const changed = status.freshness?.lastFetch && status.freshness.lastFetch !== loadedAt;
+        const editing = document.activeElement?.matches('input, textarea, select, [contenteditable="true"]');
+        // The URL retains the current scope, dates and tab. Wait for the whole
+        // import to finish, and never interrupt a field the user is editing.
+        if (changed && !status.running && !editing) { location.reload(); return; }
+        const message = document.getElementById('refreshMessage');
+        message.textContent = status.running ? 'Updating Google data… This view will update when the import finishes.'
+          : status.error ? status.error
+          : status.freshness?.failures ? `${status.freshness.failures} Google source checks need attention. Automatic refresh will retry hourly.`
+          : changed ? 'New data is ready. Finish editing to update this view.' : '';
+      } catch {
+        document.getElementById('refreshMessage').textContent = 'Could not check for newer data. The saved reporting dates are shown above; checking again shortly.';
+      } finally { checking = false; }
+    };
+    setInterval(check, 60000);
+    document.addEventListener('visibilitychange', check);
+  }
   const box = () => document.getElementById('boot');
   function fail(title, detail) {
     const el = box(); if (!el) return;
@@ -50,6 +80,7 @@
       return body;
     })
     .then((D) => {
+      watchFreshness(D);
       if (D.empty) {
         fail('Your Mirai SEO workspace is ready', 'No history has been collected yet. An administrator can use Refresh Google data to import Mirai Skin, Glow Coded and Rooted Glow. Missing credentials or access errors will be shown here.');
         fetch(`${BASE}/api/status`).then(r => r.json()).then(status => {

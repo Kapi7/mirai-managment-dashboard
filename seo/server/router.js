@@ -37,6 +37,7 @@ export function createSeoRouter({ runtime = createRuntime(), authorize = authori
     next();
   });
   router.get('/api/status', (_req, res) => res.json({ ...runtime.state,
+    freshness: runtime.freshness(),
     automaticRefresh: process.env.MIRAI_SEO_AUTO_REFRESH === '1',
     googleConfigured: credentialStatusFor(cfg.credentials.mirai).configured,
     sites: cfg.sites.map(s => ({ slug: s.slug, name: s.name, role: s.vertical, platform: s.platform })),
@@ -44,7 +45,7 @@ export function createSeoRouter({ runtime = createRuntime(), authorize = authori
   router.get('/api/dashboard', (_req, res) => {
     const database = openDb(cfg.settings.database, { readonly: true });
     try { res.json({ ...buildDashboard(database, cfg), refresh: { ...runtime.state,
-      automatic: process.env.MIRAI_SEO_AUTO_REFRESH === '1' } }); } finally { database.close(); }
+      freshness: runtime.freshness(), automatic: process.env.MIRAI_SEO_AUTO_REFRESH === '1' } }); } finally { database.close(); }
   });
   router.get('/api/fetch/status', (_req, res) => res.json(runtime.state));
   let authority;
