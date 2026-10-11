@@ -17,7 +17,8 @@ const Activity = lazy(() => import('./Activity'));
 const SEO = lazy(() => import('./SEO'));
 const Marketing = lazy(() => import('./Marketing'));
 const BlogCreator = lazy(() => import('./BlogCreator'));
-const SocialMedia = lazy(() => import('./SocialMedia'));
+const SocialMedia = lazy(() => import('./Social'));
+const SocialTools = lazy(() => import('./SocialMedia'));
 const AgentDashboard = lazy(() => import('./AgentDashboard'));
 
 // Protected route wrapper
@@ -71,6 +72,8 @@ const PAGES = {
 
     SocialMedia: SocialMedia,
 
+    SocialTools: SocialTools,
+
     AgentDashboard: AgentDashboard,
 
 }
@@ -121,6 +124,7 @@ function PagesContent() {
                     <Route path="/SEO" element={<ProtectedRoute><SEO /></ProtectedRoute>} />
                     <Route path="/Marketing" element={<ProtectedRoute><Marketing /></ProtectedRoute>} />
                     <Route path="/BlogCreator" element={<ProtectedRoute><BlogCreator /></ProtectedRoute>} />
+                    <Route path="/SocialTools" element={<ProtectedRoute><SocialTools /></ProtectedRoute>} />
                     <Route path="/SocialMedia" element={<ProtectedRoute><SocialMedia /></ProtectedRoute>} />
                     <Route path="/AgentDashboard" element={<ProtectedRoute><AgentDashboard /></ProtectedRoute>} />
                     <Route path="/login" element={<Login />} />

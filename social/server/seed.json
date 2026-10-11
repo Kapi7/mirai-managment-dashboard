@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "collectedAt": null,
+  "campaignStart": null,
+  "accounts": [
+    {
+      "id": "instagram",
+      "name": "Instagram",
+      "handle": "@mirai_skincaree",
+      "url": "https://www.instagram.com/mirai_skincaree/",
+      "mode": "api_report",
+      "followers": null,
+      "observedAt": null,
+      "baseline": null,
+      "baselineAt": null,
+      "note": "No imported measurements yet."
+    },
+    {
+      "id": "facebook",
+      "name": "Facebook",
+      "handle": "Mirai Skin",
+      "url": "https://www.facebook.com/571704329368702",
+      "mode": "api_report",
+      "followers": null,
+      "observedAt": null,
+      "baseline": null,
+      "baselineAt": null,
+      "note": "No imported measurements yet."
+    },
+    {
+      "id": "youtube",
+      "name": "YouTube",
+      "handle": "Mirai Skin",
+      "url": "",
+      "mode": "api_report",
+      "followers": null,
+      "observedAt": null,
+      "baseline": null,
+      "baselineAt": null,
+      "note": "No imported measurements yet."
+    },
+    {
+      "id": "tiktok",
+      "name": "TikTok",
+      "handle": "@mirai_skincare",
+      "url": "https://www.tiktok.com/@mirai_skincare",
+      "mode": "manual",
+      "followers": null,
+      "observedAt": null,
+      "baseline": null,
+      "baselineAt": null,
+      "note": "No imported measurements yet."
+    },
+    {
+      "id": "pinterest",
+      "name": "Pinterest",
+      "handle": "Mirai Skin",
+      "url": "https://www.pinterest.com/mirai_skin/",
+      "mode": "manual",
+      "followers": null,
+      "observedAt": null,
+      "baseline": null,
+      "baselineAt": null,
+      "note": "No imported measurements yet."
+    },
+    {
+      "id": "x",
+      "name": "X",
+      "handle": "@MiraiSkin7",
+      "url": "https://x.com/MiraiSkin7",
+      "mode": "api_report",
+      "followers": null,
+      "observedAt": null,
+      "baseline": null,
+      "baselineAt": null,
+      "note": "No imported measurements yet."
+    }
+  ],
+  "posts": [],
+  "commerce": {
+    "status": "unavailable",
+    "sessions": [],
+    "orders": null
+  },
+  "delivery": {},
+  "evidenceUrl": "https://github.com/Kapi7/mirai-meta-campaign/actions/workflows/mirai-social-measurement.yml"
+}

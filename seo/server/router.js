@@ -1,4 +1,5 @@
 import express from 'express';
+import { registerSocialRoutes } from '../../social/server/report.js';
 import { resolve } from 'node:path';
 import { openDb } from './db.js';
 import { buildDashboard } from './dashboard.js';
@@ -28,6 +29,7 @@ export async function authorizeMirai(req, res, next) {
 export function createSeoRouter({ runtime = createRuntime(), authorize = authorizeMirai } = {}) {
   const router = express.Router();
   const { cfg } = runtime;
+  router.use('/api/social/import', express.json({ limit: '512kb' }));
   router.use(express.json({ limit: '16kb' }));
   router.use('/api', authorize, async (req, res, next) => {
     res.set('Cache-Control', 'no-store');
@@ -36,6 +38,7 @@ export function createSeoRouter({ runtime = createRuntime(), authorize = authori
     if (!['GET', 'HEAD'].includes(req.method) && !req.seoUser?.is_admin) return res.status(403).json({ error: 'admin_required', message: 'A Mirai administrator can refresh sources and run research.' });
     next();
   });
+  registerSocialRoutes(router, runtime);
   router.get('/api/status', (_req, res) => res.json({ ...runtime.state,
     freshness: runtime.freshness(),
     automaticRefresh: process.env.MIRAI_SEO_AUTO_REFRESH === '1',

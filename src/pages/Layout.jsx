@@ -44,7 +44,7 @@ const navigationSections = [
       { title: "SEO", url: createPageUrl("SEO"), icon: Search },
       { title: "Meta Ads", url: createPageUrl("Marketing"), icon: Target },
       { title: "Blog Creator", url: createPageUrl("BlogCreator"), icon: FileText },
-      { title: "Social Media", url: createPageUrl("SocialMedia"), icon: Share2 },
+      { title: "Social", url: createPageUrl("SocialMedia"), icon: Share2 },
     ],
   },
   {
@@ -92,6 +92,7 @@ export default function Layout({ children }) {
   // "/" serves Reports — count it as active. Route paths are capitalized
   // (/Reports) while createPageUrl lowercases, so compare case-insensitively.
   const isActive = (url) =>
+    (url === createPageUrl("SocialMedia") && location.pathname.toLowerCase() === "/socialtools") ||
     location.pathname.toLowerCase() === url.toLowerCase() ||
     (url === createPageUrl("Reports") && location.pathname === "/");
 

@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test:seo": "node --test seo/tests/*.test.js",
     "seo:dev": "node seo/server/dev.js",
-    "seo:fetch": "node seo/server/cli.js"
+    "seo:fetch": "node seo/server/cli.js",
+    "test:social": "node --test social/tests/*.test.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^4.1.2",
