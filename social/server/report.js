@@ -53,7 +53,7 @@ export function websiteReport(database, range) {
  const daily=database.prepare('SELECT DISTINCT date FROM ga4_source WHERE site=? AND property_id=? AND date BETWEEN ? AND ? ORDER BY date').all(site,pid,range.start,range.end).map(r=>r.date);
  const rows=database.prepare('SELECT date,source,medium,sessions,engaged_sessions FROM ga4_source WHERE site=? AND property_id=? AND date BETWEEN ? AND ? ORDER BY date').all(site,pid,range.start,range.end).map(r=>({...r,platform:socialPlatform(r.source)})).filter(r=>r.platform);
  const commerce=database.prepare('SELECT date,source,medium,purchases,revenue FROM mirai_commerce WHERE site=? AND property_id=? AND date BETWEEN ? AND ? ORDER BY date').all(site,pid,range.start,range.end).map(r=>({...r,platform:socialPlatform(r.source)})).filter(r=>r.platform);
- const logs=database.prepare("SELECT source,status,run_at,start_date,end_date,data_through FROM fetch_log WHERE site=? AND source IN ('ga4','ga4_commerce') ORDER BY id DESC").all(site);
+ const logs=database.prepare("SELECT source,status,run_at,start_date,end_date,data_through FROM fetch_log WHERE site=? AND connection=? AND source IN ('ga4','ga4_commerce') ORDER BY id DESC").all(site,pid);
  const commerceWindows=logs.filter(r=>r.source==='ga4_commerce'&&r.status==='ok'&&r.start_date&&r.end_date);
  const commerceDays=Array.from({length:range.days},(_,i)=>new Date(Date.parse(range.start)+i*DAY).toISOString().slice(0,10)).filter(d=>commerceWindows.some(w=>d>=w.start_date&&d<=w.end_date));
  return {range,rows,commerce,daily,commerceDays,currency:'USD',freshness:{traffic:logs.find(r=>r.source==='ga4')||null,commerce:logs.find(r=>r.source==='ga4_commerce')||null},partial:daily.length<range.days,commercePartial:commerceDays.length<range.days};
