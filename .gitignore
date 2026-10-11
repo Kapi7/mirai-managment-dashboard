@@ -58,3 +58,7 @@ python_backend/outputs/
 seo/data/
 seo/.env
 seo/*.db*
+
+# Social analytics are private runtime data; never commit populated report packages
+social/data/
+*social-package*.json
