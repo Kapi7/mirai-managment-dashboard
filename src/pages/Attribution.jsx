@@ -1,26 +1,17 @@
 /* eslint-disable react/prop-types -- Private presentation helpers receive normalized records from buildView. */
-import { useEffect, useMemo, useState } from 'react';
+import { Children, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronDown, ChevronRight, Download, RefreshCw, ArrowUpRight, ArrowDownRight, Minus, BarChart3, CalendarDays, Globe, Info } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import { useAuth } from '@/contexts/AuthContext';
 import { METRICS, buildView, countryKey, exportCsv, flag, formatMetric, trend } from '@/features/attribution/model';
+import DateSlicer from '@/features/attribution/DateSlicer';
+import { dateLabel, presetRange, validateDates } from '@/features/attribution/dates';
+import { Select as MenuSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import '@/features/attribution/style.css';
 
-const DAY = 86400000;
-const iso = date => date.toISOString().slice(0, 10);
-const shift = (date, days) => new Date(date.getTime() + days * DAY);
-function presetRange(preset) {
-  const today = new Date();
-  const end = shift(today, -1);
-  if (preset === 'mtd') return { start: iso(new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), 1))), end: iso(end) };
-  if (preset === 'lastmonth') return { start: iso(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1))), end: iso(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 0))) };
-  return { start: iso(shift(end, -(Number(preset) - 1))), end: iso(end) };
-}
-const dateLabel = date => new Date(`${date}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
-
 function Select({ label, value, onChange, children }) {
-  return <label className="at-filter"><span>{label}</span><div><select aria-label={label} value={value} onChange={e => onChange(e.target.value)}>{children}</select><ChevronDown size={13} aria-hidden="true" /></div></label>;
+  return <div className="at-filter"><span>{label}</span><MenuSelect value={String(value)} onValueChange={onChange}><SelectTrigger aria-label={label} className="at-select-trigger"><SelectValue /></SelectTrigger><SelectContent className="at-select-menu">{Children.toArray(children).map(option => <SelectItem className="at-select-option" key={option.props.value} value={String(option.props.value)}>{option.props.children}</SelectItem>)}</SelectContent></MenuSelect></div>;
 }
 function Change({ current, previous, metric, currency, compare }) {
   if (!compare) return null;
@@ -61,7 +52,7 @@ export default function Attribution() {
   const [refresh, setRefresh] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
-  const validation = !dates.start || !dates.end || dates.start > dates.end || dates.end > iso(new Date()) || Date.parse(dates.end) - Date.parse(dates.start) > 92 * DAY ? 'Choose a complete date range of up to 93 days, ending today or earlier.' : '';
+  const validation = validateDates(dates);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -115,14 +106,13 @@ export default function Attribution() {
     <nav className="m-seg" aria-label="Business reports"><Link className="m-chip !border-0" to="/Reports">Daily & order reports</Link><span className="m-chip on !border-0" aria-current="page">Attribution</span></nav>
 
     <section className="m-glow-card at-controls" aria-label="Report filters">
+      <DateSlicer preset={preset} dates={dates} timezone={report?.timezone} onChange={(value, range) => { setPreset(value); setDates(range); setExpanded(new Set()); }} />
       <div className="at-filter-grid">
-        <Select label="Period" value={preset} onChange={value => { setPreset(value); if (value !== 'custom') setDates(presetRange(value)); }}><option value="7">Last 7 complete days</option><option value="28">Last 28 complete days</option><option value="mtd">Month to yesterday</option><option value="lastmonth">Last month</option><option value="custom">Custom dates</option></Select>
         <Select label="Compare with" value={comparison} onChange={setComparison}><option value="previous">Previous period</option><option value="none">No comparison</option></Select>
         <Select label="Channel" value={channel} onChange={value => { setChannel(value); setExpanded(new Set()); }}><option value="all">All channels</option>{displayChannels.map(c => <option key={c} value={c}>{c}</option>)}</Select>
         <Select label="Country" value={country} onChange={value => { setCountry(value); setExpanded(new Set()); }}><option value="all">All countries</option>{countries.map(c => <option key={countryKey(c)} value={countryKey(c)}>{flag(c.countryCode)} {c.country}</option>)}{country !== 'all' && !countries.some(c => countryKey(c) === country) && <option value={country}>{country}</option>}</Select>
         <Select label="Breakdown" value={group} onChange={value => { setGroup(value); setExpanded(new Set()); }}><option value="channel">Channel → Country</option><option value="country">Country → Channel</option></Select>
       </div>
-      {preset === 'custom' && <div className="at-custom"><label>From <input aria-label="Start date" type="date" value={dates.start} max={iso(new Date())} onChange={e => setDates({ ...dates, start: e.target.value })} /></label><label>To <input aria-label="End date" type="date" value={dates.end} max={iso(new Date())} onChange={e => setDates({ ...dates, end: e.target.value })} /></label><span>Up to 93 days</span></div>}
       <div className="at-period"><CalendarDays size={14} /><strong>{dates.start && dateLabel(dates.start)} – {dates.end && dateLabel(dates.end)}</strong>{report && <><span>{compare ? `vs ${dateLabel(report.range.previousStart)} – ${dateLabel(report.range.previousEnd)}` : 'No comparison'}</span><span className="at-period-meta">{report.currency} · {report.timezone} · Updated {new Date(report.fetchedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</span></>}</div>
     </section>
 

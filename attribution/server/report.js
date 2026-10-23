@@ -1,6 +1,7 @@
 import express from 'express';
 import process from 'node:process';
 import { authorizeMirai } from '../../seo/server/router.js';
+import { reportingToday, shiftDay } from '../../src/features/attribution/dates.js';
 
 const DAY = 86400000;
 const LIMIT = 100000;
@@ -13,9 +14,9 @@ const validDate = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.te
   && Number.isFinite(Date.parse(value)) && iso(new Date(value)) === value;
 
 export function reportRange(query = {}, now = new Date()) {
-  const end = query.end || iso(new Date(now.getTime() - DAY));
+  const end = query.end || shiftDay(reportingToday(now), -1);
   const start = query.start || iso(new Date(Date.parse(end) - 27 * DAY));
-  if (!validDate(start) || !validDate(end) || start > end || end > iso(now)
+  if (!validDate(start) || !validDate(end) || start > end || end > reportingToday(now)
       || Date.parse(end) - Date.parse(start) > 92 * DAY) {
     throw new Error('Choose a valid date range of up to 93 days, ending today or earlier.');
   }
