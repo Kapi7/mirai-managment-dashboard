@@ -10,6 +10,7 @@ export default defineConfig({
     host: true,
     port: 3000,
     proxy: {
+      '/attribution-api': { target: process.env.MIRAI_ATTRIBUTION_DEV_URL || 'http://127.0.0.1:5109', changeOrigin: true },
       '/seo-dashboard': { target: process.env.MIRAI_SEO_DEV_URL || 'http://127.0.0.1:5106', changeOrigin: true },
       '/reports-api': {
         target: 'http://localhost:8080',
@@ -43,4 +44,4 @@ export default defineConfig({
       },
     },
   },
-}) 
+})

@@ -9,6 +9,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test:seo": "node --test seo/tests/*.test.js",
+    "test:attribution": "node --test attribution/tests/*.test.js",
+    "attribution:dev": "node attribution/server/dev.js",
     "seo:dev": "node seo/server/dev.js",
     "seo:fetch": "node seo/server/cli.js",
     "test:social": "node --test social/tests/*.test.js"

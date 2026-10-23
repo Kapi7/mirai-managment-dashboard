@@ -1,6 +1,7 @@
 import { reportsProxy } from '../consolidation/reports-proxy.js';
 import express from 'express';
 import { createSeoRouter } from '../seo/server/router.js';
+import { createAttributionRouter } from '../attribution/server/report.js';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { google } from 'googleapis';
@@ -22,6 +23,7 @@ app.use(cors());
 app.use('/seo-dashboard/api/social/import', express.json({ limit: '512kb' }));
 app.use(express.json());
 app.use('/seo-dashboard', createSeoRouter());
+app.use('/attribution-api', createAttributionRouter());
 
 // Reports API endpoint - proxies to Python backend with real mirai_report logic
 app.post('/reports-api/daily-report', async (req, res) => {

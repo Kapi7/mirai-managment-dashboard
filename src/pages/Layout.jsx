@@ -36,6 +36,7 @@ const navigationSections = [
     label: "Analytics",
     items: [
       { title: "Reports", url: createPageUrl("Reports"), icon: BarChart3 },
+      { title: "Attribution", url: createPageUrl("Attribution"), icon: BarChart3 },
     ],
   },
   {

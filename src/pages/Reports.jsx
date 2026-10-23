@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Calendar } from '@/components/ui/calendar';
@@ -551,6 +552,7 @@ export default function Reports() {
 
       {/* Tab switch */}
       <div className="m-seg no-scrollbar">
+        <Link className="m-chip !border-0" to="/Attribution"><Globe className="h-3.5 w-3.5" />Attribution</Link>
         {[
           { id: 'daily', label: 'Daily Report', icon: TrendingUp },
           { id: 'orders', label: 'Orders', icon: Package },
