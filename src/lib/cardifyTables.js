@@ -18,7 +18,7 @@ export function cardifyTables(root = document.body) {
 
   root.querySelectorAll('table:not(.m-table):not([data-cardified])').forEach((table) => {
     const cols = table.querySelectorAll('thead th').length;
-    if (cols < 5) {
+    if (cols < 5 || table.closest('.at-date-calendar')) {
       table.setAttribute('data-cardified', 'skip');
       return;
     }

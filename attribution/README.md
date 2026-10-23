@@ -6,6 +6,12 @@ It uses Mirai's existing dark report components, auth session and Shopify store.
 The report provides period, comparison, channel, country and hierarchy dropdowns;
 country flags; channel → country → day or country → channel → day expansion;
 sortable metrics; pagination; five selectable KPI charts; and a filtered CSV.
+The President-style date slicer offers Today, Yesterday and Last 3 days
+(three calendar days including today), plus 7/28 complete days. Its calendar
+popover also offers monthly presets and a custom range with Apply/Cancel.
+Today is calculated in Mirai's `Asia/Jerusalem` reporting time zone on both
+client and server, including around UTC midnight and daylight-saving changes.
+Channel, country, comparison and hierarchy menus use the same dark styling.
 Changes use arrows and color, with percentage points for conversion, `New` for
 a zero previous baseline, and a dash when no session denominator exists.
 
