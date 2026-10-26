@@ -12,8 +12,8 @@ export const COUNTRY_NAMES = Object.freeze({
 export const DEFINITIONS = Object.freeze({
   installs: 'Daily device installs from the Play Console country export (installs_<package>_YYYYMM_country.csv). Not GA4 first_open.',
   uninstalls: 'Daily device uninstalls from the same Play Console country export. Not GA4 app_remove.',
-  crashes: 'Play Developer Reporting errorReportCount where reportType is CRASH. A user-perceived crash rate is separate and is not a count.',
-  anrs: 'Play Developer Reporting errorReportCount where reportType is ANR.',
+  crashes: 'Play Developer Reporting errorReportCount where reportType is CRASH. A user-perceived crash rate is separate and is not a count. Error counts have no country breakdown.',
+  anrs: 'Play Developer Reporting errorReportCount where reportType is ANR. Error counts have no country breakdown.',
   crashRate: 'Latest daily user-perceived crash rate in the selected range. Rates are not averaged.',
   anrRate: 'Latest daily user-perceived ANR rate in the selected range. Rates are not averaged.',
   sessions: 'GA4 sessions for the Firebase app property in PLAY_GA4_PROPERTY_ID. Not Shopify sessions and not the mirai-skin.com website property.',
@@ -269,9 +269,11 @@ export function aggregateVitals({ errorRows = [], crashRows = [], anrRows = [], 
     const type = String(dimensions.reportType || '').toUpperCase();
     const field = type === 'CRASH' ? 'crashes' : type === 'ANR' ? 'anrs' : null;
     if (!field) continue;
-    const country = String(dimensions.countryCode || '').toUpperCase();
-    const target = byCountry[country] || other;
-    target[field] = add(target[field], count);
+    const country = String(dimensions.countryCode ?? '').trim().toUpperCase();
+    if (country) {
+      const target = byCountry[country] || other;
+      target[field] = add(target[field], count);
+    }
     if (field === 'crashes') crashes = add(crashes, count);
     else anrs = add(anrs, count);
   }
@@ -279,8 +281,12 @@ export function aggregateVitals({ errorRows = [], crashRows = [], anrRows = [], 
   const anrRate = latestRate(anrRows, 'userPerceivedAnrRate', start, end);
   if (crashRate.error) return { error: crashRate.error };
   if (anrRate.error) return { error: anrRate.error };
-  const any = crashes != null || anrs != null || crashRate.value != null || anrRate.value != null
-    || Object.values(byCountry).some(row => row.crashes != null || row.anrs != null) || other.crashes != null || other.anrs != null;
+  const countrySplit = Object.values(byCountry).some(row => row.crashes != null || row.anrs != null)
+    || other.crashes != null || other.anrs != null;
+  const any = crashes != null || anrs != null || crashRate.value != null || anrRate.value != null || countrySplit;
+  const countryNote = (crashes != null || anrs != null) && !countrySplit
+    ? ' Crash and ANR counts are for the whole app; Play error counts have no country breakdown, so those cells stay blank.'
+    : '';
   return {
     observed: any,
     crashes,
@@ -292,7 +298,7 @@ export function aggregateVitals({ errorRows = [], crashRows = [], anrRows = [], 
     byCountry,
     other,
     note: any
-      ? 'Play Developer Reporting error reports. Counts are blank when the API returns no row. User-perceived rates are the latest daily rate in the range, not an average.'
+      ? `Play Developer Reporting error reports.${countryNote} Counts are blank when the API returns no row. User-perceived rates are the latest daily rate in the range, not an average.`
       : 'Play Developer Reporting returned no crash or ANR rows for these dates. Missing rows are not shown as zero.',
   };
 }
