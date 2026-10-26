@@ -10,6 +10,8 @@
     "preview": "vite preview",
     "test:seo": "node --test seo/tests/*.test.js",
     "test:attribution": "node --test attribution/tests/*.test.js",
+    "test:play": "node --test play/tests/*.test.js",
+    "play:dev": "node play/server/dev.js",
     "attribution:dev": "node attribution/server/dev.js",
     "seo:dev": "node seo/server/dev.js",
     "seo:fetch": "node seo/server/cli.js",

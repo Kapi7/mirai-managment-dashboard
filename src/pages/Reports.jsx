@@ -6,7 +6,7 @@ import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Input } from '@/components/ui/input';
 import {
-  CalendarIcon, TrendingUp, Package, Globe, Clock, Star, RefreshCw,
+  CalendarIcon, TrendingUp, Package, Globe, Clock, Star, RefreshCw, Smartphone,
   ChevronDown, ChevronRight, ArrowUpDown,
 } from 'lucide-react';
 import { format, subDays, startOfMonth, endOfMonth, subMonths, startOfDay, endOfDay } from 'date-fns';
@@ -553,6 +553,7 @@ export default function Reports() {
       {/* Tab switch */}
       <div className="m-seg no-scrollbar">
         <Link className="m-chip !border-0" to="/Attribution"><Globe className="h-3.5 w-3.5" />Attribution</Link>
+        <Link className="m-chip !border-0" to="/Play"><Smartphone className="h-3.5 w-3.5" />App / Play</Link>
         {[
           { id: 'daily', label: 'Daily Report', icon: TrendingUp },
           { id: 'orders', label: 'Orders', icon: Package },

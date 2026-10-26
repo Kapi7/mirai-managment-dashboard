@@ -35,4 +35,10 @@ export default [
       ],
     },
   },
+  {
+    files: ['play/**/*.js'],
+    languageOptions: {
+      globals: { ...globals.browser, ...globals.node },
+    },
+  },
 ]
