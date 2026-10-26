@@ -18,6 +18,7 @@ import {
   FileText,
   Share2,
   LayoutGrid,
+  Smartphone,
   X,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -37,6 +38,7 @@ const navigationSections = [
     items: [
       { title: "Reports", url: createPageUrl("Reports"), icon: BarChart3 },
       { title: "Attribution", url: createPageUrl("Attribution"), icon: BarChart3 },
+      { title: "App / Play", url: createPageUrl("Play"), icon: Smartphone },
     ],
   },
   {

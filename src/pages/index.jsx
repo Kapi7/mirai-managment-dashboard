@@ -7,6 +7,7 @@ import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 // Lazy load pages for faster initial load
 const Reports = lazy(() => import('./Reports'));
 const Attribution = lazy(() => import('./Attribution'));
+const Play = lazy(() => import('./Play'));
 const Pricing = lazy(() => import('./Pricing'));
 const KorealyProcessor = lazy(() => import('./KorealyProcessor'));
 const Settings = lazy(() => import('./Settings'));
@@ -51,6 +52,7 @@ const PAGES = {
 
     Reports: Reports,
     Attribution: Attribution,
+    Play: Play,
 
     Pricing: Pricing,
 
@@ -117,6 +119,8 @@ function PagesContent() {
                     <Route path="/" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
                     <Route path="/Reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
                     <Route path="/Attribution" element={<ProtectedRoute><Attribution /></ProtectedRoute>} />
+                    <Route path="/Play" element={<ProtectedRoute><Play /></ProtectedRoute>} />
+                    <Route path="/play" element={<ProtectedRoute><Play /></ProtectedRoute>} />
                     <Route path="/Pricing" element={<ProtectedRoute><Pricing /></ProtectedRoute>} />
                     <Route path="/KorealyProcessor" element={<ProtectedRoute><KorealyProcessor /></ProtectedRoute>} />
                     <Route path="/Settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
