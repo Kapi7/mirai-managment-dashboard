@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { readPlayConfig, redact, WEBSITE_GA4_PROPERTY_IDS } from '../server/config.js';
 import { aggregateGa4, aggregateInstallCsv, aggregateVitals, monthsInRange, reportRange } from '../server/normalize.js';
 import { createPlayReport, createPlayRouter } from '../server/report.js';
-import { SourceFailure } from '../server/sources.js';
+import { loadVitals, SourceFailure } from '../server/sources.js';
 import { formatCount, formatRate } from '../../src/features/play/model.js';
 
 const NOW = () => new Date('2026-10-26T12:00:00Z');
@@ -178,7 +178,7 @@ test('install export, vitals and GA4 stay in their own fields', async () => {
   assert.equal(JSON.stringify(body).includes('test-token'), false);
   assert.equal(JSON.stringify(body).includes('/keys/play.json'), false);
   assert.equal(JSON.stringify(body).includes('/exports'), false);
-  const crashCall = calls.find(call => call.url.includes('crashRateMetricSet'));
+  const crashCall = calls.find(call => call.url.includes('crashRateMetricSet:query'));
   const sent = JSON.parse(crashCall.body);
   assert.equal(sent.timelineSpec.endTime.day, 21);
   assert.equal(sent.timelineSpec.startTime.day, 19);
@@ -284,6 +284,122 @@ test('the production router requires authentication and hides private failures',
   assert.equal(invalid.status, 400);
 });
 
+test('Play error counts are requested by reportType only', async () => {
+  const calls = [];
+  await loadVitals({
+    config: { packageName: 'com.miraiskin.mobile', credentialsPath: '/keys/play.json', countries: ['US', 'IL'] },
+    range: RANGE,
+    tokenProvider: async () => 'test-token',
+    fetchImpl: async (url, init) => {
+      const href = String(url);
+      calls.push({ href, body: init?.body ? JSON.parse(init.body) : null });
+      return json({ rows: [] });
+    },
+  });
+  const errorCall = calls.find(call => call.href.includes('errorCountMetricSet:query'));
+  assert.ok(errorCall);
+  assert.deepEqual(errorCall.body.dimensions, ['reportType']);
+});
+
+test('error counts without a country stay out of the country table', () => {
+  const result = aggregateVitals({
+    errorRows: [
+      {
+        startTime: { year: 2026, month: 10, day: 20 },
+        dimensions: [{ dimension: 'reportType', stringValue: 'CRASH' }],
+        metrics: [{ metric: 'errorReportCount', decimalValue: { value: '4' } }],
+      },
+      {
+        startTime: { year: 2026, month: 10, day: 20 },
+        dimensions: [{ dimension: 'reportType', stringValue: 'ANR' }],
+        metrics: [{ metric: 'errorReportCount', decimalValue: { value: '1' } }],
+      },
+    ],
+    start: RANGE.start,
+    end: RANGE.end,
+    countries: ['US', 'IL'],
+  });
+  assert.equal(result.crashes, 4);
+  assert.equal(result.anrs, 1);
+  assert.equal(result.byCountry.US.crashes, null);
+  assert.equal(result.byCountry.IL.anrs, null);
+  assert.equal(result.other.crashes, null);
+  assert.equal(result.other.anrs, null);
+  assert.match(result.note, /no country breakdown/);
+});
+
+test('a normal vitals range is capped to Play daily freshness', async () => {
+  const queries = [];
+  const result = await loadVitals({
+    config: { packageName: 'com.miraiskin.mobile', credentialsPath: '/keys/play.json', countries: ['US'] },
+    range: { start: '2026-10-19', end: '2026-10-25' },
+    tokenProvider: async () => 'test-token',
+    fetchImpl: async (url, init) => {
+      const href = String(url);
+      if (!href.includes(':query')) {
+        return json({
+          freshnessInfo: {
+            freshnesses: [{ aggregationPeriod: 'DAILY', latestEndTime: { year: 2026, month: 10, day: 24 } }],
+          },
+        });
+      }
+      const body = JSON.parse(init.body);
+      queries.push({ href, timeline: body.timelineSpec });
+      if (body.timelineSpec.endTime.day !== 24 || body.timelineSpec.endTime.month !== 10) {
+        return { ok: false, status: 400, text: async () => JSON.stringify({ error: { message: 'endTime is past freshness', status: 'INVALID_ARGUMENT' } }) };
+      }
+      if (href.includes('errorCountMetricSet')) {
+        return json({ rows: [{
+          startTime: { year: 2026, month: 10, day: 23 },
+          dimensions: [{ dimension: 'reportType', stringValue: 'CRASH' }],
+          metrics: [{ metric: 'errorReportCount', decimalValue: { value: '3' } }],
+        }] });
+      }
+      if (href.includes('crashRateMetricSet')) return json({ rows: [rateRow(23, 'userPerceivedCrashRate', '0.2')] });
+      return json({ rows: [rateRow(23, 'userPerceivedAnrRate', '0.05')] });
+    },
+  });
+  assert.equal(queries.length, 3);
+  for (const query of queries) {
+    assert.equal(query.timeline.aggregationPeriod, 'DAILY');
+    assert.equal(query.timeline.endTime.day, 24);
+    assert.equal(query.timeline.startTime.timeZone.id, 'America/Los_Angeles');
+    assert.equal(query.timeline.endTime.timeZone.id, 'America/Los_Angeles');
+  }
+  assert.equal(result.crashes, 3);
+  assert.equal(result.crashRate, 0.2);
+  assert.equal(result.anrRate, 0.05);
+  assert.equal(result.byCountry.US.crashes, null);
+  assert.equal(result.other.crashes, null);
+});
+
+test('vitals dates after Play freshness stay blank', async () => {
+  let queried = false;
+  const result = await loadVitals({
+    config: { packageName: 'com.miraiskin.mobile', credentialsPath: '/keys/play.json', countries: ['US'] },
+    range: { start: '2026-10-24', end: '2026-10-25' },
+    tokenProvider: async () => 'test-token',
+    fetchImpl: async url => {
+      const href = String(url);
+      if (href.includes(':query')) {
+        queried = true;
+        return { ok: false, status: 400, text: async () => JSON.stringify({ error: { message: 'endTime is past freshness', status: 'INVALID_ARGUMENT' } }) };
+      }
+      return json({
+        freshnessInfo: {
+          freshnesses: [{ aggregationPeriod: 'DAILY', latestEndTime: { year: 2026, month: 10, day: 24 } }],
+        },
+      });
+    },
+  });
+  assert.equal(queried, false);
+  assert.equal(result.observed, false);
+  assert.equal(result.crashes, null);
+  assert.equal(result.anrs, null);
+  assert.equal(result.crashRate, null);
+  assert.equal(result.anrRate, null);
+});
+
 test('counts stay blank until a real number exists', () => {
   assert.equal(formatCount(null), '—');
   assert.equal(formatCount(undefined), '—');
@@ -292,6 +408,10 @@ test('counts stay blank until a real number exists', () => {
   assert.equal(formatRate(0.25), '25.00%');
   assert.equal(formatRate(null), null);
 });
+
+function json(payload) {
+  return { ok: true, status: 200, text: async () => JSON.stringify(payload), json: async () => payload };
+}
 
 function errorRow(day, country, type, count) {
   return {

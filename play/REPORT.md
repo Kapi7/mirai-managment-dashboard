@@ -29,7 +29,7 @@ New Analytics page **App / Play** (`/Play`), also linked from Business Reports. 
 Each metric stays blank until its own source answers. Blank is not zero.
 
 - Installs and uninstalls: Play Console country export (`installs_com.miraiskin.mobile_YYYYMM_country.csv`), daily device counts
-- Crashes and ANRs: Play Developer Reporting `errorReportCount` for `CRASH` and `ANR`, plus the latest daily user-perceived rate when that call succeeds
+- Crashes and ANRs: Play Developer Reporting `errorReportCount` for `CRASH` and `ANR`, plus the latest daily user-perceived rate when that call succeeds. Counts are app-wide. The error count metric set has no country dimension, so country crash and ANR cells stay blank.
 - Sessions, range active users, and latest-day active users: GA4 property named by `PLAY_GA4_PROPERTY_ID`
 - Country rows: US, AU, GB, CA, IL, plus other countries that were actually present
 - GA4 `first_open` and `app_remove` are shown in their own columns and are never copied into Play installs or uninstalls

@@ -9,7 +9,7 @@ The page reads `GET /play-api`. A signed-in session is required in production. W
 | Metric | Source | Required environment |
 | --- | --- | --- |
 | Device installs, device uninstalls, US / AU / GB / CA / IL split | Play Console bulk export `installs_<package>_YYYYMM_country.csv` | `PLAY_STATS_BUCKET` **or** `PLAY_STATS_DIR` (not both). A bucket also needs `PLAY_GOOGLE_CREDENTIALS_PATH`. |
-| Crash count, ANR count, latest user-perceived rate | Play Developer Reporting API | `PLAY_GOOGLE_CREDENTIALS_PATH` |
+| Crash count, ANR count, latest user-perceived rate | Play Developer Reporting API. Counts are app-wide: `errorCountMetricSet` has no country dimension, so country crash and ANR cells stay blank. | `PLAY_GOOGLE_CREDENTIALS_PATH` |
 | Sessions, range active users, latest-day active users, `first_open`, `app_remove` | GA4 Data API for the Firebase **app** property | `PLAY_GA4_PROPERTY_ID` plus `PLAY_GOOGLE_CREDENTIALS_PATH` or `GOOGLE_APPLICATION_CREDENTIALS` |
 
 `PLAY_PACKAGE_NAME` defaults to `com.miraiskin.mobile`.

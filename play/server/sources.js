@@ -139,15 +139,58 @@ async function requestText(url, token, fetchImpl) {
   return text;
 }
 
-function timeline(start, end) {
-  const [startYear, startMonth, startDay] = start.split('-').map(Number);
-  const exclusive = new Date(Date.UTC(...end.split('-').map((part, index) => Number(part) - (index === 1 ? 1 : 0))));
-  exclusive.setUTCDate(exclusive.getUTCDate() + 1);
+const PLAY_DAILY_TIME_ZONE = 'America/Los_Angeles';
+
+function isoDate(value) {
+  const year = Number(value?.year);
+  const month = Number(value?.month);
+  const day = Number(value?.day);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
+  const iso = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const parsed = new Date(`${iso}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== iso) return null;
+  return iso;
+}
+
+function shiftIsoDate(iso, days) {
+  const parsed = new Date(`${iso}T00:00:00Z`);
+  parsed.setUTCDate(parsed.getUTCDate() + days);
+  return parsed.toISOString().slice(0, 10);
+}
+
+function zonedDate(iso) {
+  const [year, month, day] = iso.split('-').map(Number);
+  return { year, month, day, timeZone: { id: PLAY_DAILY_TIME_ZONE } };
+}
+
+// DAILY Play timelines are America/Los_Angeles calendar dates. latestEndTime is
+// the exclusive end already, so a selected range must not extend past it.
+function dailyTimeline(start, end, latestEndTime) {
+  const latest = latestEndTime ? isoDate(latestEndTime) : null;
+  let exclusiveEnd = shiftIsoDate(end, 1);
+  if (latest && exclusiveEnd > latest) exclusiveEnd = latest;
+  if (start >= exclusiveEnd) return null;
   return {
     aggregationPeriod: 'DAILY',
-    startTime: { year: startYear, month: startMonth, day: startDay },
-    endTime: { year: exclusive.getUTCFullYear(), month: exclusive.getUTCMonth() + 1, day: exclusive.getUTCDate() },
+    startTime: zonedDate(start),
+    endTime: zonedDate(exclusiveEnd),
   };
+}
+
+async function latestDailyEnd({ packageName, metricSet, token, fetchImpl }) {
+  const url = `https://playdeveloperreporting.googleapis.com/v1beta1/apps/${encodeURIComponent(packageName)}/${metricSet}`;
+  const body = await requestJson(url, { token, fetchImpl });
+  const freshnesses = body?.freshnessInfo?.freshnesses;
+  if (!Array.isArray(freshnesses)) return null;
+  const daily = freshnesses.find(item => item?.aggregationPeriod === 'DAILY');
+  return daily?.latestEndTime || null;
+}
+
+async function queryDailyMetricSet({ packageName, metricSet, range, body, token, fetchImpl }) {
+  const latestEndTime = await latestDailyEnd({ packageName, metricSet, token, fetchImpl });
+  const timelineSpec = dailyTimeline(range.start, range.end, latestEndTime);
+  if (!timelineSpec) return { rows: [], complete: true };
+  return queryMetricSet({ packageName, metricSet, token, fetchImpl, body: { ...body, timelineSpec } });
 }
 
 async function queryMetricSet({ packageName, metricSet, body, token, fetchImpl }) {
@@ -165,20 +208,13 @@ async function queryMetricSet({ packageName, metricSet, body, token, fetchImpl }
 
 export async function loadVitals({ config, range, fetchImpl, tokenProvider }) {
   const token = await (tokenProvider || googleAccessToken)({ keyFile: config.credentialsPath, scopes: [PLAY_SCOPE] });
-  const spec = timeline(range.start, range.end);
+  const query = (metricSet, body) => queryDailyMetricSet({
+    packageName: config.packageName, metricSet, range, body, token, fetchImpl,
+  });
   const [errors, crashes, anrs] = await Promise.all([
-    queryMetricSet({
-      packageName: config.packageName, metricSet: 'errorCountMetricSet', token, fetchImpl,
-      body: { timelineSpec: spec, dimensions: ['countryCode', 'reportType'], metrics: ['errorReportCount'], pageSize: 1000 },
-    }),
-    queryMetricSet({
-      packageName: config.packageName, metricSet: 'crashRateMetricSet', token, fetchImpl,
-      body: { timelineSpec: spec, metrics: ['userPerceivedCrashRate'], pageSize: 100 },
-    }),
-    queryMetricSet({
-      packageName: config.packageName, metricSet: 'anrRateMetricSet', token, fetchImpl,
-      body: { timelineSpec: spec, metrics: ['userPerceivedAnrRate'], pageSize: 100 },
-    }),
+    query('errorCountMetricSet', { dimensions: ['reportType'], metrics: ['errorReportCount'], pageSize: 1000 }),
+    query('crashRateMetricSet', { metrics: ['userPerceivedCrashRate'], pageSize: 100 }),
+    query('anrRateMetricSet', { metrics: ['userPerceivedAnrRate'], pageSize: 100 }),
   ]);
   const aggregated = aggregateVitals({
     errorRows: errors.rows,
