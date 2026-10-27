@@ -108,12 +108,8 @@
   [data-radix-popper-content-wrapper]:has(> .at-date-popover) { top: 50% !important; left: 50% !important; transform: translate(-50%,-50%) !important; width: calc(100vw - 24px); }
   .at-date-popover { width: 100%; max-height: calc(100dvh - 24px); }
 }
-/* Mirai Attribution — mobile v1 DRAFT (mirror of Figura 2026-10-25)
-   Append to src/features/attribution/style.css.
-   Scope: card-stack + filters sheet; Layout.jsx / mobile thumb-nav untouched.
-   Colors adapted for Mirai dark theme (not Figura light Studio).
-   Desktop ≥761 unchanged. Sticky-table scroll fallback not primary.
-   DRAFT ONLY — do not deploy / merge without Itay Go + Mirai QA. */
+/* Mirai Attribution — mobile v1 (Figura card-stack + phone filters sheet, dark theme).
+   Phone ≤480 uses the sheet. From 481px the filter grid is outside <details>. */
 
 /* ——— Card list base (hidden on desktop; shown ≤480) ——— */
 .at-card-list { display: none; padding: 0 12px 14px; gap: 10px; }
@@ -221,7 +217,7 @@
 .at-card.level-1 { /* reserved for depth tint if needed */ }
 .at-card.level-2 .at-card-head { min-height: 44px; font-weight: 500; }
 
-/* Filters sheet base (summary hidden ≥481; grid always shown on desktop) */
+/* Phone sheet summary. Hidden only as a base; the ≤480 query shows it. */
 .at-filters-sheet > summary {
   list-style: none;
   display: none;
@@ -319,8 +315,6 @@
 }
 
 @media (min-width: 481px) {
-  .at-filters-sheet > summary { display: none; }
-  .at-filters-sheet .at-filter-grid { display: grid; }
   .at-card-list { display: none; }
   .at-breakdown .at-table-wrap { display: block; }
 }

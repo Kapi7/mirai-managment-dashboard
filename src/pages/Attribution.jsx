@@ -11,6 +11,19 @@ import { dateLabel, presetRange, validateDates } from '@/features/attribution/da
 import { Select as MenuSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import '@/features/attribution/style.css';
 
+function useMaxWidth(maxWidth) {
+  const query = `(max-width: ${maxWidth}px)`;
+  const [matches, setMatches] = useState(() => typeof window !== 'undefined' && window.matchMedia(query).matches);
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const update = () => setMatches(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, [query]);
+  return matches;
+}
+
 function Select({ label, value, onChange, children }) {
   return <div className="at-filter"><span>{label}</span><MenuSelect value={String(value)} onValueChange={onChange}><SelectTrigger aria-label={label} className="at-select-trigger"><SelectValue /></SelectTrigger><SelectContent className="at-select-menu">{Children.toArray(children).map(option => <SelectItem className="at-select-option" key={option.props.value} value={String(option.props.value)}>{option.props.children}</SelectItem>)}</SelectContent></MenuSelect></div>;
 }
@@ -103,6 +116,7 @@ function ReportCard({ row, level = 0, expanded, toggle, currency, compare, sort,
 export default function Attribution() {
   const { getAuthHeader } = useAuth();
   const isMobile = useIsMobile();
+  const phoneFilters = useMaxWidth(480);
   const [preset, setPreset] = useState('28');
   const [dates, setDates] = useState(() => presetRange('28'));
   const [comparison, setComparison] = useState('previous');
@@ -162,6 +176,12 @@ export default function Attribution() {
   const visibleRows = sortedRows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const unallocated = report?.rows.filter(row => row.unallocated && row.date >= report.range.start).reduce((total, row) => total + row.sessions, 0) || 0;
   const displayChannels = channels.includes(channel) || channel === 'all' ? channels : [...channels, channel];
+  const filterGrid = <div className="at-filter-grid">
+    <Select label="Compare with" value={comparison} onChange={setComparison}><option value="previous">Previous period</option><option value="none">No comparison</option></Select>
+    <Select label="Channel" value={channel} onChange={value => { setChannel(value); setExpanded(new Set()); }}><option value="all">All channels</option>{displayChannels.map(c => <option key={c} value={c}>{c}</option>)}</Select>
+    <Select label="Country" value={country} onChange={value => { setCountry(value); setExpanded(new Set()); }}><option value="all">All countries</option>{countries.map(c => <option key={countryKey(c)} value={countryKey(c)}>{flag(c.countryCode)} {c.country}</option>)}{country !== 'all' && !countries.some(c => countryKey(c) === country) && <option value={country}>{country}</option>}</Select>
+    <Select label="Breakdown" value={group} onChange={value => { setGroup(value); setExpanded(new Set()); }}><option value="channel">Channel → Country</option><option value="country">Country → Channel</option></Select>
+  </div>;
 
   return <div className="at-report space-y-4 p-3 lg:p-6">
     <header className="at-header">
@@ -174,7 +194,7 @@ export default function Attribution() {
 
     <section className="m-glow-card at-controls" aria-label="Report filters">
       <DateSlicer preset={preset} dates={dates} timezone={report?.timezone} onChange={(value, range) => { setPreset(value); setDates(range); setExpanded(new Set()); }} />
-      <details className="at-filters-sheet">
+      {phoneFilters ? <details className="at-filters-sheet">
         <summary>
           <span>Filters</span>
           <span className="at-filters-summary">
@@ -186,13 +206,8 @@ export default function Attribution() {
             ].join(' · ')}
           </span>
         </summary>
-        <div className="at-filter-grid">
-          <Select label="Compare with" value={comparison} onChange={setComparison}><option value="previous">Previous period</option><option value="none">No comparison</option></Select>
-          <Select label="Channel" value={channel} onChange={value => { setChannel(value); setExpanded(new Set()); }}><option value="all">All channels</option>{displayChannels.map(c => <option key={c} value={c}>{c}</option>)}</Select>
-          <Select label="Country" value={country} onChange={value => { setCountry(value); setExpanded(new Set()); }}><option value="all">All countries</option>{countries.map(c => <option key={countryKey(c)} value={countryKey(c)}>{flag(c.countryCode)} {c.country}</option>)}{country !== 'all' && !countries.some(c => countryKey(c) === country) && <option value={country}>{country}</option>}</Select>
-          <Select label="Breakdown" value={group} onChange={value => { setGroup(value); setExpanded(new Set()); }}><option value="channel">Channel → Country</option><option value="country">Country → Channel</option></Select>
-        </div>
-      </details>
+        {filterGrid}
+      </details> : filterGrid}
       <div className="at-period"><CalendarDays size={14} /><strong>{dates.start && dateLabel(dates.start)} – {dates.end && dateLabel(dates.end)}</strong>{report && <><span>{compare ? `vs ${dateLabel(report.range.previousStart)} – ${dateLabel(report.range.previousEnd)}` : 'No comparison'}</span><span className="at-period-meta">{report.currency} · {report.timezone} · Updated {new Date(report.fetchedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</span></>}</div>
     </section>
 
