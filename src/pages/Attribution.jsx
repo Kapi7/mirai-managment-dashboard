@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { ChevronDown, ChevronRight, Download, RefreshCw, ArrowUpRight, ArrowDownRight, Minus, BarChart3, CalendarDays, Globe, Info } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import { useAuth } from '@/contexts/AuthContext';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { METRICS, buildView, countryKey, exportCsv, flag, formatMetric, trend } from '@/features/attribution/model';
 import DateSlicer from '@/features/attribution/DateSlicer';
 import { dateLabel, presetRange, validateDates } from '@/features/attribution/dates';
@@ -22,6 +23,15 @@ function Change({ current, previous, metric, currency, compare }) {
 function RowLabel({ row }) {
   return <>{row.isCountry && <span className="at-flag" role="img" aria-label={`${row.label} flag`}>{flag(row.countryCode)}</span>}{row.date ? dateLabel(row.date) : row.label}</>;
 }
+function salesChannelWithoutSessions(current) {
+  return (current?.orders || 0) > 0 && (current?.sessions || 0) === 0;
+}
+function CardMetricValue({ metricKey, current, currency }) {
+  return <>
+    <strong className={metricKey === 'amount' ? 'm-rev' : ''}>{formatMetric(current[metricKey], metricKey, currency)}</strong>
+    {metricKey === 'sessions' && salesChannelWithoutSessions(current) && <span className="at-card-hint">n/a (sales channel)</span>}
+  </>;
+}
 function ReportRow({ row, level = 0, expanded, toggle, currency, compare, sort }) {
   const open = expanded.has(row.id);
   const hasChildren = row.children.length > 0;
@@ -34,8 +44,65 @@ function ReportRow({ row, level = 0, expanded, toggle, currency, compare, sort }
   </tr>{open && children.map(child => <ReportRow key={child.id} row={child} level={level + 1} expanded={expanded} toggle={toggle} currency={currency} compare={compare} sort={sort} />)}</>;
 }
 
+
+function ReportCard({ row, level = 0, expanded, toggle, currency, compare, sort, primaryMetric }) {
+  const open = expanded.has(row.id);
+  const hasChildren = row.children.length > 0;
+  const children = level === 1 ? [...row.children].sort((a, b) => b.date.localeCompare(a.date)) : sort(row.children);
+  const primary = METRICS.find(m => m.key === primaryMetric) || METRICS[0];
+  const secondary = METRICS.filter(m => m.key !== primary.key);
+
+  return (
+    <div className={`at-card level-${level} ${open ? 'at-open' : ''}`}>
+      {hasChildren ? (
+        <button type="button" className="at-card-head" aria-expanded={open} onClick={() => toggle(row.id)}>
+          {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+          <RowLabel row={row} />
+          <span className="at-count">{row.children.length}</span>
+        </button>
+      ) : (
+        <div className="at-card-head">
+          <span className="at-day"><CalendarDays size={12} /><RowLabel row={row} /></span>
+        </div>
+      )}
+      <div className="at-card-primary">
+        <span className="at-card-metric-label">{primary.label}</span>
+        <CardMetricValue metricKey={primary.key} current={row.current} currency={currency} />
+        <Change current={row.current[primary.key]} previous={row.previous[primary.key]} metric={primary.key} currency={currency} compare={compare} />
+      </div>
+      <div className="at-card-metrics">
+        {secondary.map(m => (
+          <div key={m.key}>
+            <span className="at-card-metric-label">{m.label}</span>
+            <CardMetricValue metricKey={m.key} current={row.current} currency={currency} />
+            <Change current={row.current[m.key]} previous={row.previous[m.key]} metric={m.key} currency={currency} compare={compare} />
+          </div>
+        ))}
+      </div>
+      {open && hasChildren && (
+        <div className="at-card-children">
+          {children.map(child => (
+            <ReportCard
+              key={child.id}
+              row={child}
+              level={level + 1}
+              expanded={expanded}
+              toggle={toggle}
+              currency={currency}
+              compare={compare}
+              sort={sort}
+              primaryMetric={primaryMetric}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Attribution() {
   const { getAuthHeader } = useAuth();
+  const isMobile = useIsMobile();
   const [preset, setPreset] = useState('28');
   const [dates, setDates] = useState(() => presetRange('28'));
   const [comparison, setComparison] = useState('previous');
@@ -107,12 +174,25 @@ export default function Attribution() {
 
     <section className="m-glow-card at-controls" aria-label="Report filters">
       <DateSlicer preset={preset} dates={dates} timezone={report?.timezone} onChange={(value, range) => { setPreset(value); setDates(range); setExpanded(new Set()); }} />
-      <div className="at-filter-grid">
-        <Select label="Compare with" value={comparison} onChange={setComparison}><option value="previous">Previous period</option><option value="none">No comparison</option></Select>
-        <Select label="Channel" value={channel} onChange={value => { setChannel(value); setExpanded(new Set()); }}><option value="all">All channels</option>{displayChannels.map(c => <option key={c} value={c}>{c}</option>)}</Select>
-        <Select label="Country" value={country} onChange={value => { setCountry(value); setExpanded(new Set()); }}><option value="all">All countries</option>{countries.map(c => <option key={countryKey(c)} value={countryKey(c)}>{flag(c.countryCode)} {c.country}</option>)}{country !== 'all' && !countries.some(c => countryKey(c) === country) && <option value={country}>{country}</option>}</Select>
-        <Select label="Breakdown" value={group} onChange={value => { setGroup(value); setExpanded(new Set()); }}><option value="channel">Channel → Country</option><option value="country">Country → Channel</option></Select>
-      </div>
+      <details className="at-filters-sheet">
+        <summary>
+          <span>Filters</span>
+          <span className="at-filters-summary">
+            {[
+              channel === 'all' ? 'All channels' : channel,
+              country === 'all'
+                ? 'All countries'
+                : (countries.find(c => countryKey(c) === country)?.country || country),
+            ].join(' · ')}
+          </span>
+        </summary>
+        <div className="at-filter-grid">
+          <Select label="Compare with" value={comparison} onChange={setComparison}><option value="previous">Previous period</option><option value="none">No comparison</option></Select>
+          <Select label="Channel" value={channel} onChange={value => { setChannel(value); setExpanded(new Set()); }}><option value="all">All channels</option>{displayChannels.map(c => <option key={c} value={c}>{c}</option>)}</Select>
+          <Select label="Country" value={country} onChange={value => { setCountry(value); setExpanded(new Set()); }}><option value="all">All countries</option>{countries.map(c => <option key={countryKey(c)} value={countryKey(c)}>{flag(c.countryCode)} {c.country}</option>)}{country !== 'all' && !countries.some(c => countryKey(c) === country) && <option value={country}>{country}</option>}</Select>
+          <Select label="Breakdown" value={group} onChange={value => { setGroup(value); setExpanded(new Set()); }}><option value="channel">Channel → Country</option><option value="country">Country → Channel</option></Select>
+        </div>
+      </details>
       <div className="at-period"><CalendarDays size={14} /><strong>{dates.start && dateLabel(dates.start)} – {dates.end && dateLabel(dates.end)}</strong>{report && <><span>{compare ? `vs ${dateLabel(report.range.previousStart)} – ${dateLabel(report.range.previousEnd)}` : 'No comparison'}</span><span className="at-period-meta">{report.currency} · {report.timezone} · Updated {new Date(report.fetchedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</span></>}</div>
     </section>
 
@@ -132,7 +212,7 @@ export default function Attribution() {
         <div className="at-section-head"><div><h2>{selectedMetric.label} over time</h2><p>{channel === 'all' ? 'All channels' : channel} · {country === 'all' ? 'All countries' : countries.find(c => countryKey(c) === country)?.country || country}</p></div><div className="at-legend"><span><i style={{ background: selectedMetric.color }} />Selected period</span>{compare && <span><i className="previous" />Previous period</span>}</div></div>
         <div className="at-chart-canvas"><ResponsiveContainer width="100%" height="100%"><AreaChart data={chart} margin={{ top: 10, right: 16, left: 4, bottom: 0 }}>
           <defs><linearGradient id="at-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={selectedMetric.color} stopOpacity={0.24} /><stop offset="100%" stopColor={selectedMetric.color} stopOpacity={0} /></linearGradient></defs>
-          <CartesianGrid stroke="#2b3a55" strokeDasharray="3 5" vertical={false} /><XAxis dataKey="date" tick={{ fill: '#8fa0b8', fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={36} /><YAxis tick={{ fill: '#8fa0b8', fontSize: 11 }} axisLine={false} tickLine={false} width={65} tickFormatter={v => metric === 'conversion' ? `${(v * 100).toFixed(1)}%` : new Intl.NumberFormat('en-US', { notation: 'compact' }).format(v)} />
+          <CartesianGrid stroke="#2b3a55" strokeDasharray="3 5" vertical={false} /><XAxis dataKey="date" tick={{ fill: '#8fa0b8', fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={isMobile ? 48 : 36} /><YAxis tick={{ fill: '#8fa0b8', fontSize: 11 }} axisLine={false} tickLine={false} width={isMobile ? 40 : 65} tickFormatter={v => metric === 'conversion' ? `${(v * 100).toFixed(1)}%` : new Intl.NumberFormat('en-US', { notation: 'compact' }).format(v)} />
           <Tooltip contentStyle={{ background: '#121a30', border: '1px solid #46557a', borderRadius: 10 }} labelStyle={{ color: '#e2e8f0' }} formatter={(value, name) => [formatMetric(value, metric, report.currency), name === 'current' ? 'Selected period' : 'Previous period (aligned day)']} />
           {compare && <Area type="monotone" dataKey="previous" stroke="#8292ad" strokeDasharray="5 5" fill="transparent" strokeWidth={1.5} isAnimationActive={false} />}
           <Area type="monotone" dataKey="current" stroke={selectedMetric.color} fill="url(#at-fill)" strokeWidth={2.2} isAnimationActive={false} />
@@ -141,10 +221,43 @@ export default function Attribution() {
 
       <section className="m-glow-card at-breakdown">
         <div className="at-section-head"><div><h2><Globe size={17} />{group === 'channel' ? 'Channel & country performance' : 'Country & channel performance'}</h2><p>Open a row to see its breakdown, then open a country or channel to see each day.</p></div><div className="at-actions"><button className="m-chip" onClick={() => setExpanded(new Set(visibleRows.map(r => r.id)))}>Expand page</button><button className="m-chip" onClick={() => setExpanded(new Set())}>Collapse all</button></div></div>
-        {!view.children.length ? <div className="at-empty"><Globe size={28} /><h3>No activity for these filters</h3><p>Choose another channel, country or date range.</p><button className="m-chip" onClick={() => { setChannel('all'); setCountry('all'); }}>Reset channel & country</button></div> : <div className="at-table-wrap" tabIndex={0} aria-label="Attribution breakdown; scroll horizontally on small screens"><table className="m-table at-table">
+        {!view.children.length ? <div className="at-empty"><Globe size={28} /><h3>No activity for these filters</h3><p>Choose another channel, country or date range.</p><button className="m-chip" onClick={() => { setChannel('all'); setCountry('all'); }}>Reset channel & country</button></div> : <><div className="at-table-wrap" tabIndex={0} aria-label="Attribution breakdown; scroll horizontally on small screens"><table className="m-table at-table">
           <thead><tr><th>{group === 'channel' ? 'Channel / Country' : 'Country / Channel'}</th>{METRICS.map(m => <th key={m.key} aria-sort={sortKey === m.key ? sortDirection < 0 ? 'descending' : 'ascending' : 'none'}><button onClick={() => sortBy(m.key)} title={m.description}>{m.label} <span>{sortKey === m.key ? sortDirection < 0 ? '↓' : '↑' : '↕'}</span></button></th>)}</tr></thead>
           <tbody><tr className="at-total"><th scope="row">All selected <span className="at-count">{view.children.length} {group === 'channel' ? 'channels' : 'countries'}</span></th>{METRICS.map(m => <td key={m.key}><strong>{formatMetric(view.current[m.key], m.key, report.currency)}</strong><Change current={view.current[m.key]} previous={view.previous[m.key]} metric={m.key} currency={report.currency} compare={compare} /></td>)}</tr>{visibleRows.map(row => <ReportRow key={row.id} row={row} expanded={expanded} toggle={toggle} currency={report.currency} compare={compare} sort={sort} />)}</tbody>
-        </table></div>}
+        </table></div>
+        <div className="at-card-list" aria-label="Attribution breakdown cards">
+          <div className="at-card-total">
+            <div className="at-card-total-label">
+              All selected <span className="at-count">{view.children.length} {group === 'channel' ? 'channels' : 'countries'}</span>
+            </div>
+            <div className="at-card-primary">
+              <span className="at-card-metric-label">{selectedMetric.label}</span>
+              <CardMetricValue metricKey={metric} current={view.current} currency={report.currency} />
+              <Change current={view.current[metric]} previous={view.previous[metric]} metric={metric} currency={report.currency} compare={compare} />
+            </div>
+            <div className="at-card-metrics">
+              {METRICS.filter(m => m.key !== metric).map(m => (
+                <div key={m.key}>
+                  <span className="at-card-metric-label">{m.label}</span>
+                  <CardMetricValue metricKey={m.key} current={view.current} currency={report.currency} />
+                  <Change current={view.current[m.key]} previous={view.previous[m.key]} metric={m.key} currency={report.currency} compare={compare} />
+                </div>
+              ))}
+            </div>
+          </div>
+          {visibleRows.map(row => (
+            <ReportCard
+              key={row.id}
+              row={row}
+              expanded={expanded}
+              toggle={toggle}
+              currency={report.currency}
+              compare={compare}
+              sort={sort}
+              primaryMetric={metric}
+            />
+          ))}
+        </div></>}
         <div className="at-table-footer"><span><i className="at-dot up" /> Increase <i className="at-dot down" /> Decrease <span className="at-muted">· Conversion changes in percentage points</span></span><span>Sessions: visitor country · Sales: shipping country</span></div>
         {view.children.length > 0 && <div className="at-pagination"><Select label="Rows per page" value={pageSize} onChange={value => setPageSize(Number(value))}><option value={20}>20 rows</option><option value={50}>50 rows</option><option value={1000}>All rows</option></Select><span>Page {currentPage} of {pageCount} · {view.children.length} groups</span><button className="m-chip" disabled={currentPage === 1} onClick={() => setPage(p => p - 1)}>Previous</button><button className="m-chip" disabled={currentPage === pageCount} onClick={() => setPage(p => p + 1)}>Next</button></div>}
       </section>
