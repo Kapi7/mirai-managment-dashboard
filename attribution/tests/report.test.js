@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import { createAttributionRouter, createReportService, channelFor, normalizeReport, reconcileRows, parseTable, reportRange, SourceError } from '../server/report.js';
-import { buildView, csvCell, exportCsv, trend } from '../../src/features/attribution/model.js';
+import { buildView, csvCell, exportCsv, formatMetric, isOrderOnly, ORDER_ONLY_LABEL, ORDER_ONLY_NOTE, trend } from '../../src/features/attribution/model.js';
 
 const range = reportRange({ start: '2026-10-01', end: '2026-10-02' }, new Date('2026-10-23'));
 const session = (day, country, count, converted) => ({ day, referring_channel: 'google', traffic_type: 'organic', session_country: country, session_country_code: country, sessions: String(count), sessions_that_completed_checkout: String(converted) });
@@ -49,6 +49,68 @@ test('Shop sales stay separate and missing attribution is not guessed', () => {
   const view = buildView({ ...report, rows });
   assert.equal(view.current.conversion, null);
   assert.equal(view.current.orders, 1);
+});
+
+test('Shop sales-channel orders stay order-only and do not absorb shop_app or shop_campaigns sessions', () => {
+  assert.equal(channelFor({ referring_channel: 'shop_app', traffic_type: 'unknown' }), 'shop_app');
+  assert.equal(channelFor({ referring_channel: 'shop_app', traffic_type: 'paid' }), 'shop_app · Paid');
+  assert.equal(channelFor({ referring_channel: 'shop_campaigns', traffic_type: 'paid' }), 'shop_campaigns · Paid');
+  assert.equal(channelFor({ referring_channel: 'shop' }), 'Shop');
+  assert.notEqual(channelFor({ referring_channel: 'shop_app' }), 'Shop');
+  assert.notEqual(channelFor({ referring_channel: 'shop_campaigns', traffic_type: 'paid' }), 'Shop');
+
+  const rows = normalizeReport([
+    { day: '2026-10-01', referring_channel: 'shop_app', traffic_type: 'unknown', session_country: 'US', session_country_code: 'US', sessions: '30', sessions_that_completed_checkout: '0' },
+    { day: '2026-10-01', referring_channel: 'shop_app', traffic_type: 'paid', session_country: 'US', session_country_code: 'US', sessions: '5', sessions_that_completed_checkout: '1' },
+    { day: '2026-10-01', referring_channel: 'shop_campaigns', traffic_type: 'paid', session_country: 'US', session_country_code: 'US', sessions: '27', sessions_that_completed_checkout: '0' },
+  ], [{
+    day: '2026-10-01', referring_channel: '', traffic_type: '', shipping_country: 'US', shipping_country_code: 'US',
+    orders: '73', net_sales: '3163.91', new_or_returning_customer: 'New', sales_channel: 'Shop',
+  }], range);
+
+  const shop = rows.find(row => row.channel === 'Shop');
+  const shopApp = rows.find(row => row.channel === 'shop_app');
+  const shopAppPaid = rows.find(row => row.channel === 'shop_app · Paid');
+  const campaigns = rows.find(row => row.channel === 'shop_campaigns · Paid');
+  assert.ok(shop); assert.ok(shopApp); assert.ok(shopAppPaid); assert.ok(campaigns);
+  assert.equal(shop.orders, 73);
+  assert.equal(shop.amount, 3163.91);
+  assert.equal(shop.sessions, 0);
+  assert.equal(shop.orderOnly, true);
+  assert.equal(shop.convertedSessions, 0);
+  assert.equal(shopApp.sessions, 30);
+  assert.equal(shopApp.orders, 0);
+  assert.equal(shopApp.orderOnly, false);
+  assert.equal(shopAppPaid.sessions, 5);
+  assert.equal(shopAppPaid.orderOnly, false);
+  assert.equal(campaigns.sessions, 27);
+  assert.equal(campaigns.orders, 0);
+  assert.equal(campaigns.orderOnly, false);
+  assert.equal(shop.sessions, 0);
+
+  const online = normalizeReport([], [sale('2026-10-01', 'US', 9, 900)], range).find(row => row.channel === 'Google · Organic');
+  assert.equal(online.orderOnly, false);
+
+  const view = buildView({ range, currency: 'USD', timezone: 'Asia/Jerusalem', rows });
+  const shopNode = view.children.find(row => row.label === 'Shop');
+  assert.equal(isOrderOnly(shopNode.current), true);
+  assert.equal(shopNode.current.conversion, null);
+  assert.equal(formatMetric(shopNode.current.sessions, 'sessions', 'USD', shopNode.current), 'n/a');
+  assert.equal(formatMetric(shopNode.current.orders, 'orders', 'USD', shopNode.current), '73');
+  assert.equal(formatMetric(shopNode.current.amount, 'amount', 'USD', shopNode.current), '$3,163.91');
+  assert.equal(formatMetric(shopNode.current.conversion, 'conversion', 'USD', shopNode.current), '—');
+  assert.equal(formatMetric(view.children.find(row => row.label === 'shop_app').current.sessions, 'sessions', 'USD', view.children.find(row => row.label === 'shop_app').current), '30');
+  assert.equal(isOrderOnly({ sessions: 0, orders: 0 }), false);
+  assert.equal(formatMetric(0, 'sessions', 'USD', { sessions: 0, orders: 0 }), '0');
+  assert.equal(formatMetric(100, 'sessions', 'USD', { sessions: 100, orders: 9 }), '100');
+  assert.equal(formatMetric(null, 'conversion'), '—');
+  assert.equal(ORDER_ONLY_LABEL, 'Order-only');
+  assert.match(ORDER_ONLY_NOTE, /Shop app/);
+  assert.match(ORDER_ONLY_NOTE, /Shop Cash/);
+  assert.match(ORDER_ONLY_NOTE, /Online Store/);
+  assert.match(ORDER_ONLY_NOTE, /shop_app/);
+  assert.match(ORDER_ONLY_NOTE, /shop_campaigns/);
+  assert.match(ORDER_ONLY_NOTE, /n\/a/);
 });
 
 test('zero baselines, zero sessions, flat trends and percentage point changes are honest', () => {

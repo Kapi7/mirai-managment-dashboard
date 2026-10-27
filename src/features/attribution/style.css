@@ -82,6 +82,9 @@
 .at-row-toggle { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; color: #e2e8f0; font-size: 12px; font-weight: 600; min-height: 30px; }
 .at-row-toggle > svg { color: #8fa0b8; flex-shrink: 0; }
 .at-count { font-size: 9px; font-weight: 500; color: #93a2bb; border: 1px solid #3b4a644d; background: #0f172a70; border-radius: 4px; padding: 2px 5px; margin-left: 3px; white-space: nowrap; }
+.at-order-only { display: inline-flex; align-items: center; flex-shrink: 0; margin-left: 6px; padding: 1px 7px; border-radius: 999px; border: 1px solid #67e8f966; background: #22d3ee18; color: #a5f3fc; font-size: 10px; font-weight: 700; letter-spacing: .01em; white-space: nowrap; line-height: 1.6; }
+.at-order-only-note { display: flex; align-items: flex-start; gap: 8px; margin: 0 18px 12px; color: #a9b7cc; font-size: 11px; line-height: 1.55; }
+.at-order-only-note svg { flex-shrink: 0; margin-top: 1px; color: #67e8f9; }
 .at-total .at-count { display: inline-block; margin-top: 5px; }
 .at-level-1 { background: #0b12234d !important; }
 .at-level-2 { background: #090f1f70 !important; }
@@ -191,7 +194,7 @@
 }
 .at-card-metrics strong.m-rev { color: var(--m-cyan, #67e8f9); }
 .at-card-metrics .at-change { margin-top: 2px; }
-.at-card-hint { display: block; margin-top: 2px; font-size: 10px; font-weight: 500; letter-spacing: 0; text-transform: none; color: #8fa0b8; }
+.at-card-head .at-order-only, .at-card-total-label .at-order-only { margin-left: 8px; }
 .at-card-children {
   display: grid;
   gap: 8px;
@@ -303,6 +306,7 @@
   .at-spark { display: none; }
 
   .at-section-head { align-items: flex-start; padding: 14px; }
+  .at-order-only-note { margin: 0 12px 12px; }
   .at-legend { width: 100%; }
   .at-chart-canvas { height: 200px; }
 

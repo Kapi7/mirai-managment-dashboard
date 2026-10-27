@@ -1,7 +1,7 @@
 const DAY = 86400000;
 const fields = ['sessions', 'convertedSessions', 'orders', 'amount', 'returningOrders', 'unknownCustomerOrders'];
 export const METRICS = [
-  { key: 'sessions', label: 'Sessions', color: '#818cf8', description: 'Shopify online store sessions, including traffic Shopify identifies as bots.' },
+  { key: 'sessions', label: 'Sessions', color: '#818cf8', description: 'Shopify Online Store sessions, including traffic Shopify identifies as bots. Shop app / Shop Cash and other non–Online Store sales channels with orders and no Online Store sessions show n/a.' },
   { key: 'orders', label: 'Orders', color: '#fb7185', description: 'Shopify orders by recorded referring channel; Shop and other sales channels are separate.' },
   { key: 'conversion', label: 'Conversion', color: '#2dd4bf', description: 'Sessions that completed checkout ÷ sessions. Totals are weighted, not averaged across rows.' },
   { key: 'amount', label: 'Net sales', color: '#22d3ee', description: 'Sales after discounts and sales reversals; excludes shipping and taxes. Reversals follow their posting date.' },
@@ -54,7 +54,15 @@ export function trend(current, previous, rate = false) {
   return { direction, text: `${delta > 0 ? '+' : ''}${(delta / Math.abs(previous) * 100).toFixed(1)}%` };
 }
 
-export function formatMetric(value, metric, currency = 'USD') {
+// Orders with no Online Store sessions: Shop app / Shop Cash and other
+// non–Online Store sales channels. A bare 0 reads as a broken join.
+export function isOrderOnly(metrics) {
+  return (Number(metrics?.orders) || 0) > 0 && (Number(metrics?.sessions) || 0) === 0;
+}
+export const ORDER_ONLY_LABEL = 'Order-only';
+export const ORDER_ONLY_NOTE = 'Shop (Shop app and Shop Cash) and other non–Online Store sales channels report orders and net sales without Online Store sessions. Sessions show n/a and conversion stays —. shop_app and shop_campaigns web sessions stay on their own rows.';
+export function formatMetric(value, metric, currency = 'USD', metrics) {
+  if (metric === 'sessions' && isOrderOnly(metrics)) return 'n/a';
   if (value == null) return '—';
   if (metric === 'conversion') return `${(value * 100).toFixed(2)}%`;
   return new Intl.NumberFormat('en-US', metric === 'amount'

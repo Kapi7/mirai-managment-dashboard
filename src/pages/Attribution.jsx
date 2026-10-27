@@ -5,7 +5,7 @@ import { ChevronDown, ChevronRight, Download, RefreshCw, ArrowUpRight, ArrowDown
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import { useAuth } from '@/contexts/AuthContext';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { METRICS, buildView, countryKey, exportCsv, flag, formatMetric, trend } from '@/features/attribution/model';
+import { METRICS, ORDER_ONLY_LABEL, ORDER_ONLY_NOTE, buildView, countryKey, exportCsv, flag, formatMetric, isOrderOnly, trend } from '@/features/attribution/model';
 import DateSlicer from '@/features/attribution/DateSlicer';
 import { dateLabel, presetRange, validateDates } from '@/features/attribution/dates';
 import { Select as MenuSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -34,16 +34,20 @@ function Change({ current, previous, metric, currency, compare }) {
   return <span className={`at-change ${change.direction}`} title={`Previous: ${formatMetric(previous, metric, currency)}`} aria-label={`${change.direction === 'neutral' ? 'Change' : change.direction}: ${change.text}; previous ${formatMetric(previous, metric, currency)}`}><Icon size={12} aria-hidden="true" />{change.text}</span>;
 }
 function RowLabel({ row }) {
-  return <>{row.isCountry && <span className="at-flag" role="img" aria-label={`${row.label} flag`}>{flag(row.countryCode)}</span>}{row.date ? dateLabel(row.date) : row.label}</>;
+  return <>{row.isCountry && <span className="at-flag" role="img" aria-label={`${row.label} flag`}>{flag(row.countryCode)}</span>}{row.date ? dateLabel(row.date) : row.label}{isOrderOnly(row.current) && <OrderOnlyBadge />}</>;
 }
-function salesChannelWithoutSessions(current) {
-  return (current?.orders || 0) > 0 && (current?.sessions || 0) === 0;
+function OrderOnlyBadge() {
+  return <span className="at-order-only" title="Orders and net sales from a non–Online Store sales channel. Online Store sessions do not apply.">{ORDER_ONLY_LABEL}</span>;
 }
-function CardMetricValue({ metricKey, current, currency }) {
-  return <>
-    <strong className={metricKey === 'amount' ? 'm-rev' : ''}>{formatMetric(current[metricKey], metricKey, currency)}</strong>
-    {metricKey === 'sessions' && salesChannelWithoutSessions(current) && <span className="at-card-hint">n/a (sales channel)</span>}
-  </>;
+function sessionsNotApplicable(metricKey, current) {
+  return metricKey === 'sessions' && isOrderOnly(current);
+}
+function MetricValue({ metricKey, current, currency }) {
+  const notApplicable = sessionsNotApplicable(metricKey, current);
+  return <strong className={metricKey === 'amount' ? 'm-rev' : ''} title={notApplicable ? 'Online Store sessions do not apply to this sales channel.' : undefined}>{formatMetric(current[metricKey], metricKey, currency, current)}</strong>;
+}
+function containsOrderOnly(nodes) {
+  return nodes.some(node => isOrderOnly(node.current) || containsOrderOnly(node.children || []));
 }
 function ReportRow({ row, level = 0, expanded, toggle, currency, compare, sort }) {
   const open = expanded.has(row.id);
@@ -53,7 +57,7 @@ function ReportRow({ row, level = 0, expanded, toggle, currency, compare, sort }
     <th scope="row"><div style={{ paddingLeft: level * 18 }}>{hasChildren ? <button className="at-row-toggle" aria-expanded={open} onClick={() => toggle(row.id)}>
       {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}<RowLabel row={row} /><span className="at-count">{row.children.length}</span>
     </button> : <span className="at-day"><CalendarDays size={12} /><RowLabel row={row} /></span>}</div></th>
-    {METRICS.map(m => <td key={m.key}><strong className={m.key === 'amount' ? 'm-rev' : ''}>{formatMetric(row.current[m.key], m.key, currency)}</strong><Change current={row.current[m.key]} previous={row.previous[m.key]} metric={m.key} currency={currency} compare={compare} /></td>)}
+    {METRICS.map(m => <td key={m.key}><MetricValue metricKey={m.key} current={row.current} currency={currency} />{!sessionsNotApplicable(m.key, row.current) && <Change current={row.current[m.key]} previous={row.previous[m.key]} metric={m.key} currency={currency} compare={compare} />}</td>)}
   </tr>{open && children.map(child => <ReportRow key={child.id} row={child} level={level + 1} expanded={expanded} toggle={toggle} currency={currency} compare={compare} sort={sort} />)}</>;
 }
 
@@ -80,15 +84,15 @@ function ReportCard({ row, level = 0, expanded, toggle, currency, compare, sort,
       )}
       <div className="at-card-primary">
         <span className="at-card-metric-label">{primary.label}</span>
-        <CardMetricValue metricKey={primary.key} current={row.current} currency={currency} />
-        <Change current={row.current[primary.key]} previous={row.previous[primary.key]} metric={primary.key} currency={currency} compare={compare} />
+        <MetricValue metricKey={primary.key} current={row.current} currency={currency} />
+        {!sessionsNotApplicable(primary.key, row.current) && <Change current={row.current[primary.key]} previous={row.previous[primary.key]} metric={primary.key} currency={currency} compare={compare} />}
       </div>
       <div className="at-card-metrics">
         {secondary.map(m => (
           <div key={m.key}>
             <span className="at-card-metric-label">{m.label}</span>
-            <CardMetricValue metricKey={m.key} current={row.current} currency={currency} />
-            <Change current={row.current[m.key]} previous={row.previous[m.key]} metric={m.key} currency={currency} compare={compare} />
+            <MetricValue metricKey={m.key} current={row.current} currency={currency} />
+            {!sessionsNotApplicable(m.key, row.current) && <Change current={row.current[m.key]} previous={row.previous[m.key]} metric={m.key} currency={currency} compare={compare} />}
           </div>
         ))}
       </div>
@@ -168,7 +172,8 @@ export default function Attribution() {
     const url = URL.createObjectURL(new Blob(['\ufeff', exportCsv(view, report, group)], { type: 'text/csv;charset=utf-8;' }));
     const link = document.createElement('a'); link.href = url; link.download = `mirai-attribution-${dates.start}-${dates.end}.csv`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
-  const chart = view?.daily.map(day => ({ date: dateLabel(day.id), current: day.current[metric], previous: day.previous[metric] }));
+  const chart = view?.daily.map(day => ({ date: dateLabel(day.id), current: day.current[metric], previous: day.previous[metric], currentMetrics: day.current, previousMetrics: day.previous }));
+  const orderOnlyInView = view ? containsOrderOnly(view.children) : false;
   const selectedMetric = METRICS.find(m => m.key === metric);
   const sortedRows = view ? sort(view.children) : [];
   const pageCount = Math.max(1, Math.ceil(sortedRows.length / pageSize));
@@ -218,8 +223,8 @@ export default function Attribution() {
       {unallocated > 0 && channel === 'all' && country === 'all' && <p className="at-quality"><Info size={14} />{unallocated.toLocaleString()} sessions lack channel/country detail in Shopify. Included under “Unallocated detail” so totals reconcile.</p>}
       <div className="at-kpis">
         {METRICS.map(m => <button key={m.key} className={`m-glow-card m-kpi at-kpi ${metric === m.key ? 'selected' : ''}`} style={{ '--kpi-c1': m.color, '--kpi-c2': m.color, '--kpi-glow': `${m.color}18` }} onClick={() => setMetric(m.key)} aria-pressed={metric === m.key} title={m.description}>
-          <div className="k-label">{m.label}</div><div className="k-value" style={{ color: m.key === 'amount' ? m.color : undefined }}>{formatMetric(view.current[m.key], m.key, report.currency)}</div>
-          <div className="at-kpi-change"><Change current={view.current[m.key]} previous={view.previous[m.key]} metric={m.key} currency={report.currency} compare={compare} /><span>{compare ? 'vs previous period' : 'Selected period'}</span></div>
+          <div className="k-label">{m.label}</div><div className="k-value" style={{ color: m.key === 'amount' ? m.color : undefined }} title={sessionsNotApplicable(m.key, view.current) ? 'Online Store sessions do not apply to this sales channel.' : undefined}>{formatMetric(view.current[m.key], m.key, report.currency, view.current)}</div>
+          <div className="at-kpi-change">{!sessionsNotApplicable(m.key, view.current) && <Change current={view.current[m.key]} previous={view.previous[m.key]} metric={m.key} currency={report.currency} compare={compare} />}<span>{compare ? 'vs previous period' : 'Selected period'}</span></div>
           <div className="at-spark" aria-hidden="true">{view.daily.map(day => <i key={day.id} style={{ height: `${Math.max(3, Math.abs(day.current[m.key] || 0) / Math.max(...view.daily.map(d => Math.abs(d.current[m.key] || 0)), 0.001) * 100)}%`, background: m.color, opacity: day.current[m.key] ? 0.65 : 0.12 }} />)}</div>
         </button>)}
       </div>
@@ -228,7 +233,7 @@ export default function Attribution() {
         <div className="at-chart-canvas"><ResponsiveContainer width="100%" height="100%"><AreaChart data={chart} margin={{ top: 10, right: 16, left: 4, bottom: 0 }}>
           <defs><linearGradient id="at-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={selectedMetric.color} stopOpacity={0.24} /><stop offset="100%" stopColor={selectedMetric.color} stopOpacity={0} /></linearGradient></defs>
           <CartesianGrid stroke="#2b3a55" strokeDasharray="3 5" vertical={false} /><XAxis dataKey="date" tick={{ fill: '#8fa0b8', fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={isMobile ? 48 : 36} /><YAxis tick={{ fill: '#8fa0b8', fontSize: 11 }} axisLine={false} tickLine={false} width={isMobile ? 40 : 65} tickFormatter={v => metric === 'conversion' ? `${(v * 100).toFixed(1)}%` : new Intl.NumberFormat('en-US', { notation: 'compact' }).format(v)} />
-          <Tooltip contentStyle={{ background: '#121a30', border: '1px solid #46557a', borderRadius: 10 }} labelStyle={{ color: '#e2e8f0' }} formatter={(value, name) => [formatMetric(value, metric, report.currency), name === 'current' ? 'Selected period' : 'Previous period (aligned day)']} />
+          <Tooltip contentStyle={{ background: '#121a30', border: '1px solid #46557a', borderRadius: 10 }} labelStyle={{ color: '#e2e8f0' }} formatter={(value, name, item) => [formatMetric(value, metric, report.currency, name === 'current' ? item?.payload?.currentMetrics : item?.payload?.previousMetrics), name === 'current' ? 'Selected period' : 'Previous period (aligned day)']} />
           {compare && <Area type="monotone" dataKey="previous" stroke="#8292ad" strokeDasharray="5 5" fill="transparent" strokeWidth={1.5} isAnimationActive={false} />}
           <Area type="monotone" dataKey="current" stroke={selectedMetric.color} fill="url(#at-fill)" strokeWidth={2.2} isAnimationActive={false} />
         </AreaChart></ResponsiveContainer></div>
@@ -236,26 +241,27 @@ export default function Attribution() {
 
       <section className="m-glow-card at-breakdown">
         <div className="at-section-head"><div><h2><Globe size={17} />{group === 'channel' ? 'Channel & country performance' : 'Country & channel performance'}</h2><p>Open a row to see its breakdown, then open a country or channel to see each day.</p></div><div className="at-actions"><button className="m-chip" onClick={() => setExpanded(new Set(visibleRows.map(r => r.id)))}>Expand page</button><button className="m-chip" onClick={() => setExpanded(new Set())}>Collapse all</button></div></div>
+        {orderOnlyInView && <p className="at-order-only-note" role="note"><Info size={14} />{ORDER_ONLY_NOTE}</p>}
         {!view.children.length ? <div className="at-empty"><Globe size={28} /><h3>No activity for these filters</h3><p>Choose another channel, country or date range.</p><button className="m-chip" onClick={() => { setChannel('all'); setCountry('all'); }}>Reset channel & country</button></div> : <><div className="at-table-wrap" tabIndex={0} aria-label="Attribution breakdown; scroll horizontally on small screens"><table className="m-table at-table">
           <thead><tr><th>{group === 'channel' ? 'Channel / Country' : 'Country / Channel'}</th>{METRICS.map(m => <th key={m.key} aria-sort={sortKey === m.key ? sortDirection < 0 ? 'descending' : 'ascending' : 'none'}><button onClick={() => sortBy(m.key)} title={m.description}>{m.label} <span>{sortKey === m.key ? sortDirection < 0 ? '↓' : '↑' : '↕'}</span></button></th>)}</tr></thead>
-          <tbody><tr className="at-total"><th scope="row">All selected <span className="at-count">{view.children.length} {group === 'channel' ? 'channels' : 'countries'}</span></th>{METRICS.map(m => <td key={m.key}><strong>{formatMetric(view.current[m.key], m.key, report.currency)}</strong><Change current={view.current[m.key]} previous={view.previous[m.key]} metric={m.key} currency={report.currency} compare={compare} /></td>)}</tr>{visibleRows.map(row => <ReportRow key={row.id} row={row} expanded={expanded} toggle={toggle} currency={report.currency} compare={compare} sort={sort} />)}</tbody>
+          <tbody><tr className="at-total"><th scope="row">All selected {isOrderOnly(view.current) && <OrderOnlyBadge />} <span className="at-count">{view.children.length} {group === 'channel' ? 'channels' : 'countries'}</span></th>{METRICS.map(m => <td key={m.key}><MetricValue metricKey={m.key} current={view.current} currency={report.currency} />{!sessionsNotApplicable(m.key, view.current) && <Change current={view.current[m.key]} previous={view.previous[m.key]} metric={m.key} currency={report.currency} compare={compare} />}</td>)}</tr>{visibleRows.map(row => <ReportRow key={row.id} row={row} expanded={expanded} toggle={toggle} currency={report.currency} compare={compare} sort={sort} />)}</tbody>
         </table></div>
         <div className="at-card-list" aria-label="Attribution breakdown cards">
           <div className="at-card-total">
             <div className="at-card-total-label">
-              All selected <span className="at-count">{view.children.length} {group === 'channel' ? 'channels' : 'countries'}</span>
+              All selected {isOrderOnly(view.current) && <OrderOnlyBadge />} <span className="at-count">{view.children.length} {group === 'channel' ? 'channels' : 'countries'}</span>
             </div>
             <div className="at-card-primary">
               <span className="at-card-metric-label">{selectedMetric.label}</span>
-              <CardMetricValue metricKey={metric} current={view.current} currency={report.currency} />
-              <Change current={view.current[metric]} previous={view.previous[metric]} metric={metric} currency={report.currency} compare={compare} />
+              <MetricValue metricKey={metric} current={view.current} currency={report.currency} />
+              {!sessionsNotApplicable(metric, view.current) && <Change current={view.current[metric]} previous={view.previous[metric]} metric={metric} currency={report.currency} compare={compare} />}
             </div>
             <div className="at-card-metrics">
               {METRICS.filter(m => m.key !== metric).map(m => (
                 <div key={m.key}>
                   <span className="at-card-metric-label">{m.label}</span>
-                  <CardMetricValue metricKey={m.key} current={view.current} currency={report.currency} />
-                  <Change current={view.current[m.key]} previous={view.previous[m.key]} metric={m.key} currency={report.currency} compare={compare} />
+                  <MetricValue metricKey={m.key} current={view.current} currency={report.currency} />
+                  {!sessionsNotApplicable(m.key, view.current) && <Change current={view.current[m.key]} previous={view.previous[m.key]} metric={m.key} currency={report.currency} compare={compare} />}
                 </div>
               ))}
             </div>
@@ -278,7 +284,7 @@ export default function Attribution() {
       </section>
       <details className="m-glow-card at-definitions"><summary><Info size={15} />How to read this report<ChevronDown size={14} /></summary><div>
         <p><strong>Country:</strong> sessions and conversion use visitor location; orders, net sales and returning orders use shipping country. These can differ. Conversion uses completed-checkout sessions, so it is not orders divided by sessions.</p>
-        <p><strong>Channel:</strong> Shopify’s recorded referring channel and paid/organic classification. Shop and other sales channels are shown separately. Missing attribution stays “Unattributed”; it is never inferred to be organic or direct.</p>
+        <p><strong>Channel:</strong> Shopify’s recorded referring channel and paid/organic classification. Shop and other sales channels are shown separately. Shop app and Shop Cash checkouts are order-only: orders and net sales with no Online Store sessions, so sessions show n/a and conversion is —. Web sessions named shop_app or shop_campaigns stay on their own rows and are not added to Shop. Missing attribution stays “Unattributed”; it is never inferred to be organic or direct.</p>
         <p><strong>Unallocated detail:</strong> the measured difference between Shopify’s daily totals and its channel/country breakdown. This is kept visible under unknown country, never distributed across known channels. Channel and country filters exclude it unless selected.</p>
         <p><strong>Returning orders:</strong> repeat purchases, not returned or refunded items. Net sales includes Shopify sales reversals on their posting dates, excluding shipping and taxes.{view.current.unknownCustomerOrders > 0 && ` ${view.current.unknownCustomerOrders} orders have an unknown customer type.`}</p>
         <p><strong>Comparison:</strong> the immediately preceding period with the same number of days, in {report.timezone}. “New” means the previous value was zero; “—” means conversion has no session denominator. All session traffic is included. A period containing today is incomplete. Results are cached for up to five minutes; Shopify may revise recent attribution.</p>
