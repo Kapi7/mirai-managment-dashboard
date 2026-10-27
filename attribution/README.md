@@ -31,6 +31,14 @@ a zero previous baseline, and a dash when no session denominator exists.
   type. Non-online-store sales channels (including Shop and subscriptions) stay
   distinct. No referrer is inferred from missing data. This is not a configurable
   first-click, linear or last-non-direct campaign attribution model.
+- Shop (Shop app / Shop Cash) and other non–Online Store sales channels are
+  labeled from `sales_channel` and flagged `orderOnly`. They can have real
+  orders and net sales with zero Online Store sessions. The table and phone
+  cards show sessions as `n/a`, an Order-only badge, and a footnote. Conversion
+  stays `—` because there is no session denominator. Referring channels
+  `shop_app` and `shop_campaigns` stay on their own rows and are never added
+  to Shop. CSV export keeps the measured session count, including 0, so the
+  file still reconciles.
 - Independently fetched daily source totals reconcile the detailed rows.
   Shopify can omit visits when grouping by related source/country dimensions;
   the measured residual is displayed as `Unallocated detail` / unknown country.
@@ -85,7 +93,9 @@ dev sign-in; production always uses Mirai authentication. Node 22+ is supported.
 Tests cover date validation, equal comparison windows, weighted conversion,
 reversals, returning orders, both hierarchies, joint filters, previous-only
 groups, unallocated residuals, null denominators, CSV injection, upstream
-failures, bounded caching and unauthenticated access. Browser QA covers desktop
+failures, bounded caching and unauthenticated access. They also lock Shop
+sales-channel rows as order-only (`n/a` sessions, `—` conversion) and keep
+`shop_app` / `shop_campaigns` sessions off the Shop row. Browser QA covers desktop
 and 390px mobile, flags, nested expansion, both groupings, filters and downloads.
 
 Deploy through the dashboard's existing build/start workflow. Verify the new

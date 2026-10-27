@@ -83,10 +83,18 @@ function number(value) {
   return Number(value);
 }
 
+// Shop app / Shop Cash and other non–Online Store sales channels. Exact
+// referring_channel "shop" still maps to Shop; shop_app and shop_campaigns do not.
+function namedSalesChannel(row) {
+  const salesChannel = String(row.sales_channel || '').trim();
+  if (!salesChannel || salesChannel.toLowerCase() === 'online store') return '';
+  return salesChannel;
+}
+
 export function channelFor(row, sales = false) {
   // A missing source is not evidence of organic or direct traffic.
-  const salesChannel = String(row.sales_channel || '').trim();
-  if (sales && salesChannel && salesChannel.toLowerCase() !== 'online store') return salesChannel;
+  const salesChannel = namedSalesChannel(row);
+  if (sales && salesChannel) return salesChannel;
   const source = String(row.referring_channel || '').trim();
   const traffic = String(row.traffic_type || '').trim().toLowerCase();
   if (!source || ['unknown', 'unattributed', 'none'].includes(source.toLowerCase())) return 'Unattributed';
@@ -106,7 +114,7 @@ export function normalizeReport(sessionRows, salesRows, range) {
     const countryCode = /^[A-Z]{2}$/.test(rawCode) && !['ZZ', 'XX'].includes(rawCode) ? rawCode : '';
     const channel = channelFor(row, sales);
     const key = JSON.stringify([date, channel, countryCode || country]);
-    if (!rows.has(key)) rows.set(key, { date, channel, country, countryCode, sessions: 0, convertedSessions: 0, orders: 0, amount: 0, returningOrders: 0, unknownCustomerOrders: 0 });
+    if (!rows.has(key)) rows.set(key, { date, channel, country, countryCode, sessions: 0, convertedSessions: 0, orders: 0, amount: 0, returningOrders: 0, unknownCustomerOrders: 0, orderOnly: false });
     return rows.get(key);
   }
   for (const row of sessionRows) {
@@ -119,6 +127,7 @@ export function normalizeReport(sessionRows, salesRows, range) {
     const orders = number(row.orders);
     target.orders += orders;
     target.amount += number(row.net_sales);
+    if (namedSalesChannel(row)) target.orderOnly = true;
     const type = String(row.new_or_returning_customer || '').toLowerCase();
     if (type === 'returning') target.returningOrders += orders;
     else if (type !== 'new') target.unknownCustomerOrders += orders;
@@ -149,7 +158,7 @@ export function reconcileRows(rows, sessionTotals, salesTotals, range) {
       if (key === 'amount') residual[key] = Math.round(residual[key] * 100) / 100;
       else if (residual[key] < 0) throw new SourceError('Shopify is revising this period. Its totals and details disagree; please reload shortly.');
     }
-    if (fields.some(key => Math.abs(residual[key]) > 0.001)) result.push({ date, channel: 'Unallocated detail', country: 'Unknown country', countryCode: '', ...residual, unallocated: true });
+    if (fields.some(key => Math.abs(residual[key]) > 0.001)) result.push({ date, channel: 'Unallocated detail', country: 'Unknown country', countryCode: '', ...residual, unallocated: true, orderOnly: false });
   }
   return result.sort((a, b) => a.date.localeCompare(b.date));
 }
