@@ -6,6 +6,10 @@ It uses Mirai's existing dark report components, auth session and Shopify store.
 The report provides period, comparison, channel, country and hierarchy dropdowns;
 country flags; channel → country → day or country → channel → day expansion;
 sortable metrics; pagination; five selectable KPI charts; and a filtered CSV.
+Phone cards have visible Sort by / Sort order menus for all five metrics, in
+either direction. The selected sort metric is prominent on every card. Sorting
+applies before pagination and to country/channel drilldowns; daily rows stay in
+date order. Missing conversion values and order-only sessions sort last.
 The President-style date slicer offers Today, Yesterday and Last 3 days
 (three calendar days including today), plus 7/28 complete days. Its calendar
 popover also offers monthly presets and a custom range with Apply/Cancel.
@@ -31,6 +35,19 @@ a zero previous baseline, and a dash when no session denominator exists.
   type. Non-online-store sales channels (including Shop and subscriptions) stay
   distinct. No referrer is inferred from missing data. This is not a configurable
   first-click, linear or last-non-direct campaign attribution model.
+- Exact source aliases (including names, known domains, URL forms and `www`)
+  normalize before aggregation, filtering, comparison and export. ChatGPT,
+  chat gpt, chatgpt.com and chat.openai.com are one ChatGPT group. Other known AI
+  providers follow the same rule. Their organic/unknown referrals combine under
+  the provider name without relabeling unknown traffic as organic. Explicit paid
+  traffic remains separate. Other providers retain paid/organic distinctions;
+  Shop sales channels and shop_app/shop_campaigns remain distinct.
+- Direct is not redistributed. Missing UTM sources and internal self-referrers
+  are not evidence of an external acquisition source. The current report does
+  not carry session-level journeys to infer a prior
+  channel. A separate Clicks KPI is omitted because the available ad, search
+  and outbound-click counts have different scopes and are not a consistent
+  source/country measure for this Shopify report.
 - Shop (Shop app / Shop Cash) and other non–Online Store sales channels are
   labeled from `sales_channel` and flagged `orderOnly`. They can have real
   orders and net sales with zero Online Store sessions. The table and phone

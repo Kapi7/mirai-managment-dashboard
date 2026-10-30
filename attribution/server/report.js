@@ -2,6 +2,7 @@ import express from 'express';
 import process from 'node:process';
 import { authorizeMirai } from '../../seo/server/router.js';
 import { reportingToday, shiftDay } from '../../src/features/attribution/dates.js';
+import { canonicalSource } from './sources.js';
 
 const DAY = 86400000;
 const LIMIT = 100000;
@@ -98,9 +99,11 @@ export function channelFor(row, sales = false) {
   const source = String(row.referring_channel || '').trim();
   const traffic = String(row.traffic_type || '').trim().toLowerCase();
   if (!source || ['unknown', 'unattributed', 'none'].includes(source.toLowerCase())) return 'Unattributed';
-  const labels = { google: 'Google', facebook: 'Facebook', instagram: 'Instagram', direct: 'Direct', shop: 'Shop',
-    bing: 'Bing', tiktok: 'TikTok', youtube: 'YouTube', klaviyo: 'Klaviyo', pinterest: 'Pinterest', chatgpt: 'ChatGPT' };
-  const name = labels[source.toLowerCase()] || source;
+  const { name, ai } = canonicalSource(source);
+  // Shopify labels the same AI provider "organic" by name and "unknown" by
+  // domain. Combine those referrals without claiming unknown traffic is organic.
+  // Explicitly paid traffic and non–Online Store sales channels stay separate.
+  if (ai && traffic !== 'paid') return name;
   return ['paid', 'organic'].includes(traffic) ? `${name} · ${traffic === 'paid' ? 'Paid' : 'Organic'}` : name;
 }
 

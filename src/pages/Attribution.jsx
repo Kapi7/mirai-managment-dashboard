@@ -5,7 +5,7 @@ import { ChevronDown, ChevronRight, Download, RefreshCw, ArrowUpRight, ArrowDown
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import { useAuth } from '@/contexts/AuthContext';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { METRICS, ORDER_ONLY_LABEL, ORDER_ONLY_NOTE, buildView, countryKey, exportCsv, flag, formatMetric, isOrderOnly, trend } from '@/features/attribution/model';
+import { METRICS, ORDER_ONLY_LABEL, ORDER_ONLY_NOTE, buildView, countryKey, exportCsv, flag, formatMetric, isOrderOnly, sortRows, trend } from '@/features/attribution/model';
 import DateSlicer from '@/features/attribution/DateSlicer';
 import { dateLabel, presetRange, validateDates } from '@/features/attribution/dates';
 import { Select as MenuSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -162,11 +162,7 @@ export default function Attribution() {
   const compare = comparison !== 'none';
   useEffect(() => { setPage(1); }, [channel, country, group, sortKey, sortDirection, pageSize, report]);
   const toggle = id => setExpanded(previous => { const next = new Set(previous); next.has(id) ? next.delete(id) : next.add(id); return next; });
-  const sort = rows => [...rows].sort((a, b) => {
-    const left = a.current[sortKey], right = b.current[sortKey];
-    if (left == null || right == null) return left == null ? right == null ? 0 : 1 : -1;
-    return (left - right) * sortDirection || a.label.localeCompare(b.label);
-  });
+  const sort = rows => sortRows(rows, sortKey, sortDirection);
   const sortBy = key => { setSortDirection(key === sortKey ? -sortDirection : -1); setSortKey(key); };
   const download = () => {
     const url = URL.createObjectURL(new Blob(['\ufeff', exportCsv(view, report, group)], { type: 'text/csv;charset=utf-8;' }));
@@ -175,6 +171,7 @@ export default function Attribution() {
   const chart = view?.daily.map(day => ({ date: dateLabel(day.id), current: day.current[metric], previous: day.previous[metric], currentMetrics: day.current, previousMetrics: day.previous }));
   const orderOnlyInView = view ? containsOrderOnly(view.children) : false;
   const selectedMetric = METRICS.find(m => m.key === metric);
+  const cardMetric = METRICS.find(m => m.key === sortKey);
   const sortedRows = view ? sort(view.children) : [];
   const pageCount = Math.max(1, Math.ceil(sortedRows.length / pageSize));
   const currentPage = Math.min(page, pageCount);
@@ -241,6 +238,10 @@ export default function Attribution() {
 
       <section className="m-glow-card at-breakdown">
         <div className="at-section-head"><div><h2><Globe size={17} />{group === 'channel' ? 'Channel & country performance' : 'Country & channel performance'}</h2><p>Open a row to see its breakdown, then open a country or channel to see each day.</p></div><div className="at-actions"><button className="m-chip" onClick={() => setExpanded(new Set(visibleRows.map(r => r.id)))}>Expand page</button><button className="m-chip" onClick={() => setExpanded(new Set())}>Collapse all</button></div></div>
+        {view.children.length > 0 && <div className="at-mobile-sort" role="group" aria-label="Sort attribution cards">
+          <Select label="Sort by" value={sortKey} onChange={key => { setSortKey(key); setSortDirection(-1); }}>{METRICS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}</Select>
+          <Select label="Sort order" value={sortDirection} onChange={value => setSortDirection(Number(value))}><option value={-1}>Highest first</option><option value={1}>Lowest first</option></Select>
+        </div>}
         {orderOnlyInView && <p className="at-order-only-note" role="note"><Info size={14} />{ORDER_ONLY_NOTE}</p>}
         {!view.children.length ? <div className="at-empty"><Globe size={28} /><h3>No activity for these filters</h3><p>Choose another channel, country or date range.</p><button className="m-chip" onClick={() => { setChannel('all'); setCountry('all'); }}>Reset channel & country</button></div> : <><div className="at-table-wrap" tabIndex={0} aria-label="Attribution breakdown; scroll horizontally on small screens"><table className="m-table at-table">
           <thead><tr><th>{group === 'channel' ? 'Channel / Country' : 'Country / Channel'}</th>{METRICS.map(m => <th key={m.key} aria-sort={sortKey === m.key ? sortDirection < 0 ? 'descending' : 'ascending' : 'none'}><button onClick={() => sortBy(m.key)} title={m.description}>{m.label} <span>{sortKey === m.key ? sortDirection < 0 ? '↓' : '↑' : '↕'}</span></button></th>)}</tr></thead>
@@ -252,12 +253,12 @@ export default function Attribution() {
               All selected {isOrderOnly(view.current) && <OrderOnlyBadge />} <span className="at-count">{view.children.length} {group === 'channel' ? 'channels' : 'countries'}</span>
             </div>
             <div className="at-card-primary">
-              <span className="at-card-metric-label">{selectedMetric.label}</span>
-              <MetricValue metricKey={metric} current={view.current} currency={report.currency} />
-              {!sessionsNotApplicable(metric, view.current) && <Change current={view.current[metric]} previous={view.previous[metric]} metric={metric} currency={report.currency} compare={compare} />}
+              <span className="at-card-metric-label">{cardMetric.label}</span>
+              <MetricValue metricKey={sortKey} current={view.current} currency={report.currency} />
+              {!sessionsNotApplicable(sortKey, view.current) && <Change current={view.current[sortKey]} previous={view.previous[sortKey]} metric={sortKey} currency={report.currency} compare={compare} />}
             </div>
             <div className="at-card-metrics">
-              {METRICS.filter(m => m.key !== metric).map(m => (
+              {METRICS.filter(m => m.key !== sortKey).map(m => (
                 <div key={m.key}>
                   <span className="at-card-metric-label">{m.label}</span>
                   <MetricValue metricKey={m.key} current={view.current} currency={report.currency} />
@@ -275,7 +276,7 @@ export default function Attribution() {
               currency={report.currency}
               compare={compare}
               sort={sort}
-              primaryMetric={metric}
+              primaryMetric={sortKey}
             />
           ))}
         </div></>}
@@ -285,6 +286,8 @@ export default function Attribution() {
       <details className="m-glow-card at-definitions"><summary><Info size={15} />How to read this report<ChevronDown size={14} /></summary><div>
         <p><strong>Country:</strong> sessions and conversion use visitor location; orders, net sales and returning orders use shipping country. These can differ. Conversion uses completed-checkout sessions, so it is not orders divided by sessions.</p>
         <p><strong>Channel:</strong> Shopify’s recorded referring channel and paid/organic classification. Shop and other sales channels are shown separately. Shop app and Shop Cash checkouts are order-only: orders and net sales with no Online Store sessions, so sessions show n/a and conversion is —. Web sessions named shop_app or shop_campaigns stay on their own rows and are not added to Shop. Missing attribution stays “Unattributed”; it is never inferred to be organic or direct.</p>
+        <p><strong>Source names:</strong> equivalent names and domains are combined, such as Chat GPT, chatgpt.com and chat.openai.com. AI referrals are grouped by provider without assuming unknown traffic is organic; explicitly paid traffic stays separate.</p>
+        <p><strong>Direct:</strong> no reliable acquisition source was recorded. We keep it as reported and do not redistribute it based on country, timing, or another channel’s performance. Internal Mirai referrers do not establish an external source.</p>
         <p><strong>Unallocated detail:</strong> the measured difference between Shopify’s daily totals and its channel/country breakdown. This is kept visible under unknown country, never distributed across known channels. Channel and country filters exclude it unless selected.</p>
         <p><strong>Returning orders:</strong> repeat purchases, not returned or refunded items. Net sales includes Shopify sales reversals on their posting dates, excluding shipping and taxes.{view.current.unknownCustomerOrders > 0 && ` ${view.current.unknownCustomerOrders} orders have an unknown customer type.`}</p>
         <p><strong>Comparison:</strong> the immediately preceding period with the same number of days, in {report.timezone}. “New” means the previous value was zero; “—” means conversion has no session denominator. All session traffic is included. A period containing today is incomplete. Results are cached for up to five minutes; Shopify may revise recent attribution.</p>
