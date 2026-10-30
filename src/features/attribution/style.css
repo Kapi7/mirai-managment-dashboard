@@ -116,6 +116,7 @@
 
 /* ——— Card list base (hidden on desktop; shown ≤480) ——— */
 .at-card-list { display: none; padding: 0 12px 14px; gap: 10px; }
+.at-mobile-sort { display: none; }
 .at-card {
   border: 1px solid #2b3a55;
   border-radius: 12px;
@@ -313,6 +314,9 @@
   /* Card-stack primary — hide wide table */
   .at-breakdown .at-table-wrap { display: none; }
   .at-card-list { display: grid; }
+  .at-mobile-sort { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 0 12px 14px; }
+  .at-mobile-sort .at-filter { min-width: 0; grid-column: auto; }
+  .at-mobile-sort .at-select-trigger { width: 100%; }
 
   .at-pagination { justify-content: stretch; }
   .at-pagination .m-chip { flex: 1; min-height: 44px; justify-content: center; }

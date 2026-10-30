@@ -60,6 +60,14 @@ export function isOrderOnly(metrics) {
   return (Number(metrics?.orders) || 0) > 0 && (Number(metrics?.sessions) || 0) === 0;
 }
 export const ORDER_ONLY_LABEL = 'Order-only';
+export function sortRows(rows, key, direction = -1) {
+  const value = row => key === 'sessions' && isOrderOnly(row.current) ? null : row.current[key];
+  return [...rows].sort((a, b) => {
+    const left = value(a), right = value(b);
+    if (left == null || right == null) return left == null ? right == null ? a.label.localeCompare(b.label) : 1 : -1;
+    return (left - right) * direction || a.label.localeCompare(b.label);
+  });
+}
 export const ORDER_ONLY_NOTE = 'Shop (Shop app and Shop Cash) and other non–Online Store sales channels report orders and net sales without Online Store sessions. Sessions show n/a and conversion stays —. shop_app and shop_campaigns web sessions stay on their own rows.';
 export function formatMetric(value, metric, currency = 'USD', metrics) {
   if (metric === 'sessions' && isOrderOnly(metrics)) return 'n/a';
