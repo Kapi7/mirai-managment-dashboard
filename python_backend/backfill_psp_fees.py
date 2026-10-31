@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import inspect
 import json
 import os
 from datetime import date, datetime, timedelta, timezone
@@ -57,14 +58,39 @@ def _parse_date(value: Optional[str]) -> Optional[date]:
     return date.fromisoformat(value) if value else None
 
 
-def _default_fetch_daily(since: date, until_exclusive: date, tz_name: str) -> Dict[date, float]:
-    from psp_fee import get_psp_fees_daily
-    return get_psp_fees_daily(since, until_exclusive, tz_name=tz_name)
+def _default_fetch_daily(since: date, until_exclusive: date, tz_name: str):
+    """``{fees, complete, reason}``. ``complete`` is false when pagination stopped early."""
+    from psp_fee import get_psp_fees_daily_result
+    return get_psp_fees_daily_result(since, until_exclusive, tz_name=tz_name)
 
 
-def _default_fetch_order_fees(since: date, until_exclusive: date, tz_name: str) -> Dict[int, float]:
-    from psp_fee import get_order_psp_fees
-    return get_order_psp_fees(since, until_exclusive, tz_name=tz_name)
+def _default_fetch_order_fees(since: date, until_exclusive: date, tz_name: str):
+    from psp_fee import get_order_psp_fees_result
+    return get_order_psp_fees_result(since, until_exclusive, tz_name=tz_name)
+
+
+def _as_fetch(value):
+    """Normalize a fetcher return into (mapping, complete, reason).
+
+    A plain date→amount dict (the unit-test fetchers) is a complete fetch.
+    Production fetchers return ``{fees, complete, reason}``.
+    """
+    if isinstance(value, tuple):
+        fees = value[0] or {}
+        complete = bool(value[1]) if len(value) > 1 else True
+        reason = value[2] if len(value) > 2 else ""
+        return fees, complete, reason
+    if isinstance(value, dict) and "complete" in value and "fees" in value:
+        return value.get("fees") or {}, bool(value["complete"]), value.get("reason") or ""
+    return value or {}, True, ""
+
+
+async def _resolve_fetch(fetch, *args):
+    """Call a sync fetcher, or await one that already ran in a thread pool."""
+    value = fetch(*args)
+    if inspect.isawaitable(value):
+        value = await value
+    return value
 
 
 def default_snapshot_path() -> str:
@@ -116,10 +142,15 @@ def _summary(plan: Mapping[str, Any], since: date, until: date, tz_name: str, oc
         "kept_legacy": len(plan["kept_legacy"]),
         "order_fee_updates": len(plan["order_changes"]),
         "october_2026_psp_usd": october,
+        "fetch_complete": plan.get("fetch_complete", True),
+        "fetch_reason": plan.get("fetch_reason") or "",
     }
 
 
 def _print_summary(summary: Mapping[str, Any], dry_run: bool) -> None:
+    if summary.get("fetch_complete") is False:
+        print("*** INCOMPLETE SHOPIFY FETCH — do not apply. Partial totals are not safe. ***")
+        print(f"    {summary.get('fetch_reason') or 'pagination stopped early'}")
     print(
         f"window {summary['since']} .. {summary['until']} ({summary['timezone']}): "
         f"fetched {summary['fetched_days']} days, "
@@ -153,8 +184,15 @@ async def build_plan(
     until_exclusive = until + timedelta(days=1)
     # Daily buckets stop at `until`. Order charges sometimes post just after
     # local midnight, so the per-order fetch looks one day further.
-    fetched = fetch_daily(since, until_exclusive, tz_name) or {}
-    order_index = fetch_order_fees(since, until_exclusive + timedelta(days=1), tz_name) or {}
+    # The admin endpoint passes fetchers that already ran in run_in_threadpool.
+    fetched_raw = await _resolve_fetch(fetch_daily, since, until_exclusive, tz_name)
+    order_raw = await _resolve_fetch(
+        fetch_order_fees, since, until_exclusive + timedelta(days=1), tz_name
+    )
+    fetched, daily_complete, daily_reason = _as_fetch(fetched_raw)
+    order_index, order_complete, order_reason = _as_fetch(order_raw)
+    fetch_complete = bool(daily_complete and order_complete)
+    fetch_reason = "; ".join(part for part in (daily_reason, order_reason) if part)
 
     fee_rows = (
         await db.execute(
@@ -189,6 +227,21 @@ async def build_plan(
             {"id": row["id"], "order_name": row["order_name"], "psp_fee": row["old"]}
             for row in order_changes
         ],
+        # Restore touches only these. Rows the cron inserts later are not listed
+        # and must not be deleted. inserts[].id is filled after flush, before commit.
+        "restore": {
+            "updates": [
+                {
+                    "id": row["id"],
+                    "old_fee": row["old_fee"],
+                    "old_currency": row.get("old_currency"),
+                    "old_created_at": row.get("old_created_at"),
+                }
+                for row in daily["updates"]
+            ],
+            "deletes": daily["deletes"],
+            "inserts": [],
+        },
     }
     plan = {
         **daily,
@@ -199,6 +252,8 @@ async def build_plan(
         "until": until,
         "snapshot": snapshot,
         "october_2026_psp_usd": october,
+        "fetch_complete": fetch_complete,
+        "fetch_reason": fetch_reason,
     }
     return plan
 
@@ -209,6 +264,7 @@ async def apply_mutations(db, plan: Mapping[str, Any]) -> Dict[str, int]:
     Does not touch shipping_cost or any other order column.
     """
     now = datetime.utcnow()
+    inserted = []
     for row in plan["updates"]:
         await db.execute(
             update(DailyPspFee)
@@ -216,13 +272,15 @@ async def apply_mutations(db, plan: Mapping[str, Any]) -> Dict[str, int]:
             .values(fee_amount=float(row["new_fee"]), currency="USD", created_at=now)
         )
     for row in plan["inserts"]:
-        db.add(DailyPspFee(
+        record = DailyPspFee(
             date=date.fromisoformat(row["date"]),
             store_id=int(row["store_id"]),
             fee_amount=float(row["fee_amount"]),
             currency="USD",
             created_at=now,
-        ))
+        )
+        db.add(record)
+        inserted.append(record)
     for row in plan["deletes"]:
         if row.get("id") is None:
             continue
@@ -237,6 +295,7 @@ async def apply_mutations(db, plan: Mapping[str, Any]) -> Dict[str, int]:
         "inserted": len(plan["inserts"]),
         "deleted": len(plan["deletes"]),
         "order_fees": len(plan["order_changes"]),
+        "inserted_ids": [int(record.id) for record in inserted if record.id is not None],
     }
 
 
@@ -272,6 +331,15 @@ async def run_backfill(
     }
     if not apply:
         return result
+    if not plan.get("fetch_complete", True):
+        result["dry_run"] = True
+        result["refused"] = True
+        result["reason"] = (
+            "incomplete Shopify fetch; refusing to apply so a partial day is not stored "
+            "and its store 2 row is not deleted"
+            + (f" ({plan.get('fetch_reason')})" if plan.get("fetch_reason") else "")
+        )
+        return result
     if plan["fetched_days"] == 0:
         result["dry_run"] = True
         result["refused"] = True
@@ -284,6 +352,13 @@ async def run_backfill(
     result["snapshot_path"] = path
     try:
         counts = await mutate(db, plan)
+        # Record only the rows this apply inserted, then commit. A cron row
+        # written later has a different id and restore will leave it alone.
+        inserted_ids = list((counts or {}).get("inserted_ids") or [])
+        plan["snapshot"].setdefault("restore", {})["inserts"] = [
+            {"id": int(row_id)} for row_id in inserted_ids
+        ]
+        write_snapshot(path, plan["snapshot"])
         await db.commit()
     except Exception:
         await db.rollback()
@@ -302,47 +377,68 @@ def _parse_dt(value: Optional[str]):
     return parsed
 
 
+async def _put_back_daily(db, row: Mapping[str, Any]) -> None:
+    """Reinsert a deleted daily row, or put its saved columns back. Nothing else."""
+    fee_date = date.fromisoformat(str(row["date"])[:10])
+    values = dict(
+        date=fee_date,
+        store_id=row.get("store_id"),
+        fee_amount=float(row["fee_amount"]),
+        currency=row.get("currency"),
+        created_at=_parse_dt(row.get("created_at")),
+    )
+    existing = None
+    if row.get("id") is not None:
+        existing = await db.get(DailyPspFee, int(row["id"]))
+    if existing is None:
+        db.add(DailyPspFee(id=row.get("id"), **values))
+        return
+    existing.date = values["date"]
+    existing.store_id = values["store_id"]
+    existing.fee_amount = values["fee_amount"]
+    existing.currency = values["currency"]
+    existing.created_at = values["created_at"]
+
+
 async def restore_snapshot(db, snapshot: Mapping[str, Any]) -> Dict[str, Any]:
-    """Put daily_psp_fees and orders.psp_fee back. No other order column is written."""
-    since = _parse_date(snapshot.get("since"))
-    until = _parse_date(snapshot.get("until"))
-    saved_rows: List[dict] = list(snapshot.get("daily_psp_fees") or [])
-    saved_ids = {int(row["id"]) for row in saved_rows if row.get("id") is not None}
+    """Roll back only rows this apply changed.
 
-    if since is not None and until is not None:
-        current = (
-            await db.execute(
-                select(DailyPspFee).where(DailyPspFee.date >= since, DailyPspFee.date <= until)
-            )
-        ).scalars().all()
-        for row in current:
-            if row.id not in saved_ids:
-                await db.delete(row)
-        await db.flush()
-
+    Deletes the inserted ids, restores updated fees, and reinserts deleted
+    rows. A daily row the cron wrote afterwards has a different id and is
+    left in place. Shipping and every other order column are not written.
+    """
+    restore = snapshot.get("restore") or {}
     restored_daily = 0
-    for row in saved_rows:
-        fee_date = date.fromisoformat(str(row["date"])[:10])
-        existing = None
-        if row.get("id") is not None:
-            existing = await db.get(DailyPspFee, int(row["id"]))
-        values = dict(
-            date=fee_date,
-            store_id=row.get("store_id"),
-            fee_amount=float(row["fee_amount"]),
-            currency=row.get("currency"),
-            created_at=_parse_dt(row.get("created_at")),
-        )
-        if existing is None:
-            db.add(DailyPspFee(id=row.get("id"), **values))
-        else:
-            existing.date = values["date"]
-            existing.store_id = values["store_id"]
-            existing.fee_amount = values["fee_amount"]
-            existing.currency = values["currency"]
-            existing.created_at = values["created_at"]
-        restored_daily += 1
-    await db.flush()
+    if restore:
+        for inserted in restore.get("inserts") or []:
+            if inserted.get("id") is None:
+                continue
+            existing = await db.get(DailyPspFee, int(inserted["id"]))
+            if existing is None:
+                continue
+            await db.delete(existing)
+            restored_daily += 1
+        await db.flush()
+        for updated in restore.get("updates") or []:
+            existing = await db.get(DailyPspFee, int(updated["id"]))
+            if existing is None:
+                continue
+            existing.fee_amount = float(updated["old_fee"])
+            existing.currency = updated.get("old_currency")
+            if "old_created_at" in updated:
+                existing.created_at = _parse_dt(updated.get("old_created_at"))
+            restored_daily += 1
+        for deleted in restore.get("deletes") or []:
+            await _put_back_daily(db, deleted)
+            restored_daily += 1
+        await db.flush()
+    else:
+        # Older snapshot with a full before-image and no insert list. Put those
+        # rows back, but do not delete ids that are missing from it.
+        for row in snapshot.get("daily_psp_fees") or []:
+            await _put_back_daily(db, row)
+            restored_daily += 1
+        await db.flush()
 
     restored_orders = 0
     for row in snapshot.get("order_psp_fees") or []:

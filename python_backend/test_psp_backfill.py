@@ -221,6 +221,9 @@ class BackfillPlan(unittest.TestCase):
         rows.append(FeeRow(901, date(2026, 1, 5), 2, 84.62, "USD"))
         rows.append(FeeRow(902, date(2026, 4, 1), 2, 12.00, "EUR"))
         rows.append(FeeRow(903, date(2024, 1, 1), 2, 3.00, "USD"))
+        # Skin already has this date, but Shopify did not return it. Store 2 stays.
+        rows.append(FeeRow(910, date(2026, 6, 1), 1, 8.00, "USD"))
+        rows.append(FeeRow(911, date(2026, 6, 1), 2, 8.00, "EUR"))
         return rows
 
     def _fetched(self):
@@ -238,15 +241,17 @@ class BackfillPlan(unittest.TestCase):
         self.assertIn("2026-03-15", {row["date"] for row in plan["inserts"]})
         deleted_ids = {row["id"] for row in plan["deletes"]}
         self.assertTrue(deleted_ids.issuperset({row.id for row in _stored_rows()}))
-        self.assertIn(901, deleted_ids)  # store 2 duplicate of a skin date
-        self.assertNotIn(902, deleted_ids)  # only copy, fetch did not return it
+        self.assertIn(901, deleted_ids)  # store 2 row for a date Shopify returned
+        self.assertNotIn(902, deleted_ids)  # fetch did not return this date
         self.assertNotIn(903, deleted_ids)  # outside the window
+        self.assertNotIn(911, deleted_ids)  # skin already has the date, but Shopify did not return it
         jan = next(row for row in plan["updates"] if row["date"] == "2026-01-05")
         self.assertEqual(jan["id"], 900)
         self.assertEqual(jan["new_fee"], 7.50)
         self.assertEqual(jan["new_currency"], "USD")
         self.assertEqual(set(jan), {
-            "id", "date", "store_id", "old_fee", "old_currency", "new_fee", "new_currency",
+            "id", "date", "store_id", "old_fee", "old_currency", "old_created_at",
+            "new_fee", "new_currency",
         })
 
     def test_order_fee_plan_touches_only_psp_fee(self):
@@ -279,10 +284,15 @@ class PerOrderFee(unittest.TestCase):
             os.environ["FX_CAD_TO_USD"] = self.saved
 
     def _charge(self):
-        import sys
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "automation_reports"))
-        from psp_fx import charge_order_fee_usd
-        return charge_order_fee_usd({
+        # Load psp_fx by file path. Putting automation_reports on sys.path
+        # makes `import psp_fee` pick up that package's copy, which has no
+        # order_fees_from_transactions.
+        import importlib.util
+        path = Path(__file__).resolve().parents[1] / "automation_reports" / "psp_fx.py"
+        spec = importlib.util.spec_from_file_location("mirai_psp_fx_under_test", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.charge_order_fee_usd({
             "type": "charge",
             "fee": "7.70",
             "currency": "CAD",
@@ -334,6 +344,26 @@ class PerOrderFee(unittest.TestCase):
         self.assertEqual(indexed, {ORDER_6455_ID: 6.51})
         self.assertNotIn(99, indexed)
 
+    def test_backend_psp_fee_is_not_shadowed(self):
+        import sys
+        self._charge()
+        sys.modules.pop("psp_fee", None)
+        import psp_fee
+        loaded = Path(psp_fee.__file__).resolve().as_posix()
+        self.assertIn("python_backend/psp_fee.py", loaded)
+        self.assertNotIn("automation_reports", loaded)
+        self.assertTrue(hasattr(psp_fee, "order_fees_from_transactions"))
+        self.assertTrue(hasattr(psp_fee, "_fetch_until_for_store"))
+
+    def test_order_report_keeps_the_last_day_in_report_tz(self):
+        from psp_fees_logic import order_fee_end_exclusive
+        end = date(2026, 10, 31)
+        self.assertEqual(order_fee_end_exclusive(end), date(2026, 11, 1))
+        report = Path(__file__).with_name("order_report_logic.py").read_text()
+        self.assertIn("report_timezone_name", report)
+        self.assertIn("order_fee_end_exclusive", report)
+        self.assertNotIn("get_shop_timezone(", report)
+
     def test_readers_call_the_shared_fee_and_profit(self):
         root = Path(__file__).resolve().parent
         service = (root / "database" / "service.py").read_text()
@@ -341,9 +371,11 @@ class PerOrderFee(unittest.TestCase):
         for source in (service, report):
             self.assertIn("order_psp_fee_or_estimate", source)
             self.assertIn("order_line_profit", source)
-        self.assertIn('"/admin/backfill-psp-fees"', (root / "simple_server.py").read_text())
-        endpoint = (root / "simple_server.py").read_text().split('"/admin/backfill-psp-fees"', 1)[1][:500]
+        server = (root / "simple_server.py").read_text()
+        self.assertIn('"/admin/backfill-psp-fees"', server)
+        endpoint = server.split("async def backfill_psp_fees_endpoint", 1)[1].split("@app.post", 1)[0]
         self.assertIn("require_admin", endpoint)
+        self.assertIn("run_in_threadpool", endpoint)
 
 
 class BackfillDryRunAndApply(unittest.TestCase):
@@ -568,17 +600,140 @@ class BackfillDryRunAndApply(unittest.TestCase):
             self.assertEqual((jan[2], jan[3], jan[4]), (1, 7.50, "USD"))
 
             import json
+            from database.models import DailyPspFee
+            # A cron tick after apply writes a new daily row. Restore must not delete it.
+            async with factory() as db:
+                db.add(DailyPspFee(
+                    id=7777, date=date(2026, 5, 20), store_id=1,
+                    fee_amount=10, currency="USD",
+                ))
+                await db.commit()
             with open(snapshot) as handle:
                 saved = json.load(handle)
+            self.assertTrue(saved["restore"]["inserts"])
             async with factory() as db:
                 await restore_snapshot(db, saved)
-            self.assertEqual(await self._fees(factory), before_fees)
+            restored_fees = await self._fees(factory)
+            cron = (7777, date(2026, 5, 20), 1, 10.0, "USD")
+            self.assertIn(cron, restored_fees)
+            for row in before_fees:
+                self.assertIn(row, restored_fees)
+            self.assertEqual(len(restored_fees), len(before_fees) + 1)
             restored = await self._order(factory)
             self.assertIsNone(restored["psp_fee"])
             self.assertEqual(restored["shipping_cost"], 42)
             self.assertEqual(restored["net"], 125.92)
         finally:
             await engine.dispose()
+
+    def test_incomplete_fetch_is_flagged_and_refuses_apply(self):
+        asyncio.run(self._incomplete())
+
+    async def _incomplete(self):
+        import contextlib
+        from io import StringIO
+
+        from backfill_psp_fees import _print_summary, run_backfill
+        from database.models import DailyPspFee, Store
+
+        engine, factory = await self._session()
+        try:
+            async with factory() as db:
+                db.add(Store(id=1, key="skin", label="Mirai Skin", shopify_domain="skin.example"))
+                db.add(Store(id=2, key="cosmetics", label="Cosmetics", shopify_domain="cos.example"))
+                db.add(DailyPspFee(
+                    id=50, date=date(2026, 10, 30), store_id=2, fee_amount=99, currency="EUR",
+                ))
+                await db.commit()
+
+            def fetch_daily(since, until_exclusive, tz_name):
+                return {
+                    "fees": {date(2026, 10, 31): 1.0, date(2026, 10, 30): 2.0},
+                    "complete": False,
+                    "reason": "HTTP 429",
+                }
+
+            def fetch_orders(since, until_exclusive, tz_name):
+                return {"fees": {}, "complete": True, "reason": ""}
+
+            snapshot = tempfile.mktemp(prefix="psp-incomplete-", suffix=".json")
+            async with factory() as db:
+                dry = await run_backfill(
+                    db, date(2026, 10, 1), date(2026, 10, 31), apply=False,
+                    fetch_daily=fetch_daily, fetch_order_fees=fetch_orders,
+                )
+            self.assertFalse(dry["fetch_complete"])
+            self.assertIn("HTTP 429", dry["fetch_reason"])
+            buf = StringIO()
+            with contextlib.redirect_stdout(buf):
+                _print_summary(dry, dry_run=True)
+            self.assertIn("INCOMPLETE SHOPIFY FETCH", buf.getvalue())
+
+            async with factory() as db:
+                applied = await run_backfill(
+                    db, date(2026, 10, 1), date(2026, 10, 31), apply=True,
+                    snapshot_path=snapshot,
+                    fetch_daily=fetch_daily, fetch_order_fees=fetch_orders,
+                )
+            self.assertTrue(applied["refused"])
+            self.assertFalse(applied["applied"])
+            self.assertFalse(os.path.exists(snapshot))
+            fees = await self._fees(factory)
+            self.assertEqual(fees, [(50, date(2026, 10, 30), 2, 99.0, "EUR")])
+        finally:
+            await engine.dispose()
+
+
+class IncompletePage(unittest.TestCase):
+    def test_429_on_page_two_is_incomplete_and_keeps_the_partial_sum(self):
+        import psp_fee
+
+        saved_stores = psp_fee.SHOPIFY_STORES
+        saved_sleep = psp_fee._sleep
+        calls = {"n": 0}
+
+        class Response:
+            def __init__(self, status, payload, link=""):
+                self.status_code = status
+                self.headers = {"Link": link}
+                self._payload = payload
+
+            def json(self):
+                return self._payload
+
+        page1 = {
+            "transactions": [
+                {"id": 1, "fee": "1.00", "currency": "USD", "processed_at": "2026-10-31T18:00:00Z"},
+                {"id": 2, "fee": "2.00", "currency": "USD", "processed_at": "2026-10-30T18:00:00Z"},
+            ]
+        }
+        next_link = '<https://skin.example/admin/page2>; rel="next"'
+
+        def fake_get(url, headers=None, params=None, timeout=None):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return Response(200, page1, next_link)
+            return Response(429, {})
+
+        psp_fee.SHOPIFY_STORES = [{
+            "key": "skin", "label": "skin", "domain": "skin.example", "access_token": "tok",
+        }]
+        psp_fee._sleep = lambda _seconds: None
+        original_get = psp_fee.requests.get
+        psp_fee.requests.get = fake_get
+        try:
+            result = psp_fee.get_psp_fees_daily_result(
+                date(2026, 10, 1), date(2026, 11, 1), tz_name="UTC",
+            )
+        finally:
+            psp_fee.SHOPIFY_STORES = saved_stores
+            psp_fee._sleep = saved_sleep
+            psp_fee.requests.get = original_get
+
+        self.assertFalse(result["complete"])
+        self.assertIn("429", result["reason"])
+        self.assertEqual(result["fees"], {date(2026, 10, 31): 1.0, date(2026, 10, 30): 2.0})
+        self.assertGreater(calls["n"], 2)
 
 
 if __name__ == "__main__":

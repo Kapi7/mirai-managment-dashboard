@@ -2369,16 +2369,29 @@ async def backfill_psp_fees_endpoint(req: PspBackfillRequest = None, user: dict 
     req = req or PspBackfillRequest()
 
     from database.connection import get_db
-    from backfill_psp_fees import run_backfill, _parse_date
+    from starlette.concurrency import run_in_threadpool
+    from backfill_psp_fees import (
+        run_backfill, _parse_date, _default_fetch_daily, _default_fetch_order_fees,
+    )
 
     try:
         since, until = _parse_date(req.since), _parse_date(req.until)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"bad date: {e}")
 
+    # Shopify pagination is synchronous HTTP. Run it off the event loop.
+    async def fetch_daily(since_date, until_exclusive, tz_name):
+        return await run_in_threadpool(_default_fetch_daily, since_date, until_exclusive, tz_name)
+
+    async def fetch_order_fees(since_date, until_exclusive, tz_name):
+        return await run_in_threadpool(_default_fetch_order_fees, since_date, until_exclusive, tz_name)
+
     try:
         async with get_db() as db:
-            result = await run_backfill(db, since, until, apply=not req.dry_run)
+            result = await run_backfill(
+                db, since, until, apply=not req.dry_run,
+                fetch_daily=fetch_daily, fetch_order_fees=fetch_order_fees,
+            )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -2415,7 +2428,14 @@ async def backfill_psp_fees_endpoint(req: PspBackfillRequest = None, user: dict 
         "kept_legacy": result["kept_legacy"],
         "order_fee_updates": result["order_fee_updates"],
         "october_2026_psp_usd": result["october_2026_psp_usd"],
+        "fetch_complete": result.get("fetch_complete", True),
+        "fetch_reason": result.get("fetch_reason") or "",
     }
+    if result.get("fetch_complete") is False:
+        body["message"] = (
+            "INCOMPLETE SHOPIFY FETCH — nothing written. "
+            + (result.get("fetch_reason") or "pagination stopped early")
+        )
     if req.include_rows or result["applied"]:
         # Applied responses always include the snapshot: the service disk is ephemeral.
         body["snapshot"] = result["snapshot"]

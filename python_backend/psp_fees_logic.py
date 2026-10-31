@@ -34,6 +34,16 @@ def report_today() -> date:
     return datetime.now(pytz.timezone(report_timezone_name())).date()
 
 
+def order_fee_end_exclusive(end_date: date) -> date:
+    """Exclusive end for an inclusive report ``end_date``.
+
+    ``get_order_psp_fees`` and the order search both use a half-open window.
+    The last calendar day of the report is included: 31 Oct is inside
+    ``[start, 1 Nov)``.
+    """
+    return end_date + timedelta(days=1)
+
+
 def resolve_window(since: Optional[date], until: Optional[date]) -> tuple:
     start = since or DEFAULT_SINCE
     end = until or report_today()
@@ -191,10 +201,10 @@ def plan_daily_backfill(
 ) -> Dict[str, Any]:
     """Plan skin-store fee_amount / currency updates. Does not write.
 
-    Non-skin rows (the store 2 duplicates and the legacy EUR rows) are deleted
-    only when the skin store already has that date or the fetch just supplied
-    one. A non-skin row that is the only copy of a date the fetch did not
-    return is kept and reported, so a short fetch cannot wipe history.
+    Store 2 (and any other non-skin) rows are deleted only for dates Shopify
+    actually returned. A skin row that already exists does not by itself
+    justify deleting the store 2 copy: the cron may still be using it, and a
+    short fetch must not drop it.
     """
     in_window = [row for row in existing if since <= row.date <= until]
     skin_by_date: Dict[date, List[Any]] = {}
@@ -228,6 +238,9 @@ def plan_daily_backfill(
         for extra in skins[1:]:
             deletes.append(_daily_snapshot(extra, "duplicate_skin"))
         old_fee = _money(primary.fee_amount)
+        created = getattr(primary, "created_at", None)
+        if isinstance(created, datetime):
+            created = created.isoformat()
         if old_fee != amount or _currency(primary.currency) != "USD":
             updates.append({
                 "id": primary.id,
@@ -235,17 +248,18 @@ def plan_daily_backfill(
                 "store_id": skin_store_id,
                 "old_fee": old_fee,
                 "old_currency": primary.currency,
+                "old_created_at": created,
                 "new_fee": amount,
                 "new_currency": "USD",
             })
         else:
             unchanged += 1
 
-    skin_dates = set(skin_by_date) | set(fetched_in)
+    # Only dates the fetch returned. An existing skin row is not enough.
     for row in in_window:
         if row.store_id == skin_store_id:
             continue
-        if row.date in skin_dates:
+        if row.date in fetched_in:
             deletes.append(_daily_snapshot(row, "non_skin_duplicate"))
 
     seen = set()
