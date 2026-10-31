@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-psp_fees.py — Shopify Payments fee fetcher (EUR/USD) with daily helpers.
+psp_fees.py — Shopify Payments fee fetcher with daily helpers.
 
 - Uses `processed_at` for time filtering (correct for Balance Transactions).
-- Returns daily buckets (dict[date] -> fee) summed across configured stores.
+- Converts each balance-transaction fee from its own currency to USD
+  (FX_<CUR>_TO_USD) before summing. Daily buckets are USD.
 - Standalone version - no config.py dependency.
 
 Env:
@@ -23,6 +24,34 @@ import requests
 from dotenv import load_dotenv
 
 load_dotenv()
+
+_PSP_FX_MOD = None
+
+
+def _psp_fx():
+    """Load the shared converter from automation_reports/psp_fx.py."""
+    global _PSP_FX_MOD
+    if _PSP_FX_MOD is None:
+        import importlib.util
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parents[1] / "automation_reports" / "psp_fx.py"
+        spec = importlib.util.spec_from_file_location("mirai_psp_fx", path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Cannot load PSP FX helper from {path}")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _PSP_FX_MOD = mod
+    return _PSP_FX_MOD
+
+
+def transaction_fee_usd(txn: dict):
+    return _psp_fx().transaction_fee_usd(txn)
+
+
+def interpret_stored_daily_fee(amount: float, currency: Optional[str] = None) -> float:
+    return _psp_fx().interpret_stored_daily_fee(amount, currency)
+
 
 # Config from environment
 SHOPIFY_API_VERSION = os.getenv("SHOPIFY_API_VERSION", "2025-07").strip()
@@ -132,8 +161,11 @@ def _fetch_until_for_store(
 
 def get_psp_fees_daily(start_date: date, end_date_exclusive: date) -> Dict[date, float]:
     """
-    Returns dict[date] -> total PSP fee for each day in [start_date, end_date_exclusive).
-    Fee is returned in the currency from Shopify (typically store currency).
+    Returns dict[date] -> total PSP fee in USD for each day in
+    [start_date, end_date_exclusive).
+
+    Each balance transaction is converted with its own currency before it is
+    added. Do not multiply the result by FX_EUR_TO_USD.
     """
     if not SHOPIFY_STORES:
         print("[psp_fees] No stores configured")
@@ -154,21 +186,19 @@ def get_psp_fees_daily(start_date: date, end_date_exclusive: date) -> Dict[date,
         print(f"[psp_fees] Store '{label}' ({domain}) – transactions fetched: {len(txns)}")
 
         for t in txns:
-            fee = t.get("fee")
             p = _parse_iso(t.get("processed_at"))
-            if fee is None or p is None:
+            if p is None:
                 continue
             if p.tzinfo is None:
                 p = pytz.UTC.localize(p)
             p_local = p.astimezone(tz)
             if not (start_dt <= p_local < end_dt):
                 continue
-            try:
-                amt = abs(float(fee))
-            except Exception:
+            fee_usd = transaction_fee_usd(t)
+            if fee_usd is None:
                 continue
             dkey = p_local.date()
-            daily[dkey] = round(daily.get(dkey, 0.0) + amt, 2)
+            daily[dkey] = round(daily.get(dkey, 0.0) + fee_usd, 2)
 
     return daily
 

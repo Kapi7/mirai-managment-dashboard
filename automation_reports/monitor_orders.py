@@ -3,7 +3,8 @@
 
 """
 monitor_orders.py — Multi-store Shopify → Telegram order alerts with:
-  • Per-order PSP fee (EUR → USD via FX_EUR_TO_USD) matched by numeric order ID, per store.
+  • Per-order PSP fee (each balance transaction's currency → USD via FX_<CUR>_TO_USD)
+    matched by numeric order ID, per store.
   • Approx. Shipping (USD) via shipping matrix (GEO canonicalization + weight tiers).
   • Approx. Profit (USD) = Net + Shipping Charged – COGS – Approx Shipping – PSP Fee (USD).
   • Triggers master_report_mirai.run_once(None) after new orders (rate-limited).
@@ -42,6 +43,7 @@ from shopify_client import (
 from telegram_client import send_order_alert
 from master_report_mirai import run_once
 from channel_normalizer import normalize_channel
+from psp_fx import charge_order_fee_usd, fee_to_usd
 
 load_dotenv()
 
@@ -240,31 +242,20 @@ def _build_psp_fee_index_for_store(
         if not (start_local <= p_local < end_local):
             continue
 
-        typ = (t.get("type") or "").lower()
-        if typ not in ("charge", "payment", "sale"):
+        # Fee is in t["currency"], not always EUR. Index values are USD.
+        parsed = charge_order_fee_usd(t)
+        if parsed is None:
             continue
-
-        fee = t.get("fee")
-        if fee is None:
-            continue
-        try:
-            amt = abs(float(fee))
-        except Exception:
-            continue
-
-        for key in ("order_id", "source_order_id", "source_id"):
-            oid = t.get(key)
-            if isinstance(oid, int) and oid > 0:
-                idx[oid] = round(idx.get(oid, 0.0) + amt, 2)
-                break
+        oid, fee_usd = parsed
+        idx[oid] = round(idx.get(oid, 0.0) + fee_usd, 2)
 
     return idx
 
 # ───────── FX helper ─────────
 def _eur_to_usd(amount_eur: float) -> float:
+    """Convert an amount that is actually EUR. Per-order PSP fees are already USD."""
     try:
-        rate = float(os.getenv("FX_EUR_TO_USD", "1.0"))
-        return round(float(amount_eur) * rate, 2)
+        return fee_to_usd(amount_eur, "EUR")
     except Exception:
         return round(float(amount_eur), 2)
 
@@ -572,8 +563,8 @@ def _compute_alert_fields(order: dict, psp_index: Dict[int, float], store_label:
     psp_fee_usd = 0.0
     oid_num = _order_numeric_id(order)
     if oid_num is not None:
-        fee_eur = psp_index.get(oid_num, 0.0)
-        psp_fee_usd = _eur_to_usd(fee_eur)
+        # Index is already USD (converted per balance-transaction currency).
+        psp_fee_usd = round(float(psp_index.get(oid_num, 0.0) or 0.0), 2)
 
     # Shop Campaigns bills per NEWLY-ACQUIRED customer (the ShopifyQL capture's
     # CAC × acquisitions == day spend). So: returning-customer Shop orders cost
