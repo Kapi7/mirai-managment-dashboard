@@ -322,8 +322,13 @@ class SyncOrders(BaseSyncJob):
         await self._sync_psp_fees()
 
     async def _sync_psp_fees(self):
-        """Sync PSP fees from Shopify Payments for the same date range as orders"""
-        from datetime import date
+        """Sync PSP fees from Shopify Payments for the same date range as orders.
+
+        Daily rows are written on the skin store (key ``skin``, or the
+        ``SHOPIFY_STORE`` domain). The order loop may finish on another store;
+        that id is not used here. Per-order fees are a separate pass that
+        sets only ``orders.psp_fee``.
+        """
         from database.models import DailyPspFee
 
         try:
@@ -331,56 +336,91 @@ class SyncOrders(BaseSyncJob):
             import sys
             import os
             sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            from psp_fee import get_psp_fees_daily
+            from psp_fee import get_order_psp_fees, get_psp_fees_daily
+            from psp_fees_logic import (
+                report_timezone_name,
+                report_today,
+                resolve_skin_store,
+                shopify_numeric_id,
+            )
 
             # get_psp_fees_daily takes an EXCLUSIVE end date — passing today
             # meant TODAY was never synced, so the dashboard showed the
             # 2.9%+$0.30 estimate all day while the Telegram bot showed the
             # real Shopify Payments fee (the last report-vs-bot gap).
-            end_date = date.today() + timedelta(days=1)
-            start_date = date.today() - timedelta(days=self.days_back)
+            # Bucket that window in the report timezone, not the server's UTC date.
+            tz_name = report_timezone_name()
+            today_local = report_today()
+            end_date = today_local + timedelta(days=1)
+            start_date = today_local - timedelta(days=self.days_back)
 
-            print(f"💳 Syncing PSP fees: {start_date} to {end_date} (exclusive)")
+            print(f"💳 Syncing PSP fees: {start_date} to {end_date} (exclusive, {tz_name})")
 
-            psp_fees = get_psp_fees_daily(start_date, end_date)
+            psp_fees = get_psp_fees_daily(start_date, end_date, tz_name=tz_name)
+            try:
+                order_fees = get_order_psp_fees(start_date, end_date, tz_name=tz_name)
+            except Exception as fee_err:
+                print(f"  ⚠️ Per-order PSP fee fetch failed: {fee_err}")
+                order_fees = {}
 
-            if not psp_fees:
+            if not psp_fees and not order_fees:
                 print("  ⚠️ No PSP fees found")
                 return
 
-            print(f"  Found {len(psp_fees)} days with PSP fees")
+            print(f"  Found {len(psp_fees)} days with PSP fees, {len(order_fees)} orders")
 
             async with get_db() as db:
-                for fee_date, fee_amount in psp_fees.items():
-                    try:
-                        # Check if record exists
-                        result = await db.execute(
-                            select(DailyPspFee).where(
-                                DailyPspFee.date == fee_date,
-                                DailyPspFee.store_id == self.store_id
+                stores = (await db.execute(select(Store))).scalars().all()
+                skin = resolve_skin_store(stores, os.getenv("SHOPIFY_STORE", ""))
+                skin_store_id = skin.id if skin is not None else None
+                if psp_fees and skin_store_id is None:
+                    print("  ⚠️ PSP daily fees not written: no store with key 'skin' or SHOPIFY_STORE domain")
+                elif psp_fees:
+                    for fee_date, fee_amount in psp_fees.items():
+                        try:
+                            result = await db.execute(
+                                select(DailyPspFee).where(
+                                    DailyPspFee.date == fee_date,
+                                    DailyPspFee.store_id == skin_store_id
+                                )
                             )
-                        )
-                        existing = result.scalar_one_or_none()
+                            existing = result.scalar_one_or_none()
 
-                        # get_psp_fees_daily converts each fee with its own
-                        # currency and returns USD. Store that USD amount.
-                        # Legacy rows labeled EUR are converted on read until
-                        # this sync rewrites them.
-                        if existing:
-                            existing.fee_amount = fee_amount
-                            existing.currency = 'USD'
-                            existing.created_at = datetime.utcnow()
-                        else:
-                            psp_record = DailyPspFee(
-                                date=fee_date,
-                                store_id=self.store_id,
-                                fee_amount=fee_amount,
-                                currency='USD'
-                            )
-                            db.add(psp_record)
-                    except Exception as e:
-                        print(f"  ⚠️ Error processing PSP fee {fee_date}: {e}")
-                        continue
+                            # get_psp_fees_daily converts each fee with its own
+                            # currency and returns USD. Store that USD amount.
+                            # Legacy rows labeled EUR are converted on read until
+                            # this sync rewrites them.
+                            if existing:
+                                existing.fee_amount = fee_amount
+                                existing.currency = 'USD'
+                                existing.created_at = datetime.utcnow()
+                            else:
+                                psp_record = DailyPspFee(
+                                    date=fee_date,
+                                    store_id=skin_store_id,
+                                    fee_amount=fee_amount,
+                                    currency='USD'
+                                )
+                                db.add(psp_record)
+                        except Exception as e:
+                            print(f"  ⚠️ Error processing PSP fee {fee_date}: {e}")
+                            continue
+
+                # Fee-only pass: orders.psp_fee from the same charge calculation
+                # the Telegram bot uses. No other order column is written.
+                if order_fees:
+                    fee_floor = datetime.combine(start_date, datetime.min.time()) - timedelta(days=2)
+                    order_rows = (
+                        await db.execute(select(Order).where(Order.created_at >= fee_floor))
+                    ).scalars().all()
+                    filled = 0
+                    for order in order_rows:
+                        oid = shopify_numeric_id(order.shopify_gid)
+                        if oid is None or oid not in order_fees:
+                            continue
+                        order.psp_fee = order_fees[oid]
+                        filled += 1
+                    print(f"  ✅ Set psp_fee on {filled} orders")
 
                 await db.commit()
 

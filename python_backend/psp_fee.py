@@ -102,6 +102,37 @@ def _get_tz() -> pytz.BaseTzInfo:
     return pytz.timezone(tz_name)
 
 
+def _tz(tz_name: Optional[str] = None) -> pytz.BaseTzInfo:
+    if tz_name:
+        return pytz.timezone(tz_name)
+    return _get_tz()
+
+
+def order_fees_from_transactions(txns, start_dt, end_dt, tz) -> Dict[int, float]:
+    """Shopify order id → USD charge fee, same rules as the Telegram bot.
+
+    ``psp_fx.charge_order_fee_usd`` keeps charge/payment/sale only. Refunds
+    stay in the daily total and are not added onto the order.
+    """
+    fx = _psp_fx()
+    idx: Dict[int, float] = {}
+    for txn in txns or []:
+        processed = _parse_iso(txn.get("processed_at"))
+        if processed is None:
+            continue
+        if processed.tzinfo is None:
+            processed = pytz.UTC.localize(processed)
+        processed_local = processed.astimezone(tz)
+        if not (start_dt <= processed_local < end_dt):
+            continue
+        parsed = fx.charge_order_fee_usd(txn)
+        if parsed is None:
+            continue
+        order_id, fee_usd = parsed
+        idx[order_id] = round(idx.get(order_id, 0.0) + fee_usd, 2)
+    return idx
+
+
 def _fetch_until_for_store(
     store_domain: str,
     access_token: str,
@@ -159,19 +190,26 @@ def _fetch_until_for_store(
     return out
 
 
-def get_psp_fees_daily(start_date: date, end_date_exclusive: date) -> Dict[date, float]:
+def get_psp_fees_daily(
+    start_date: date,
+    end_date_exclusive: date,
+    tz_name: Optional[str] = None,
+) -> Dict[date, float]:
     """
     Returns dict[date] -> total PSP fee in USD for each day in
     [start_date, end_date_exclusive).
 
     Each balance transaction is converted with its own currency before it is
     added. Do not multiply the result by FX_EUR_TO_USD.
+
+    ``tz_name`` is the report timezone (the Telegram bot's shop timezone).
+    When it is omitted, ``REPORT_TZ`` is used, then UTC.
     """
     if not SHOPIFY_STORES:
         print("[psp_fees] No stores configured")
         return {}
 
-    tz = _get_tz()
+    tz = _tz(tz_name)
     start_dt = tz.localize(datetime.combine(start_date, datetime.min.time()))
     end_dt = tz.localize(datetime.combine(end_date_exclusive, datetime.min.time()))
 
@@ -201,6 +239,35 @@ def get_psp_fees_daily(start_date: date, end_date_exclusive: date) -> Dict[date,
             daily[dkey] = round(daily.get(dkey, 0.0) + fee_usd, 2)
 
     return daily
+
+
+def get_order_psp_fees(
+    start_date: date,
+    end_date_exclusive: date,
+    tz_name: Optional[str] = None,
+) -> Dict[int, float]:
+    """Shopify order id → USD fee for charge-like balance transactions.
+
+    This is the per-order number the Telegram bot stores on the alert
+    (``psp_fx.charge_order_fee_usd``). The window is the report timezone.
+    """
+    if not SHOPIFY_STORES:
+        print("[psp_fees] No stores configured")
+        return {}
+
+    tz = _tz(tz_name)
+    start_dt = tz.localize(datetime.combine(start_date, datetime.min.time()))
+    end_dt = tz.localize(datetime.combine(end_date_exclusive, datetime.min.time()))
+    idx: Dict[int, float] = {}
+    for store in SHOPIFY_STORES:
+        domain = store["domain"]
+        token = store["access_token"]
+        label = store["label"]
+        txns = _fetch_until_for_store(domain, token, start_dt, tz)
+        print(f"[psp_fees] Store '{label}' ({domain}) – order-fee transactions: {len(txns)}")
+        for order_id, fee_usd in order_fees_from_transactions(txns, start_dt, end_dt, tz).items():
+            idx[order_id] = round(idx.get(order_id, 0.0) + fee_usd, 2)
+    return idx
 
 
 def get_psp_fee_for_date(target_date: date) -> float:

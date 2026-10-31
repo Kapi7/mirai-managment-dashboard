@@ -2333,6 +2333,132 @@ async def restore_shipping_costs(req: ShippingRestoreRequest, user: dict = Depen
     return {"success": True, **out}
 
 
+class PspBackfillRequest(BaseModel):
+    since: Optional[str] = None       # report timezone, YYYY-MM-DD; default 2025-01-29
+    until: Optional[str] = None       # last date inclusive; default today
+    dry_run: bool = True              # default is a plan only — nothing written
+    include_rows: bool = False        # per-day and per-order detail in the response
+
+
+class PspRestoreRequest(BaseModel):
+    snapshot: Optional[Dict[str, Any]] = None
+    daily_psp_fees: Optional[List[Dict[str, Any]]] = None
+    order_psp_fees: Optional[List[Dict[str, Any]]] = None
+    since: Optional[str] = None
+    until: Optional[str] = None
+    timezone: Optional[str] = None
+    skin_store_id: Optional[int] = None
+    kind: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+@app.post("/admin/backfill-psp-fees")
+async def backfill_psp_fees_endpoint(req: PspBackfillRequest = None, user: dict = Depends(require_admin)):
+    """
+    Recompute daily_psp_fees (skin store only) and orders.psp_fee from Shopify
+    Payments, in the report timezone. Dry run by default.
+
+    POST {"since":"2025-01-29","until":"2026-10-31","dry_run":false} to apply.
+    Apply writes a JSON snapshot on the service before it changes any row, and
+    returns that snapshot so it can be saved off the ephemeral disk. Restore
+    with POST /admin/restore-psp-fees. Shipping and other order fields are not
+    written.
+    """
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+    req = req or PspBackfillRequest()
+
+    from database.connection import get_db
+    from backfill_psp_fees import run_backfill, _parse_date
+
+    try:
+        since, until = _parse_date(req.since), _parse_date(req.until)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"bad date: {e}")
+
+    try:
+        async with get_db() as db:
+            result = await run_backfill(db, since, until, apply=not req.dry_run)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if result.get("refused"):
+        raise HTTPException(status_code=409, detail=result.get("reason"))
+
+    body = {
+        "success": True,
+        "dry_run": result["dry_run"],
+        "applied": result["applied"],
+        "snapshot_path": result.get("snapshot_path"),
+        "message": (
+            f"dry run: would update {result['daily_updates']}, insert {result['daily_inserts']}, "
+            f"delete {result['daily_deletes']} daily rows; set psp_fee on {result['order_fee_updates']} orders"
+            if result["dry_run"]
+            else (
+                f"updated daily PSP fees "
+                f"(update {result['counts']['updated']}, insert {result['counts']['inserted']}, "
+                f"delete {result['counts']['deleted']}); "
+                f"set psp_fee on {result['counts']['order_fees']} orders. "
+                f"Rollback: POST /admin/restore-psp-fees with the snapshot "
+                f"({result.get('snapshot_path')})"
+            )
+        ),
+        "since": result["since"],
+        "until": result["until"],
+        "timezone": result["timezone"],
+        "fetched_days": result["fetched_days"],
+        "daily_updates": result["daily_updates"],
+        "daily_inserts": result["daily_inserts"],
+        "daily_deletes": result["daily_deletes"],
+        "daily_unchanged": result["daily_unchanged"],
+        "gap_inserts": result["gap_inserts"],
+        "kept_legacy": result["kept_legacy"],
+        "order_fee_updates": result["order_fee_updates"],
+        "october_2026_psp_usd": result["october_2026_psp_usd"],
+    }
+    if req.include_rows or result["applied"]:
+        # Applied responses always include the snapshot: the service disk is ephemeral.
+        body["snapshot"] = result["snapshot"]
+    if req.include_rows:
+        body["updates"] = result["updates"]
+        body["inserts"] = result["inserts"]
+        body["deletes"] = result["deletes"]
+        body["order_changes"] = result["order_changes"]
+    return body
+
+
+@app.post("/admin/restore-psp-fees")
+async def restore_psp_fees_endpoint(req: PspRestoreRequest, user: dict = Depends(require_admin)):
+    """Roll daily_psp_fees and orders.psp_fee back from a backfill snapshot.
+
+    Does not write shipping_cost or any other order column.
+    """
+    if not DB_SERVICE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+    snapshot = req.snapshot
+    if snapshot is None and req.daily_psp_fees is not None:
+        snapshot = {
+            "since": req.since,
+            "until": req.until,
+            "timezone": req.timezone,
+            "skin_store_id": req.skin_store_id,
+            "daily_psp_fees": req.daily_psp_fees,
+            "order_psp_fees": req.order_psp_fees or [],
+        }
+    if not snapshot:
+        raise HTTPException(status_code=400, detail="snapshot required")
+
+    from database.connection import get_db
+    from backfill_psp_fees import restore_snapshot
+
+    try:
+        async with get_db() as db:
+            out = await restore_snapshot(db, snapshot)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"success": True, **out}
+
+
 @app.post("/support/emails/{email_id}/reject")
 async def reject_support_email(email_id: int, user: dict = Depends(get_current_user)):
     """Reject/archive email"""

@@ -125,6 +125,17 @@ def fetch_order_report(start_date: date, end_date: date) -> Dict[str, Any]:
 
     # ── Per-order cost model (matches database/service.py get_orders) ──────
     from master_report_mirai import _lookup_matrix_shipping_usd, _order_geo, _order_weight_kg
+    from psp_fees_logic import order_line_profit, order_psp_fee_or_estimate, shopify_numeric_id
+
+    # Charge fees in the report timezone, same calculation as the Telegram bot.
+    # A missing order (or a failed fetch) keeps the 2.9% + $0.30 estimate.
+    order_fees: Dict[int, float] = {}
+    try:
+        from psp_fee import get_order_psp_fees
+        order_fees = get_order_psp_fees(start_date, end_date + timedelta(days=1), tz_name=shop_tz)
+    except Exception as _psp_err:
+        print(f"⚠️ Per-order PSP fees unavailable, using 2.9%+$0.30 estimate: {_psp_err}")
+        order_fees = {}
 
     # Shop Campaigns: exact per-day spend split across that day's NEW-customer
     # Shop orders (returning customers are not billed); CAC as fallback.
@@ -248,8 +259,11 @@ def fetch_order_report(start_date: date, end_date: date) -> Dict[str, Any]:
             if shipping_cost <= 0 and shipping > 0:
                 shipping_cost = round(shipping * 0.8, 2)
 
-            # PSP estimate (2.9% + $0.30), same as the DB path
-            psp_fee = round(net * 0.029 + 0.30, 2) if net > 0 else 0.0
+            # Real charge fee when the balance-transaction index has this order.
+            # Missing (not a stored 0) falls back to 2.9% + $0.30.
+            oid_num = shopify_numeric_id(order.get("id"))
+            stored_fee = order_fees[oid_num] if oid_num is not None and oid_num in order_fees else None
+            psp_fee = order_psp_fee_or_estimate(stored_fee, net)
 
             # Per-order Shop Campaigns ad cost
             shop_ad_cost = 0.0
@@ -262,7 +276,7 @@ def fetch_order_report(start_date: date, end_date: date) -> Dict[str, Any]:
                 elif shop_cac:
                     shop_ad_cost = round(shop_cac, 2)
 
-            profit = net + shipping - shipping_cost - cogs - psp_fee - shop_ad_cost
+            profit = order_line_profit(net, shipping, shipping_cost, cogs, psp_fee, shop_ad_cost)
             margin_pct = (profit / (net + shipping)) * 100 if (net + shipping) > 0 else 0
 
             # Extract order number
