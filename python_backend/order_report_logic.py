@@ -9,7 +9,7 @@ import pytz
 import re
 
 from config import SHOPIFY_STORES
-from shopify_client import fetch_orders_created_between_for_store, get_shop_timezone
+from shopify_client import fetch_orders_created_between_for_store
 
 
 def _parse_dt(s: str) -> datetime:
@@ -84,11 +84,16 @@ def fetch_order_report(start_date: date, end_date: date) -> Dict[str, Any]:
     Returns:
         Dict with orders list and analytics summary
     """
-    shop_tz = get_shop_timezone() or os.getenv("REPORT_TZ") or "UTC"
+    # Same zone as the Telegram bot. A live shop-timezone lookup can differ
+    # from REPORT_TZ and shift the last hours of the window onto the next day.
+    from psp_fees_logic import order_fee_end_exclusive, report_timezone_name
+    shop_tz = report_timezone_name()
     tz = pytz.timezone(shop_tz)
+    # Half-open [start, day after end). The inclusive end_date is kept.
+    end_exclusive = order_fee_end_exclusive(end_date)
 
     start_local = tz.localize(datetime.combine(start_date, datetime.min.time()))
-    end_local = tz.localize(datetime.combine(end_date + timedelta(days=1), datetime.min.time()))
+    end_local = tz.localize(datetime.combine(end_exclusive, datetime.min.time()))
 
     print(f"📦 Fetching orders from {start_date} to {end_date}")
 
@@ -125,6 +130,17 @@ def fetch_order_report(start_date: date, end_date: date) -> Dict[str, Any]:
 
     # ── Per-order cost model (matches database/service.py get_orders) ──────
     from master_report_mirai import _lookup_matrix_shipping_usd, _order_geo, _order_weight_kg
+    from psp_fees_logic import order_line_profit, order_psp_fee_or_estimate, shopify_numeric_id
+
+    # Charge fees in REPORT_TZ. end_exclusive is the day after end_date, so
+    # the last day of the report is included (the fee API end is exclusive).
+    order_fees: Dict[int, float] = {}
+    try:
+        from psp_fee import get_order_psp_fees
+        order_fees = get_order_psp_fees(start_date, end_exclusive, tz_name=shop_tz)
+    except Exception as _psp_err:
+        print(f"⚠️ Per-order PSP fees unavailable, using 2.9%+$0.30 estimate: {_psp_err}")
+        order_fees = {}
 
     # Shop Campaigns: exact per-day spend split across that day's NEW-customer
     # Shop orders (returning customers are not billed); CAC as fallback.
@@ -248,8 +264,11 @@ def fetch_order_report(start_date: date, end_date: date) -> Dict[str, Any]:
             if shipping_cost <= 0 and shipping > 0:
                 shipping_cost = round(shipping * 0.8, 2)
 
-            # PSP estimate (2.9% + $0.30), same as the DB path
-            psp_fee = round(net * 0.029 + 0.30, 2) if net > 0 else 0.0
+            # Real charge fee when the balance-transaction index has this order.
+            # Missing (not a stored 0) falls back to 2.9% + $0.30.
+            oid_num = shopify_numeric_id(order.get("id"))
+            stored_fee = order_fees[oid_num] if oid_num is not None and oid_num in order_fees else None
+            psp_fee = order_psp_fee_or_estimate(stored_fee, net)
 
             # Per-order Shop Campaigns ad cost
             shop_ad_cost = 0.0
@@ -262,7 +281,7 @@ def fetch_order_report(start_date: date, end_date: date) -> Dict[str, Any]:
                 elif shop_cac:
                     shop_ad_cost = round(shop_cac, 2)
 
-            profit = net + shipping - shipping_cost - cogs - psp_fee - shop_ad_cost
+            profit = order_line_profit(net, shipping, shipping_cost, cogs, psp_fee, shop_ad_cost)
             margin_pct = (profit / (net + shipping)) * 100 if (net + shipping) > 0 else 0
 
             # Extract order number

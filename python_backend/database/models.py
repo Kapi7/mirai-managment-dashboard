@@ -121,6 +121,9 @@ class Order(Base):
     cogs = Column(Numeric(10, 2), default=0)
     shipping_charged = Column(Numeric(10, 2), default=0)
     shipping_cost = Column(Numeric(10, 2), default=0)  # Actual cost from shipping matrix
+    # USD Shopify Payments charge fee (psp_fx.charge_order_fee_usd). NULL until
+    # the fee-only pass fills it; readers then fall back to 2.9% + $0.30.
+    psp_fee = Column(Numeric(10, 2))
 
     # Location
     country = Column(String(100))

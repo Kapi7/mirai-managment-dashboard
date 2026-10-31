@@ -186,8 +186,10 @@ class DatabaseService:
                     discounts = _decimal_to_float(order.discounts) or 0
                     refunds = _decimal_to_float(order.refunds) or 0
 
-                    # PSP fee estimate for this order (2.9% + $0.30)
-                    psp_fee = round(net * 0.029 + 0.30, 2) if net > 0 else 0
+                    # Real Shopify Payments fee when sync/backfill stored one.
+                    # NULL (not 0) is the only case that still uses 2.9% + $0.30.
+                    from psp_fees_logic import order_line_profit, order_psp_fee_or_estimate
+                    psp_fee = order_psp_fee_or_estimate(order.psp_fee, net)
 
                     # Build line items (needed before shipping for the weight fallback)
                     items = []
@@ -235,7 +237,7 @@ class DatabaseService:
                     shop_ad_cost = _shop_ad_cost_for(order)
 
                     # Profit = net + shipping - shipping_cost - cogs - psp_fee - shop_ad_cost
-                    profit = net + shipping - shipping_cost - cogs - psp_fee - shop_ad_cost
+                    profit = order_line_profit(net, shipping, shipping_cost, cogs, psp_fee, shop_ad_cost)
                     margin_pct = (profit / (net + shipping)) * 100 if (net + shipping) > 0 else 0
 
                     # Display date/time in shop-local TZ (stored value is UTC)
@@ -561,12 +563,24 @@ class DatabaseService:
                     ad_result = await db.execute(ad_query)
                     ad_rows = ad_result.scalars().all()
 
-                    # Fetch PSP fees from database
-                    psp_query = select(DailyPspFee).where(
-                        and_(
-                            DailyPspFee.date >= min(dates),
-                            DailyPspFee.date <= max(dates)
+                    # Fetch PSP fees from database. Order by date, store, id so
+                    # two rows for one date cannot silently overwrite each other.
+                    # The skin store wins; a date that exists only on another
+                    # store is kept until the backfill moves it. Do not sum
+                    # duplicates — Jan 2026 has the same day on two stores.
+                    from psp_fees_logic import choose_daily_psp_rows, resolve_skin_store
+                    store_rows = (await db.execute(select(Store))).scalars().all()
+                    skin = resolve_skin_store(store_rows, os.getenv("SHOPIFY_STORE", ""))
+                    skin_store_id = skin.id if skin is not None else None
+                    psp_query = (
+                        select(DailyPspFee)
+                        .where(
+                            and_(
+                                DailyPspFee.date >= min(dates),
+                                DailyPspFee.date <= max(dates)
+                            )
                         )
+                        .order_by(DailyPspFee.date, DailyPspFee.store_id, DailyPspFee.id)
                     )
                     psp_result = await db.execute(psp_query)
                     psp_rows = psp_result.scalars().all()
@@ -575,7 +589,7 @@ class DatabaseService:
                     # currency USD means the amount is already converted per
                     # transaction. Older rows are a raw sum labeled EUR.
                     psp_lookup = {}
-                    for psp in psp_rows:
+                    for psp in choose_daily_psp_rows(psp_rows, skin_store_id).values():
                         psp_lookup[psp.date.isoformat()] = (
                             _decimal_to_float(psp.fee_amount) or 0,
                             psp.currency,

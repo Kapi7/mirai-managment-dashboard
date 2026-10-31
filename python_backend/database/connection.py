@@ -278,6 +278,16 @@ async def init_db():
                     END IF;
                 END $$;
                 """,
+                # Real per-order Shopify Payments fee (USD). NULL = not filled yet,
+                # so the order report keeps the 2.9% + $0.30 estimate until backfill.
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'orders' AND column_name = 'psp_fee') THEN
+                        ALTER TABLE orders ADD COLUMN psp_fee NUMERIC(10, 2);
+                    END IF;
+                END $$;
+                """,
                 # Add content_intent column to content_assets (organic vs acquisition)
                 """
                 DO $$
@@ -323,6 +333,7 @@ async def init_db():
             # These columns were added after initial table creation and
             # ALTER TABLE migrations may have silently failed on Render.
             critical_columns = [
+                ("orders", "psp_fee", "NUMERIC(10, 2)"),
                 ("content_assets", "content_intent", "VARCHAR(20)"),
                 ("agent_tasks", "requires_approval", "BOOLEAN DEFAULT FALSE"),
                 ("agent_tasks", "approved_by", "INTEGER"),
