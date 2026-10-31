@@ -466,16 +466,16 @@ async def debug_psp_fees(day: str = None):
     result = {
         "test_day": test_day.isoformat(),
         "shop_tz": shop_tz,
-        "psp_fees_eur": {},
+        "psp_fees_usd": {},
         "error": None,
     }
 
     try:
-        # Fetch PSP fees for the day
+        # Fetch PSP fees for the day (USD; converted per transaction currency)
         end_date = test_day + timedelta(days=1)
         daily_fees = get_psp_fees_daily(test_day, end_date)
-        result["psp_fees_eur"] = {k.isoformat(): v for k, v in daily_fees.items()}
-        result["total_eur"] = sum(daily_fees.values())
+        result["psp_fees_usd"] = {k.isoformat(): v for k, v in daily_fees.items()}
+        result["total_usd"] = sum(daily_fees.values())
     except Exception as e:
         result["error"] = str(e)
         import traceback

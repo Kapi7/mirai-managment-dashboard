@@ -362,19 +362,20 @@ class SyncOrders(BaseSyncJob):
                         )
                         existing = result.scalar_one_or_none()
 
-                        # NOTE: Shopify Payments balance-transaction fees arrive in
-                        # EUR (payout currency); store them honestly as EUR — the
-                        # report layer converts with FX_EUR_TO_USD when reading.
+                        # get_psp_fees_daily converts each fee with its own
+                        # currency and returns USD. Store that USD amount.
+                        # Legacy rows labeled EUR are converted on read until
+                        # this sync rewrites them.
                         if existing:
                             existing.fee_amount = fee_amount
-                            existing.currency = 'EUR'
+                            existing.currency = 'USD'
                             existing.created_at = datetime.utcnow()
                         else:
                             psp_record = DailyPspFee(
                                 date=fee_date,
                                 store_id=self.store_id,
                                 fee_amount=fee_amount,
-                                currency='EUR'
+                                currency='USD'
                             )
                             db.add(psp_record)
                     except Exception as e:

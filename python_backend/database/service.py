@@ -571,10 +571,15 @@ class DatabaseService:
                     psp_result = await db.execute(psp_query)
                     psp_rows = psp_result.scalars().all()
 
-                    # Build PSP lookup: {date: fee}
+                    # Build PSP lookup: {date: (fee, currency)}
+                    # currency USD means the amount is already converted per
+                    # transaction. Older rows are a raw sum labeled EUR.
                     psp_lookup = {}
                     for psp in psp_rows:
-                        psp_lookup[psp.date.isoformat()] = _decimal_to_float(psp.fee_amount) or 0
+                        psp_lookup[psp.date.isoformat()] = (
+                            _decimal_to_float(psp.fee_amount) or 0,
+                            psp.currency,
+                        )
 
                     # Build lookup: {date: {platform: spend}}
                     ad_lookup = {}
@@ -588,6 +593,7 @@ class DatabaseService:
                             ad_lookup[d_key]["meta"] += _decimal_to_float(ad.spend_usd) or 0
 
                     # Merge ad spend and PSP fees into KPIs
+                    from psp_fee import interpret_stored_daily_fee
                     for kpi in kpis:
                         ad_data = ad_lookup.get(kpi["date"], {"google": 0, "meta": 0})
                         google_spend = ad_data["google"]
@@ -598,13 +604,13 @@ class DatabaseService:
                         kpi["meta_spend"] = round(meta_spend, 2)
                         kpi["total_spend"] = round(total_spend, 2)
 
-                        # Use real PSP fees from database if available, otherwise keep estimate.
-                        # Shopify Payments balance-transaction fees are in EUR (payout
-                        # currency) — convert like the live report does (FX_EUR_TO_USD).
-                        real_psp = psp_lookup.get(kpi["date"])
-                        if real_psp is not None:
-                            _fx_eur = float(os.getenv("FX_EUR_TO_USD", "1.17") or 1.17)
-                            kpi["psp_usd"] = round(real_psp * _fx_eur, 2)
+                        # Real PSP fees when the sync has stored them. USD rows are
+                        # already converted per transaction currency. Legacy EUR
+                        # rows were a raw sum and are still converted on read.
+                        stored_psp = psp_lookup.get(kpi["date"])
+                        if stored_psp is not None:
+                            fee_amount, fee_currency = stored_psp
+                            kpi["psp_usd"] = interpret_stored_daily_fee(fee_amount, fee_currency)
 
                         # Recalculate operational profit with real PSP fees
                         # operational = (net + shipping_charged) - shipping_cost - cogs - psp

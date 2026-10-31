@@ -727,8 +727,10 @@ def _kpis_from_orders(
                               shop_new_orders=s_new_orders)
     s_cpa = round(s_spend / s_orders_created, 2) if s_orders_created > 0 else None
 
-    psp_eur = get_psp_fees_daily(start_local.date(), end_local.date()).get(start_local.date(), 0.0)
-    psp_usd = _fx_any_to_usd(psp_eur, "EUR")
+    # Already USD: each balance transaction was converted with its own currency.
+    psp_usd = round(float(
+        get_psp_fees_daily(start_local.date(), end_local.date()).get(start_local.date(), 0.0) or 0.0
+    ), 2)
 
     total_spend = g_spend + m_spend + s_spend
 

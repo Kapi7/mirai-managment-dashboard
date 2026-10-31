@@ -347,7 +347,7 @@ class DailyPspFee(Base):
     id = Column(Integer, primary_key=True)
     date = Column(Date, nullable=False, index=True)
     store_id = Column(Integer, ForeignKey("stores.id"))
-    fee_amount = Column(Numeric(12, 2), nullable=False)  # In store currency (usually USD)
+    fee_amount = Column(Numeric(12, 2), nullable=False)  # USD; each fee converted from its own currency
     currency = Column(String(10), default='USD')
     created_at = Column(DateTime, default=datetime.utcnow)
 

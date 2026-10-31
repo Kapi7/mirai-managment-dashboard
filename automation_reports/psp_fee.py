@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-psp_fees.py — Shopify Payments fee fetcher (EUR) with daily + MTD helpers,
+psp_fees.py — Shopify Payments fee fetcher with daily + MTD helpers,
 for MULTIPLE Shopify stores.
 
 - Uses `processed_at` for time filtering (correct for Balance Transactions).
 - Supports many stores via config.SHOPIFY_STORES.
-- Returns daily buckets (dict[date] -> fee_eur) summed across all stores.
-- MTD total is also summed across all stores.
+- Converts each balance-transaction fee from its own currency to USD
+  (FX_<CUR>_TO_USD) before summing. Daily buckets are USD, not EUR.
+- MTD total is also summed across all stores, in USD.
 - No writes; just a library to import.
 
 Env:
@@ -26,6 +27,7 @@ import requests
 from dotenv import load_dotenv
 
 from config import SHOPIFY_STORES, SHOPIFY_API_VERSION
+from psp_fx import transaction_fee_usd
 from shopify_client import get_shop_timezone
 
 
@@ -116,10 +118,12 @@ def _fetch_until_for_store(
 
 def get_psp_fees_daily(start_date: date, end_date_exclusive: date) -> Dict[date, float]:
     """
-    Returns dict[date] -> total PSP fee (EUR) for each day in [start_date, end_date_exclusive),
-    summed across ALL stores in config.SHOPIFY_STORES.
+    Returns dict[date] -> total PSP fee in USD for each day in
+    [start_date, end_date_exclusive), summed across ALL stores.
 
-    Missing days are omitted (0 not included).
+    Each balance transaction is converted with its own currency before it is
+    added. Missing days are omitted (0 not included). Do not multiply the
+    result by FX_EUR_TO_USD.
     """
     from os.path import dirname, join
     load_dotenv(join(dirname(__file__), ".env"))
@@ -142,28 +146,26 @@ def get_psp_fees_daily(start_date: date, end_date_exclusive: date) -> Dict[date,
         print(f"[psp_fees] Store '{label}' ({domain}) – transactions fetched: {len(txns)}")
 
         for t in txns:
-            fee = t.get("fee")
             p = _parse_iso(t.get("processed_at"))
-            if fee is None or p is None:
+            if p is None:
                 continue
             if p.tzinfo is None:
                 p = pytz.UTC.localize(p)
             p_local = p.astimezone(tz)
             if not (start_dt <= p_local < end_dt):
                 continue
-            try:
-                amt = abs(float(fee))
-            except Exception:
+            fee_usd = transaction_fee_usd(t)
+            if fee_usd is None:
                 continue
             dkey = p_local.date()
-            daily[dkey] = round(daily.get(dkey, 0.0) + amt, 2)
+            daily[dkey] = round(daily.get(dkey, 0.0) + fee_usd, 2)
 
     return daily
 
 
 def get_psp_fee_mtd(today_local: date | None = None) -> float:
     """
-    Returns MTD total PSP fees (EUR) across ALL stores up to 'today_local'
+    Returns MTD total PSP fees (USD) across ALL stores up to 'today_local'
     (exclusive of tomorrow boundary).
     """
     tz = _get_tz()

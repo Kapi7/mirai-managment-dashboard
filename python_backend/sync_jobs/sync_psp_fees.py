@@ -70,8 +70,10 @@ class SyncPspFees(BaseSyncJob):
                     )
                     existing = result.scalar_one_or_none()
 
+                    # get_psp_fees_daily returns USD (per-transaction currency).
                     if existing:
                         existing.fee_amount = fee_amount
+                        existing.currency = 'USD'
                         existing.created_at = datetime.utcnow()
                     else:
                         psp_record = DailyPspFee(
